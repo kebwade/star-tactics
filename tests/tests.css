@@ -1,0 +1,37 @@
+/* 科币战争 — 自检页共用样式 */
+:root {
+  --bg: #12151c; --panel: #1b2029; --line: #2b3341;
+  --fg: #d8dee9; --dim: #7d8899; --ok: #6fcf7f; --bad: #ef6f6f; --gold: #d8b45f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 24px; background: var(--bg); color: var(--fg);
+  font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 1px; }
+h2 { font-size: 15px; margin: 28px 0 8px; color: var(--gold); letter-spacing: .5px; }
+.sub { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+code { background: #222834; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.verdict {
+  display: inline-block; padding: 6px 14px; border-radius: 6px; margin-bottom: 16px;
+  font-weight: 700; letter-spacing: .5px; background: #262d39; border: 1px solid var(--line);
+}
+.verdict.pass { color: var(--ok); border-color: #2f5c3a; background: #16281c; }
+.verdict.fail { color: var(--bad); border-color: #6b2f2f; background: #2a1616; }
+pre.report {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 16px; overflow: auto; white-space: pre; font-size: 12.5px; line-height: 1.55;
+  font-family: Consolas, "Cascadia Mono", monospace; max-height: 78vh;
+}
+table {
+  border-collapse: collapse; width: 100%; font-size: 12.5px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+th, td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: right; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--dim); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+tbody tr:hover { background: #222834; }
+.bar { display: inline-block; height: 9px; border-radius: 2px; background: #3a4655; vertical-align: middle; }
+.pos { color: var(--ok); }
+.neg { color: var(--bad); }
+.wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
