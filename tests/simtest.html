@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科币战争 — 战斗模拟器自检</title>
+<link rel="stylesheet" href="tests.css">
+</head>
+<body>
+  <h1>战斗模拟器自检</h1>
+  <div class="sub">
+    证明 <code>js/battle.js</code> 是可信的：确定性、事件流不变量、羁绊/装备/技能结算、极端输入。<br>
+    一个不可信的战斗模拟器，后面所有的平衡工作都只是玄学。
+  </div>
+
+  <div id="verdict" class="verdict">running…</div>
+  <!-- 无头浏览器靠这个元素读结论；单独放一个，避免被下面那段脚本覆盖 -->
+  <div id="verdict-marker" style="display:none">running</div>
+
+  <pre id="report" class="report">running…</pre>
+
+  <script src="../js/util.js"></script>
+  <script src="../js/traits.js"></script>
+  <script src="../js/items.js"></script>
+  <script src="../js/units.js"></script>
+  <script src="../js/battle.js"></script>
+  <!-- levels.js 只是数据和规则常量，但商店概率表的校验要用到它 -->
+  <script src="../js/levels.js"></script>
+  <script src="harness.js"></script>
+  <script src="simtest.js"></script>
+  <script>
+    (function () {
+      var el = document.getElementById('verdict');
+      if (!window.TH) { el.className = 'verdict fail'; el.textContent = '自检脚本没有加载'; return; }
+      var c = TH.counts();
+      el.className = 'verdict ' + (c.fail === 0 ? 'pass' : 'fail');
+      el.textContent = TH.verdict();
+    })();
+  </script>
+</body>
+</html>
