@@ -1,0 +1,829 @@
+/* ============================================================
+ * 科币战争 — 棋子数据表
+ *
+ * ★ 改平衡只需要动这个文件 ★
+ *
+ * 五个费用档，24 个棋子：
+ *   1 费 8 个（开局铺场）
+ *   2 费 6 个（中期主力）
+ *   3 费 4 个（成型核心）
+ *   4 费 4 个（稀有，要 5 级才有概率刷出来）
+ *   5 费 2 个（传说，只有 6 级、且概率很低）
+ *
+ * 每个棋子的字段：
+ *   id      唯一英文 id（也是 art/ 里立绘的文件名）
+ *   name    中文名        cost  费用 1~5
+ *   traits  羁绊 id 数组（1~2 个）
+ *   role    定位，只用于界面显示
+ *   hp      1 星基础生命
+ *   ad      1 星基础攻击力（每次普攻的原始物理伤害）
+ *   as      每秒攻击次数（攻速）
+ *   armor   护甲，减伤公式 100/(100+护甲)
+ *   mr      魔抗，同上
+ *   range   攻击距离，单位是「格」。1 = 贴身（含斜角）
+ *   mana    技能所需法力；每次普攻 +10，每承受 25 点伤害 +1
+ *   skill   技能，见下方 kind 说明
+ *   color   渲染用主色（立绘缺失时的兜底底色）
+ *
+ * 星级成长（和云顶一致）：2 星 = 1.8 倍，3 星 = 3.24 倍（生命与攻击力）
+ *
+ * 技能 kind 一共九种：
+ *   nuke   单体法术伤害            { damage }
+ *   aoe    以目标格为中心的范围伤害 { damage, radius }
+ *   line   朝目标方向一条直线的伤害 { damage, length }
+ *   shield 加护盾                  { amount, target:'self'|'lowest' }
+ *   heal   治疗                    { amount, target:'self'|'lowest' }
+ *   stun   眩晕 + 少量伤害          { damage, dur }
+ *   buff   自身攻速增益             { stat:'asPct', amount, dur }
+ *   aegis  全队护盾（5 费专属）      { amount }
+ *   whirl  以自身为中心的范围伤害（5 费专属） { damage, radius }
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var ST = (window.ST = window.ST || {});
+
+  /** 星级倍率，索引 = 星级 */
+  ST.STAR_SCALE = [0, 1, 1.8, 3.24];
+
+  /**
+   * 一局最多上场几个棋子。
+   *
+   * ★ 必须 >= ST.LEVEL_TABLE 里最大的 field。
+   *   battle.js 的 buildSide() 有一句 slice(0, MAX_DEPLOY)：超出的棋子会被
+   *   **静默丢掉** —— 玩家在准备阶段明明摆上去了、开战时凭空少一个，
+   *   界面上不会有任何提示。棋盘是 8 列 × 4 行 = 32 格，放得下 8 个，
+   *   所以这里跟着等级表一起放宽到 8，并留了断言守着两者一致。
+   */
+  ST.MAX_DEPLOY = 8;
+
+  /** 费用配色（云顶那一套：灰 / 绿 / 蓝 / 紫 / 金）。
+   *  界面和战斗画布都从这里取，保证到处一致。 */
+  ST.COST_COLORS = {
+    1: '#8b98a3',
+    2: '#3f8f5e',
+    3: '#3f7fa8',
+    4: '#6b5fa8',
+    5: '#b8892f'
+  };
+  ST.costColor = function (cost) { return ST.COST_COLORS[cost] || ST.COST_COLORS[1]; };
+
+  ST.UNITS = [
+    /* ============================================================
+     * 1 费（8 个）—— 开局铺场，好升星，每金币最划算
+     * ============================================================ */
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'stoneguard' ——
+      //   levels.js 的 20 多处阵容、tests 的断言、art/stoneguard.png 全按 id 索引。
+      //   （原名叫「石卫」，改成「奶龙」时 id 一个字都没动。）
+      id: 'stoneguard', name: '奶龙', emoji: '🐲', cost: 1, role: '前排',
+      traits: ['ironguard', 'warden'], color: '#8d9aa8',
+      hp: 680, ad: 40, as: 0.60, armor: 35, mr: 35, range: 1, mana: 60,
+      skill: {
+        name: '捧腹大笑', kind: 'laugh',
+        /* ★ 这个技能**不吃法力，走 13 秒冷却** —— 这是游戏里第一个纯 CD 技能。
+           实现方式和荣誉的「计数型」是同一套：skill.cast 存在就绕开法力，
+           法力条改画「冷却进度」。区别只是计数器换成计时器。 */
+        cast: { cooldown: 13 },
+        dur: 3,            // 笑多久
+        dmgCut: 0.80,      // 这段时间受到的伤害 -80%
+        healPct: 0.10,     // 每秒恢复最大生命的 10%
+        desc: '立刻开始捧腹大笑：3 秒内无法移动与攻击，但受到的伤害 -80%、每秒回复 10% 最大生命。冷却 13 秒。'
+      },
+
+      /**
+       * 星级被动：笑气护体 / 边走边笑 / 笑传四方 —— 三层叠加，改的都是同一个"大笑"。
+       *
+       * kind: 'laugh'
+       *   1 星 「笑气护体」  笑的时候动不了也打不了，但很抗揍（这是技能本身就有的）
+       *   2 星 「边走边笑」  大笑期间**可以移动**（仍然不能攻击）
+       *   3 星 「笑传四方」  大笑期间**同时治疗 3×3 范围内的队友**
+       *
+       * ★ 和豆包 / 牢大那种"2 星加一个新效果"不同，这三层改的是**同一个状态**，
+       *   所以数据上写成 laughMove / laughHeal 两个开关，而不是三套独立逻辑。
+       *
+       * ★ 两个星级的收益方向是刻意分开的：
+       *   2 星买的是"能动"（不被自己的技能定在原地，能补位），
+       *   3 星买的是"奶全队"（从一个人抗揍变成一个小型奶妈）。
+       *   这样 1→2→3 每一级的感觉都不一样，而不是"减伤从 80% 变成 85%"。
+       *
+       * ★ perHit 全是 1，只表示「这一星级有没有这个被动」——
+       *   真正的门槛是 moveAt / healAt。
+       */
+      passive: {
+        kind: 'laugh',
+        perHit: { 1: 1, 2: 1, 3: 1 },
+        moveAt: 2,
+        healAt: 3,
+        healRadius: 1,     // 3×3
+        names: {
+          1: '笑气护体',
+          2: ['笑气护体', '边走边笑'],
+          3: ['笑气护体', '边走边笑', '笑传四方']
+        },
+        desc: '大笑期间大幅减伤并回血；2 星起可以边走边笑，3 星起治疗周围队友'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'bowman' ——
+      //   levels.js 的 30 多处阵容、tests 的断言、art/bowman.png 全部按 id 索引。
+      //   （原名叫「短弓手」，改成「荣誉」时 id 一个字都没动。）
+      id: 'bowman', name: '荣誉', emoji: '🏹', cost: 1, role: '远程',
+      traits: ['ranger', 'assassin'], color: '#6fbf73',
+      /* ★ 这一版是「慢枪手」：单次伤害翻倍（45 → 90）、攻速砍半（0.68 → 0.34）。
+         面板 DPS 一点没变（45 × 0.68 ≈ 90 × 0.34），变的是**出手节奏** ——
+         同样的输出被塞进一半的次数里，所以每一发都更重、更慢、更容易被读出来。
+         这是为了让「狙击」这个技能有性格：平时在憋，憋到了就是一发大的。 */
+      hp: 500, ad: 90, as: 0.34, armor: 18, mr: 20, range: 3, mana: 60,
+      skill: {
+        name: '狙击1', kind: 'snipe',
+        damage: 200,        // 基准伤害，实际打出去要再乘 mult
+        mult: 10,           // 命中就是 ×10
+        hitChance: 0.20,    // ★ 只有 20% 能打中
+        /* ★ 收费方式是「攻击计数」而不是法力：
+             开局白送一发，之后每 3 次普攻攒一发。
+             —— 荣誉的攻速砍到了 0.34，走法力的话一局只放得出 1~2 次技能，
+                那个 20% 的赌局基本轮不到发生；改成计数之后一局能开 4 枪左右，
+                「前两次必定命中」的保底也才真的会用完。
+             有 cast 字段的棋子完全不吃法力（见 battle.js 的 tryCast），
+             法力条改画「还差几次普攻」，满格就是要开枪了。 */
+        cast: { opening: true, perAttacks: 3 },
+        desc: '开局立刻狙击一次，之后每 3 次普攻再狙击一次；伤害 ×10，只有 20% 命中。'
+      },
+
+      /**
+       * 星级被动：运 / edg希望。
+       *
+       * kind: 'snipeSure' —— 触发点在 castSkill 的 snipe 分支里：
+       *   每局（= 每场战斗）**前 N 次狙击跳过掷骰子，直接判定命中**。
+       *
+       *   1 星  没有被动（老老实实赌那 20%）
+       *   2 星  「运」    每局第 1 次狙击必定命中
+       *   3 星  「edg希望」每局前 2 次狙击必定命中
+       *
+       * ★ 这里 perHit 装的是**次数**，不是百分比 —— 和其他几个 kind 不一样。
+       *   之所以还塞进 perHit，是为了复用 passiveStep/passiveName 那套
+       *   「按星级取一个正数、1 星取不到就是 0」的分派逻辑；
+       *   代价是 game.js 的文案必须按 kind 分支，不能无脑 ×100。
+       *   （真按 ×100 写会显示成「必定命中 100 次」，所以那里有一道注释拦着。）
+       *
+       * ★ 为什么「必定命中」是很有分量的升星收益：
+       *   攻速砍半 + 法力 60，一场战斗里它大概只放得出 1~2 次技能。
+       *   也就是说 3 星的「前两次」几乎等于**整场必中**，而 1 星是整场在赌 20%。
+       */
+      passive: {
+        kind: 'snipeSure',
+        perHit: { 2: 1, 3: 2 },
+        names: { 2: '运', 3: 'edg希望' },
+        desc: '每局的前若干次狙击必定命中'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'pyromancer' ——
+      //   levels.js 的阵容、tests 的断言、art/pyromancer.png 全按 id 索引。
+      //   （原名叫「火术士」，改成「羊帆」时 id 一个字都没动。）
+      id: 'pyromancer', name: '羊帆', emoji: '🐑', cost: 1, role: '法师',
+      traits: ['arcane', 'berserker'], color: '#f0784a',
+      /* ★★ 一只**天生迟钝**的角色：移速 -80%、攻速 -80%。
+       *
+       *   攻速直接写进面板（0.66 × 0.2 = 0.132，界面显示 0.13）——
+       *   和荣誉「慢枪手」那一版是同一个做法：**界面看到的数字就是打出来的数字**。
+       *   移速没有可显示的面板项（全场只有它和张雪峰会变），
+       *   所以走 slowMove 字段，由 battle.js 的 moveMul 读，README 里写明。
+       *
+       *   代价换来的是「羊巅峰」：一次普攻翻 20 倍。
+       *   面板 DPS 只有 45 × 0.132 ≈ 5.9，看起来是一张废卡 ——
+       *   但每 2 次普攻就有一次 ×20，实际等效倍率 10.5 倍。 */
+      hp: 560, ad: 45, as: 0.132, armor: 18, mr: 22, range: 2, mana: 60,
+      slowMove: 0.80,        // 移速 -80%（走一格 0.3s → 1.5s）
+      skill: {
+        name: '羊巅峰', kind: 'peak',
+        /* ★ 收费方式和荣誉一样是**攻击计数**（开局白送一发 + 每 2 次普攻一发）：
+             攻速砍到 0.132 之后走法力的话一局只放得出 1 次技能，
+             「下一次普攻 ×20」这个机制就基本轮不到发生。
+             每次计数到顶会先**蓄力 0.5 秒**（双眼射出激光，和荣誉同一段表现），
+             蓄力完才真的把 ×20 挂上去。 */
+        cast: { opening: true, perAttacks: 2 },
+        mult: 20,            // 下一次普攻伤害 ×20
+        callout: '羊巅峰',
+        desc: '双眼射出激光蓄力，下一次普攻伤害 ×20。'
+      },
+
+      /**
+       * 星级被动：笑上巅峰 / 巅峰谢幕 —— 两件事，各占一个星级门槛。
+       *
+       * kind: 'peak'
+       *   1 星  只有技能本身（蓄力 → 下一次普攻 ×20）
+       *   2 星 「笑上巅峰」  ×20 的那一下**把目标打晕 3 秒**，而且它会哈哈大笑
+       *   3 星 「巅峰谢幕」  阵亡时自爆：3×3 范围吃 **20 倍攻击力**的伤害
+       *                     并被震晕 3 秒（同样哈哈大笑）
+       *
+       * ★ 两层是**互相独立**的机制，不是"同一件事加强"：
+       *   2 星改的是"那一下打出去之后发生什么"，3 星改的是"它自己死的时候发生什么"。
+       *   写法上就是 stunAt / boomAt 两个门槛，各自读各自的字段 ——
+       *   以后想让 3 星也强化眩晕，只要在数据里加一行，不用动逻辑。
+       *
+       * ★ 3 星的自爆**整套复用牢大的「坠机」管线**（倒下 → 1 秒 → 3×3 爆炸）：
+       *   同一个 CFG.CRASH_DELAY、同一个 CFG.CRASH_RADIUS、同一套 anyPending
+       *   胜负挂账。区别只有两点：伤害是「攻击力 × 20」而不是固定值，
+       *   以及炸完之后不复活（羊帆没有复活那一条）。
+       *   ★ 伤害类型跟牢大一样是**物理**（吃护甲）—— 那是量出来的结论：
+       *     900 点无视防御的伤害曾经把 20 关的难度余量砸出 +74% 的断崖。
+       */
+      passive: {
+        kind: 'peak',
+        perHit: { 2: 1, 3: 1 },       // 1 星没有被动（名字返回 null，界面显示升星预告）
+        stunAt: 2, stunDur: 3,
+        boomAt: 3, boomAdMult: 20,
+        names: {
+          2: '笑上巅峰',
+          3: ['笑上巅峰', '巅峰谢幕']
+        },
+        desc: '2 星起巅峰一击眩晕三秒，3 星阵亡时自爆'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 保持 'wolfrider'（levels.js 的阵容、art/ 的文件名都按 id 索引）
+      id: 'wolfrider', name: '狼王', emoji: '🐺', cost: 1, role: '近战',
+      traits: ['berserker', 'colossus'], color: '#a0846a',
+      hp: 620, ad: 48, as: 0.70, armor: 26, mr: 24, range: 1, mana: 50,
+      skill: { name: '战意', kind: 'buff', stat: 'asPct', amount: 0.80, dur: 5, desc: '短时间内大幅提升自身攻速。' },
+
+      /**
+       * 星级被动：受伤回血（和「愤怒的普通人」的越打越快是两种不同的 kind）。
+       *
+       *   1 星  没有被动
+       *   2 星  「兽性」受到伤害（真的掉血才算法）回复最大生命 2%
+       *   3 星  「野性」回复 4%
+       *
+       * 和 frenzy 的区别：frenzy 是「自己出手」叠自己的攻速；
+       * hurtHeal 是「挨打」回自己的血 —— 所以触发点也不一样，
+       * 一个在 attackOnce 之后，一个在 afterDamage 里。
+       */
+      passive: {
+        kind: 'hurtHeal',
+        perHit: { 2: 0.02, 3: 0.04 },
+        names: { 2: '兽性', 3: '野性' },
+        desc: '受到伤害时回复自身最大生命（全被护盾挡下不算受伤）'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'acolyte' ——
+      //   levels.js 的 8 处阵容、tests 的断言、art/acolyte.png 全部按 id 索引。
+      //   （原名叫「修女」，改成「豆包」时 id 一个字都没动。）
+      id: 'acolyte', name: '豆包', emoji: '🥟', cost: 1, role: '辅助',
+      traits: ['healer', 'arcane'], color: '#e8d9a0',
+      hp: 520, ad: 38, as: 0.62, armor: 20, mr: 26, range: 2, mana: 60,
+      skill: { name: '治疗之光', kind: 'heal', target: 'lowest', amount: 240, desc: '治疗血量百分比最低的队友。' },
+
+      /**
+       * 星级被动：幻觉 / 开智。
+       *
+       * kind: 'healGift' —— 触发点在 healUnit 里：**豆包奶出去的每一口**，
+       *   都会给被治疗的那个人挂一个伤害改动（持续 seconds 秒，重复触发就刷新）。
+       *
+       *   1 星  没有被动（奶妈本分）
+       *   2 星  「幻觉」每次治疗 50% 让队友增伤 20%，另外 50% 让ta伤害降低 20%
+       *   3 星  「开智」不再掷骰子，必定增伤 20%
+       *
+       * ★ 为什么是「临时、可刷新」而不是「本局永久」：
+       *   被动写的是「每次治疗有 50% 概率」—— 如果效果永久，
+       *   多奶几口之后必定会掷出一次增伤，之后每口奶都不再有意义，
+       *   「50%」这个数字就退化成了「前几秒的随机启动时间」。
+       *   做成限时的，每一次治疗才都真的是一次重新掷骰子。
+       *
+       * ★ 增伤和减伤是**同一个骰子的两个面**，不是两次独立判定 ——
+       *   这正是「幻觉」的意思：她分不清自己在帮谁。
+       */
+      passive: {
+        kind: 'healGift',
+        perHit: { 2: 0.20, 3: 0.20 },   // 增伤/减伤的幅度
+        chance: 0.5,                    // 2 星的「好结果」概率；3 星忽略（必定成功）
+        seconds: 4,                     // 效果持续时间
+        names: { 2: '幻觉', 3: '开智' },
+        desc: '每次治疗都会给被治疗者挂上一个伤害改动（增伤或减伤），持续 4 秒'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'dagger' ——
+      //   levels.js 的 20 多处阵容、tests 的断言、art/dagger.png 全部按 id 索引。
+      //   改名字不要动 id。
+      id: 'dagger', name: '愤怒的普通人', emoji: '😠', cost: 1, role: '近战',
+      traits: ['assassin', 'berserker'], color: '#b06fa8',
+      hp: 560, ad: 52, as: 0.72, armor: 25, mr: 22, range: 1, mana: 60,
+      skill: { name: '狂怒一击', kind: 'nuke', damage: 240, desc: '对当前目标造成法术伤害。' },
+
+      /**
+       * 星级被动：越打越快。
+       *
+       * kind: 'frenzy' —— battle.js 里唯一的被动类型：每打一次普攻，
+       *   本局内攻速叠加一层，**永不衰减、不重置**（换目标、被眩晕都不清）。
+       *
+       * perHit 按星级给增量，所以：
+       *   1 星  没有被动（保持 1 费该有的样子）
+       *   2 星  「更加愤怒」每次攻击 +5% 攻速
+       *   3 星  「极度愤怒」每次攻击 +10% 攻速
+       * cap 是**叠加总量的上限**（+200% 攻速 = 3 倍出手速度），到了就不再涨。
+       *
+       * 为什么要星级门槛：这是「合成升星」在数值之外的第一份回报 ——
+       * 前两星只是面板 ×1.8 / ×3.24，一个 1 费卡值不值得留到 3 星
+       * 全靠这种「质变」来说服玩家。
+       */
+      passive: {
+        kind: 'frenzy',
+        perHit: { 2: 0.05, 3: 0.10 },
+        cap: 2.00,
+        names: { 2: '更加愤怒', 3: '极度愤怒' },
+        desc: '每次普攻在本局内叠加攻速，上限 +200%'
+      }
+    },
+    {
+      id: 'spearman', name: '长枪兵', emoji: '🔱', cost: 1, role: '近战',
+      traits: ['ironguard', 'ranger'], color: '#7f97b8',
+      hp: 600, ad: 46, as: 0.64, armor: 30, mr: 26, range: 2, mana: 60,
+      skill: { name: '穿刺投枪', kind: 'line', damage: 170, length: 3, desc: '朝目标方向直线穿刺，命中一整条线。' }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'vine' ——
+      //   levels.js 的阵容、tests 的断言、art/vine.png 全按 id 索引。
+      //   （原名叫「藤蔓精」，改成「嘉豪」时 id 一个字都没动。）
+      id: 'vine', name: '嘉豪', emoji: '🕶️', cost: 1, role: '前排',
+      traits: ['healer', 'colossus'], color: '#6fae5e',
+      hp: 640, ad: 40, as: 0.60, armor: 28, mr: 28, range: 1, mana: 60,
+      // 技能只改名字，数值一个字没动（眩晕 1.2 秒 + 90 伤害）
+      skill: { name: '男人领域', kind: 'stun', damage: 90, dur: 1.2, desc: '把目标拖进领域，眩晕并造成少量伤害。' },
+
+      /**
+       * 星级被动：两个男人 / 三个男人 —— 改的是**技能本身的参数**。
+       *
+       * kind: 'domain'
+       *   1 星  只控住锁定目标（和改名前完全一样）
+       *   2 星 「两个男人」  一次同时控 **2 个人**
+       *   3 星 「三个男人」  一次同时控 **3 个人**，并且**眩晕时间翻倍**（1.2 → 2.4 秒）
+       *
+       * ★ 这是目前唯一一个"改技能参数"而不是"触发时额外做点什么"的被动：
+       *   targets / durMul 在 buildSide 里按星级算好写进单位身上，
+       *   castSkill 直接读，技能代码里一句星级判断都没有。
+       * ★ 3 星的两件事（多一个人 + 时长翻倍）写在两个字段里，
+       *   而不是塞成一个"3 星特判" —— 以后想让 2 星也翻倍，
+       *   只要在 durMul 里加一行，不用动逻辑。
+       * ★ 时长翻倍的收益方向和人数不同：多控一个人是**控制面**，
+       *   翻倍时长是**控制深度**（这 2.4 秒里对方的输出窗口直接消失）。
+       *   两样都给 3 星，是为了让 1→2→3 每一级都能被玩家感觉出来。
+       */
+      passive: {
+        kind: 'domain',
+        perHit: { 1: 0, 2: 1, 3: 1 },      // 1 星没有被动（名字返回 null，界面显示升星预告）
+        targets: { 2: 2, 3: 3 },
+        durMul: { 3: 2 },
+        names: {
+          2: '两个男人',
+          3: ['两个男人', '三个男人']
+        },
+        desc: '2 星起一次同时控制多人，3 星起眩晕时间翻倍'
+      }
+    },
+
+    /* ============================================================
+     * 2 费（6 个）—— 中期主力
+     * ============================================================ */
+    {
+      id: 'crossbow', name: '弩手', emoji: '🎯', cost: 2, role: '远程',
+      traits: ['ranger', 'ironguard'], color: '#9db86a',
+      hp: 720, ad: 58, as: 0.70, armor: 26, mr: 24, range: 3, mana: 65,
+      skill: { name: '精准射击', kind: 'nuke', damage: 330, desc: '对当前目标造成法术伤害。' }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'ironwall' ——
+      //   levels.js 的 30 多处阵容、tests 的断言、art/ironwall.png 全部按 id 索引。
+      //   （原名叫「100元的鸭子」，改成「100元的鸭子」时 id 一个字都没动。）
+      id: 'ironwall', name: '100元的鸭子', emoji: '🦆', cost: 2, role: '前排',
+      traits: ['ironguard', 'colossus'], color: '#7a8794',
+      /* ★★ 血量砍到十分之一（950 → 95）。
+         这不是笔误 —— 它的全部生存能力都来自被动「抓娃娃」：
+         前 N 次挨打直接判 0 伤害。所以它是一张**次数盾**：
+         次数没耗完时它是一堵墙，耗完的那一瞬间它就没了。
+         血量必须低到这个程度，否则「次数盾 + 正常血量」会变成一个打不死的坦克。 */
+      hp: 95, ad: 55, as: 0.60, armor: 50, mr: 45, range: 1, mana: 70,
+      skill: { name: '钢铁壁垒', kind: 'shield', target: 'self', amount: 380, desc: '为自己套上厚护盾。' },
+
+      /**
+       * 星级被动：抓娃娃。
+       *
+       * kind: 'clawGuard' —— 敌人打过来的**前 N 次伤害判定直接无效**（判 0 伤害）。
+       *   1 星  前 20 次
+       *   2 星  前 30 次
+       *   3 星  前 40 次
+       *
+       * ★ 和「受伤回血」「幻觉」这些被动的最大区别：它拦的是**伤害本身**，
+       *   所以必须写在 dealDamage 的第一个岔口上 —— 写晚了（比如放在 afterDamage）
+       *   伤害已经结算完了，只能再补回来，日志里会出现「掉血又回血」的假象。
+       *
+       * ★ 计数是**总次数**，不区分是谁打的、也不区分普攻和技能 ——
+       *   「敌人前 N 次攻击无法对其造成伤害」按字面就是这个意思。
+       *   想改成「只挡普攻」的话，在 dealDamage 里加一个 kind 过滤就行。
+       *
+       * ★ perHit 装的是**次数**，不是百分比（和 snipeSure 一样）——
+       *   所以 game.js 的文案不能无脑 ×100。
+       */
+      passive: {
+        kind: 'clawGuard',
+        perHit: { 1: 20, 2: 30, 3: 40 },
+        names: { 1: '抓娃娃', 2: '抓娃娃', 3: '抓娃娃' },
+        desc: '敌人前若干次攻击无法对它造成伤害（1/2/3 星 = 20/30/40 次）'
+      }
+    },
+    {
+      id: 'frostmage', name: '冰霜法师', emoji: '❄️', cost: 2, role: '法师',
+      traits: ['arcane', 'healer'], color: '#6cc6e8',
+      hp: 700, ad: 60, as: 0.68, armor: 24, mr: 34, range: 3, mana: 70,
+      skill: { name: '寒霜新星', kind: 'aoe', damage: 260, radius: 1, desc: '在目标格炸开寒霜，波及相邻敌人。' }
+    },
+    {
+      id: 'twinblade', name: '双刃舞者', emoji: '⚔️', cost: 2, role: '近战',
+      traits: ['assassin', 'berserker'], color: '#c47ac0',
+      hp: 780, ad: 70, as: 0.75, armor: 30, mr: 30, range: 1, mana: 50,
+      skill: { name: '疾风连斩', kind: 'buff', stat: 'asPct', amount: 0.90, dur: 5, desc: '短时间内大幅提升自身攻速。' }
+    },
+    {
+      id: 'falconer', name: '猎鹰手', emoji: '🦅', cost: 2, role: '远程',
+      traits: ['ranger', 'assassin'], color: '#5fb3a1',
+      hp: 680, ad: 70, as: 0.72, armor: 22, mr: 28, range: 4, mana: 75,
+      skill: { name: '鹰击', kind: 'nuke', damage: 360, desc: '对当前目标造成法术伤害。' }
+    },
+    {
+      id: 'templar', name: '圣殿骑士', emoji: '🏛️', cost: 2, role: '前排',
+      traits: ['warden', 'ironguard'], color: '#d8c47a',
+      hp: 880, ad: 58, as: 0.62, armor: 45, mr: 42, range: 1, mana: 70,
+      skill: { name: '圣盾术', kind: 'shield', target: 'lowest', amount: 320, desc: '给血量百分比最低的队友套护盾。' }
+    },
+
+    /* ============================================================
+     * 3 费（4 个）—— 成型核心，功能性强
+     * ============================================================ */
+    {
+      id: 'alchemist', name: '炼金师', emoji: '⚗️', cost: 3, role: '辅助',
+      traits: ['arcane', 'healer'], color: '#8ecf6a',
+      hp: 1050, ad: 78, as: 0.70, armor: 30, mr: 40, range: 2, mana: 70,
+      skill: { name: '生命药剂', kind: 'heal', target: 'lowest', amount: 560, desc: '治疗血量百分比最低的队友。' }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'brute' ——
+      //   levels.js 的阵容、tests 的断言、art/brute.png 全部按 id 索引。
+      //   （原名叫「蛮牛」，改成「牢大」时 id 一个字都没动。）
+      id: 'brute', name: '牢大', emoji: '🐂', cost: 3, role: '近战',
+      traits: ['colossus', 'berserker'], color: '#a8763f',
+      hp: 1200, ad: 88, as: 0.72, armor: 45, mr: 38, range: 1, mana: 75,
+      skill: {
+        name: '肘击', kind: 'knockback',
+        damage: 440,        // 和原来的「蛮力冲撞」同数值
+        push: 2,            // 击退格数
+        /* ★ 技能喊话：放技能时在卡牌上方弹出这行字。
+           渲染层是**通用**的 —— 谁想喊什么就在自己的技能里写 callout，
+           不用为一句话去改 arena.js。 */
+        callout: 'Man！',
+        desc: '肘击当前目标造成法术伤害，并把它击退 2 格。'
+      },
+
+      /**
+       * 星级被动：坠机 / 孩子们我回来了 / 曼巴精神 —— **三层叠加，不是替换**。
+       *
+       * kind: 'crash' —— 牢大阵亡时不会立刻消失：
+       *   死亡 1 秒后一架直升机砸在它倒下的位置，
+       *   对 3×3 范围内的所有敌人造成大量真实伤害。
+       *
+       *   1 星  「坠机」            只有这一砸
+       *   2 星  +「孩子们我回来了」  砸完之后原地复活（半血）
+       *   3 星  +「曼巴精神」        复活之后技能冷却减半
+       *
+       * ★★ 和前几个被动的最大区别：**它是「死后」才生效的**，所以
+       *    `checkDeath` 之后不能马上判定胜负 —— 主循环里要为一个「还没落地」
+       *    的牢大留出这 1 秒（见 battle.js 的 pendingTick / anyPending）。
+       *    否则它会先被判定全灭，坠机永远打不出来。
+       *
+       * ★ perHit 在这里不是「幅度」而是「这一星级有没有这个被动」——
+       *   三种效果各自靠 reviveAt / cdCutAt 两个星级门槛单独开关，
+       *   因为它们是**累加**的（3 星同时拥有 2 星那条），
+       *   一个 perHit 数字表达不了。
+       */
+      passive: {
+        kind: 'crash',
+        perHit: { 1: 1, 2: 1, 3: 1 },
+        crashDamage: 900,     // 3×3 范围伤害（**物理**，吃护甲 —— 见 battle.js pendingTick 的说明）
+        crashDelay: 1.0,      // 死亡到坠毁之间的那 1 秒
+        reviveAt: 2,          // 2 星起：坠毁后复活
+        maxRevives: 1,        // ★ 一局只复活一次（第二次阵亡就真的退场了）
+        reviveHpPct: 0.5,     // 复活时的血量比例
+        cdCutAt: 3,           // 3 星起：复活后技能冷却减半
+        cdCutPct: 0.5,
+        names: {
+          1: '坠机',
+          2: '孩子们我回来了',
+          3: ['孩子们我回来了', '曼巴精神']   // ★ 3 星是两个名字叠在一起
+        },
+        desc: '阵亡 1 秒后直升机坠毁，对 3×3 范围内敌人造成大量伤害；2 星起坠毁后复活'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'windcaller' ——
+      //   levels.js 的阵容、tests 的断言、art/windcaller.png 全按 id 索引。
+      //   （原名叫「风语者」，改成「楚生疑犯」时 id 一个字都没动。）
+      id: 'windcaller', name: '楚生疑犯', emoji: '🌧️', cost: 3, role: '法师',
+      traits: ['arcane', 'ranger'], color: '#9ad3d8',
+      hp: 980, ad: 84, as: 0.74, armor: 26, mr: 38, range: 3, mana: 75,
+      /**
+       * 技能「阴暗领域」：在目标格上方撑起一片**会变黑、会下雨**的区域。
+       *
+       *   ★ 原来的「飓风领域」是一发 340 点的范围伤害（kind: 'aoe'）。
+       *     现在**伤害整条去掉了**，换成一片持续的区域效果 ——
+       *     这是游戏里第一个"留在场上的地形"，而不是一次性结算的技能。
+       *     所以它是一个新的 kind（field），不是 aoe 加了几个参数。
+       *
+       *   领域里发生三件事：
+       *     · 敌人攻速/移速**减半**（乘在最后，和冰棍同一层）
+       *     · 2 星起，领域里的队友少受 **30%** 的敌人伤害
+       *     · 3 星起，施法者自己**遁入暗影**（见 passive）
+       */
+      skill: {
+        name: '阴暗领域', kind: 'field',
+        radius: 4,        // ★ 范围翻倍：原来的 2 → 4（9×9，几乎罩住整个棋盘）
+        dur: 6,           // 领域持续 6 秒（区域效果总得有个头，不然就是永久地形）
+        asCut: 0.5,       // 领域内敌人攻速/移速 ×0.5
+        desc: '在目标格撑起一片阴暗领域：范围内变黑下雨，敌人的攻速与移速减半。'
+      },
+
+      /**
+       * 星级被动：同伙掩护 / 遁入暗影。
+       *
+       * kind: 'field'
+       *   1 星  只有领域本身（敌人减半，队友不受益，自己也不变）
+       *   2 星 「同伙掩护」  领域内的**队友**少受 30% 的敌人伤害
+       *   3 星 「遁入暗影」  每次放完技能，自己**全局遁入暗影**：
+       *                      攻速减半、伤害翻倍、免疫一切伤害、也不会被索敌，
+       *                      **直到队友全部阵亡**才现形
+       *
+       * ★ 3 星那一条的后半句（"直到队友全部阵亡"）**不是风味，是终止条件**：
+       *   一个免疫一切伤害又不会被索敌的单位，如果永远不现形，
+       *   这场战斗就永远打不完 —— 只能拖到 60 秒读秒判平局。
+       *   所以"只剩自己一个人"时暗影必须自动解除（见 battle.js 的 shadowTick）。
+       *
+       * ★ 攻速减半 + 伤害翻倍是一组**对冲**：面板 DPS 大致不变，
+       *   变的是"它现在是一个打不死的幽影"。真正的收益来自免疫和不可索敌。
+       */
+      passive: {
+        kind: 'field',
+        perHit: { 2: 1, 3: 1 },       // 1 星没有被动（名字返回 null，界面显示升星预告）
+        allyCutAt: 2, allyCut: 0.30,  // 2 星起：领域内队友 -30% 受到的伤害
+        shadowAt: 3, shadowAsCut: 0.5, shadowDmgMul: 2,
+        names: {
+          2: '同伙掩护',
+          3: ['同伙掩护', '遁入暗影']
+        },
+        desc: '2 星起领域保护队友，3 星起放完技能自己遁入暗影'
+      }
+    },
+    {
+      id: 'medic', name: '战地医师', emoji: '💉', cost: 3, role: '辅助',
+      traits: ['healer', 'warden'], color: '#e0e0e0',
+      hp: 1000, ad: 74, as: 0.68, armor: 32, mr: 38, range: 2, mana: 70,
+      skill: { name: '战地救护', kind: 'heal', target: 'lowest', amount: 620, desc: '治疗血量百分比最低的队友。' }
+    },
+
+    /* ============================================================
+     * 4 费（4 个）—— 稀有。要 5 级才有概率刷出来
+     * ============================================================ */
+    {
+      id: 'abyss', name: '深渊祭司', emoji: '🕳️', cost: 4, role: '法师',
+      traits: ['arcane', 'assassin'], color: '#8a6fd0',
+      hp: 1250, ad: 108, as: 0.78, armor: 36, mr: 48, range: 3, mana: 85,
+      skill: { name: '深渊吞噬', kind: 'nuke', damage: 950, desc: '对当前目标造成大量法术伤害。' }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'deadeye' ——
+      //   levels.js 的阵容、tests 的断言、art/deadeye.png 全按 id 索引。
+      //   （原名叫「神射手」，改成「Dank1ng」时 id 一个字都没动。）
+      id: 'deadeye', name: 'Dank1ng', emoji: '🎯', cost: 4, role: '远程',
+      traits: ['ranger', 'arcane'], color: '#d8b45f',
+      hp: 1150, ad: 115, as: 0.82, armor: 36, mr: 38, range: 4, mana: 80,
+      /**
+       * 技能「先过中门再谈未来」：一发**瞬发**的重击。
+       *
+       *   ★ 和原来的「贯穿之矢」比，改了三件事：
+       *     ① kind 从 line 换成 nuke —— **不再贯穿敌人**，只打当前目标
+       *     ② 伤害翻倍（720 → 1440）
+       *     ③ 技能击杀会留下骷髅，并且自己耍 3 秒折叠刀（这 3 秒不攻击）
+       *
+       *   ★ 「瞬发」在这里是**结构性**的，不是一个形容词：
+       *     计数型技能（荣誉 / 羊帆）要先蓄力 CHARGE_TIME 秒，
+       *     而法力型技能（这一条）法力一满就当场结算 —— 没有蓄力窗口。
+       *     所以数据里**不写 cast 字段**，也就不会走 tryCast 的蓄力分支。
+       */
+      skill: {
+        name: '先过中门再谈未来', kind: 'nuke',
+        damage: 1440,          // ★ 翻倍（原来是 720）
+        killSkull: true,       // 技能击杀 → 原地留一个骷髅
+        knifeDur: 3,           // 然后耍 3 秒折叠刀，这 3 秒里不攻击
+        desc: '瞬发：对当前目标造成翻倍的重击（不再贯穿）。击杀目标会在原地留下骷髅，自己耍 3 秒折叠刀不再攻击。'
+      },
+
+      /**
+       * 星级被动：空悲切 / 老男孩 / 锁头。
+       *
+       * kind: 'loneWolf'
+       *   1 星 「空悲切」   **所有队友阵亡后立刻恢复无限能量**（这是个"绝境"被动）
+       *   2 星 「老男孩」   开局满能量
+       *   3 星 「锁头」     能量回复翻倍 + 击杀敌人自动回满能量
+       *
+       * ★ 这个棋子的三层是**三条独立规则**，不是"同一件事加强"：
+       *   1 星管"绝境爆发"、2 星管"开局节奏"、3 星管"续航"。
+       *   所以数据上是三个门槛（perHit 只用来告诉界面"这一星级有没有被动"）。
+       *
+       * ★★ 「无限能量」的准确含义是：**法力永远满格**。
+       *   实现方式是 gainMana 直接把它顶到 maxMana（见 battle.js）——
+       *   而不是"每 tick 回满"。后者会让 tryCast 每 1/30 秒命中一次，
+       *   变成一秒 30 发核弹。现在它仍然受两件事约束：
+       *     ① 每次施法把法力清零，要等**下一次涨法力**（一次普攻 / 挨一次打）
+       *     ② CFG.CAST_LOCK —— 同一个单位两次施法之间至少隔半秒
+       *   所以"无限"说的是**不会因为能量不够而放不出技能**，不是"无限次/秒"。
+       */
+      passive: {
+        kind: 'loneWolf',
+        perHit: { 1: 1, 2: 1, 3: 1 },   // 1 星就有被动（空悲切）
+        startFullAt: 2,                  // 老男孩：开局满能量
+        regenMulAt: 3, regenMul: 2,      // 锁头：能量回复翻倍
+        killRefillAt: 3,                 // 锁头：击杀回满能量
+        names: {
+          1: '空悲切',
+          2: ['空悲切', '老男孩'],
+          3: ['空悲切', '老男孩', '锁头']
+        },
+        desc: '队友全部阵亡后恢复无限能量；2 星开局满能量，3 星能量回复翻倍且击杀回满'
+      }
+    },
+    {
+      id: 'butcher', name: '血月屠夫', emoji: '🪓', cost: 4, role: '近战',
+      traits: ['berserker', 'colossus'], color: '#c0392b',
+      hp: 1600, ad: 118, as: 0.74, armor: 58, mr: 50, range: 1, mana: 80,
+      skill: { name: '血月斩', kind: 'aoe', damage: 580, radius: 1, desc: '在目标格斩出一刀血月，波及相邻敌人。' }
+    },
+    {
+      id: 'earthwarden', name: '大地守护', emoji: '🌳', cost: 4, role: '辅助',
+      traits: ['warden', 'healer'], color: '#5f9e6e',
+      hp: 1450, ad: 98, as: 0.68, armor: 55, mr: 55, range: 2, mana: 75,
+      skill: { name: '大地庇护', kind: 'shield', target: 'lowest', amount: 880, desc: '给血量百分比最低的队友套巨额护盾。' }
+    },
+
+    /* ============================================================
+     * 5 费（2 个）—— 传说。只有 6 级、且概率很低才刷得到。
+     * 技能是全场唯一的机制，一张牌就能改变一场战斗。
+     * ============================================================ */
+    {
+      id: 'titan', name: '山岳', emoji: '🗿', cost: 5, role: '前排',
+      traits: ['colossus', 'ironguard'], color: '#6e7b88',
+      hp: 1800, ad: 105, as: 0.68, armor: 70, mr: 65, range: 1, mana: 70,
+      skill: {
+        name: '不动如山', kind: 'aegis', amount: 620,
+        desc: '给全队每个队友都套上一层护盾 —— 一个人就是一道防线。'
+      }
+    },
+    {
+      // ★ 名字只影响界面显示，id 必须保持 'blademaster' ——
+      //   levels.js 的 20 多处阵容、tests 的断言、art/blademaster.png 全按 id 索引。
+      //   （原名叫「剑圣」，改成「张雪峰」时 id 一个字都没动。）
+      id: 'blademaster', name: '张雪峰', emoji: '❄️', cost: 5, role: '近战',
+      traits: ['berserker', 'assassin'], color: '#e06a6a',
+      hp: 1750, ad: 135, as: 0.88, armor: 48, mr: 45, range: 1, mana: 55,
+      skill: {
+        name: '万剑归宗', kind: 'whirl', damage: 560, radius: 1,
+        desc: '以自身为中心斩出一圈剑气，命中周围所有敌人。'
+      },
+
+      /**
+       * 星级被动：你快不过我你信吗 / 巧乐兹 / 雪毙 —— 三层叠加。
+       *
+       * kind: 'overclock'
+       *   1 星 「你快不过我你信吗」
+       *        · 初始攻速 +100%、移速 +100%
+       *        · 每次普攻再叠 +2% 攻速，**没有上限**
+       *        · 攻速加成到 +200% 之后开始**每秒失去当前生命的 44%**（自爆）
+       *        · 普攻是**单体**（范围留给 3 星）
+       *   2 星 「巧乐兹」
+       *        · 每次普攻给被打到的敌人 +1 层「冰棍」
+       *        · 每层 -5% 攻速 / -5% 移速；满 10 层冰冻 3 秒并清空
+       *   3 星 「雪毙」
+       *        · 攻速加成到 +200% 之后，攻击力 +78%
+       *        · ★ 普攻**升级成 3×3 范围**（1/2 星是单体）
+       *
+       * ★★ 「攻速达到 200%」算的是**加成**（+200% = 三倍出手速度），
+       *    和「愤怒的普通人」那句「上限 +200%」是同一套口径 ——
+       *    不是"每秒攻击 2 次"。按后者算的话 0.88 基础攻速只要 6 次普攻
+       *    就触发自爆，这个角色根本活不过 5 秒。
+       *
+       * ★★ 这是一个**限时超频**的设计：开局猛，约 25 秒后开始自毁。
+       *    所以它必须被做得足够强（5 费），否则就是一张自杀卡。
+       *
+       * ★ 移速是**这个游戏里第一个会变的单位属性**（原来所有棋子都是
+       *   0.3 秒一格）。实现上是在走位计时器上加一个倍率，见 battle.js 的
+       *   moveMul()。冰棍的减速也走同一条路。
+       *
+       * ★ perHit 全是 1，只表示「这一星级有没有这个被动」——
+       *   三种效果各自靠 chillAt / ocAdAt 两个门槛单独开关，因为它们是叠加的。
+       */
+      passive: {
+        kind: 'overclock',
+        perHit: { 1: 1, 2: 1, 3: 1 },
+        ocAsStart: 1.00,       // 开局就有的攻速加成
+        ocMoveStart: 1.00,     // 开局就有的移速加成
+        ocPerHit: 0.02,        // 每次普攻再叠多少
+        ocThreshold: 2.00,     // 到这条线开始自毁
+        ocBurnPct: 0.44,       // 每秒失去当前生命的比例
+        ocAoeRadius: 1,        // 普攻的范围半径（1 = 3×3）
+        ocAoeAt: 3,            // ★ 3 星起普攻才是范围；1/2 星是单体
+        chillAt: 2,            // 2 星起：冰棍
+        chillPerHit: 1,
+        chillPerStack: 0.05,
+        chillMax: 10,
+        freezeDur: 3,
+        ocAdAt: 3,             // 3 星起：雪毙
+        ocAdPct: 0.78,
+        names: {
+          1: '你快不过我你信吗',
+          2: ['你快不过我你信吗', '巧乐兹'],
+          3: ['你快不过我你信吗', '巧乐兹', '雪毙']
+        },
+        desc: '开局攻速移速翻倍；攻速叠到 +200% 后每秒自毁 44% 生命；3 星普攻变 3×3'
+      }
+    }
+  ];
+
+  /* ---------- 查表索引 ---------- */
+
+  ST.UNITS_BY_COST = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  ST.UNIT_BY_ID = {};
+  for (var i = 0; i < ST.UNITS.length; i++) {
+    var u = ST.UNITS[i];
+    ST.UNIT_BY_ID[u.id] = u;
+    if (!ST.UNITS_BY_COST[u.cost]) ST.UNITS_BY_COST[u.cost] = [];
+    ST.UNITS_BY_COST[u.cost].push(u);
+  }
+
+  /** 有几个费用档（商店概率表的长度必须跟它一致） */
+  ST.COST_TIERS = 5;
+
+  /** 每个费用档各有多少棋子 —— 用来检查商店池够不够抽 */
+  ST.costCounts = function () {
+    var out = [];
+    for (var c = 1; c <= ST.COST_TIERS; c++) out.push((ST.UNITS_BY_COST[c] || []).length);
+    return out;
+  };
+
+  /**
+   * 算出一个棋子在某星级、带某些装备、外加羁绊加成之后的最终面板。
+   * 界面和模拟器都走这一个函数，保证「界面看到的数字」就是「打出来的数字」。
+   */
+  ST.resolveStats = function (def, star, itemIds, teamMods) {
+    var scale = ST.STAR_SCALE[star] || 1;
+    var mods = {};
+    ST.U.addMods(mods, teamMods || {}, 1);
+    ST.U.addMods(mods, ST.resolveItems(itemIds), 1);
+
+    var baseHp = def.hp * scale;
+    var baseAd = def.ad * scale;
+
+    var maxHp = (baseHp + (mods.hp || 0)) * (1 + (mods.hpPct || 0));
+    var ad = baseAd * (1 + (mods.adPct || 0));
+    var as = def.as * (1 + (mods.asPct || 0));
+
+    return {
+      maxHp: Math.round(maxHp),
+      ad: ST.U.round2(ad),
+      as: ST.U.round2(as),
+      ap: ST.U.round2(1 + (mods.apPct || 0)),
+      armor: ST.U.round2(def.armor + (mods.armor || 0)),
+      mr: ST.U.round2(def.mr + (mods.mr || 0)),
+      range: def.range,
+      critChance: ST.U.round2(0.15 + (mods.critChance || 0)),
+      critMult: ST.U.round2(1.5 + (mods.critMult || 0)),
+      startShield: Math.round(mods.startShield || 0),
+      regenPct: mods.regenPct || 0,
+      manaStart: Math.round(mods.manaStart || 0),
+      lifesteal: mods.lifesteal || 0,
+      thornPct: mods.thornPct || 0,
+      shieldPct: 1 + (mods.shieldPct || 0)
+    };
+  };
+
+  /** 粗略 DPS，用于平衡实验页排序（忽略护甲/技能） */
+  ST.rawDps = function (def, star, itemIds, teamMods) {
+    var s = ST.resolveStats(def, star, itemIds, teamMods);
+    var crit = 1 + s.critChance * (s.critMult - 1);
+    return ST.U.round1(s.ad * s.as * crit);
+  };
+
+  /** 粗略有效生命（忽略技能/治疗），只算护甲与魔抗的平均减伤 */
+  ST.rawEhp = function (def, star, itemIds, teamMods) {
+    var s = ST.resolveStats(def, star, itemIds, teamMods);
+    var avgReduction = (100 / (100 + s.armor) + 100 / (100 + s.mr)) / 2;
+    return Math.round((s.maxHp + s.startShield) / avgReduction);
+  };
+})();
