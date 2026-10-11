@@ -1,0 +1,1394 @@
+/* ============================================================
+ * 科币战争 · 巴巴博弈 — 游戏界面
+ *
+ * 视觉方向：淡绿 + 浅灰的「高级山谷」。做法是
+ *   底：浅绿到浅灰的竖向渐变
+ *   中：两层柔和的径向渐变当远山，压在下缘
+ *   上：一层白色薄雾，让远处的山「虚」掉
+ * 面板用半透明白 + 极淡的描边 + 柔和投影，不用重色块，保持通透感。
+ *
+ * 两个结构决定：
+ *   1. 准备阶段的棋盘用 DOM（要点击交互），战斗用 canvas（要动画）。
+ *      两边格子尺寸都是 --cell，所以「棋盘 → 战斗」切换时画面不跳。
+ *   2. 每个棋子都有 .u-art 插槽 —— 把立绘丢进 art/ 就自动换上，
+ *      没图就退回「主色渐变 + emoji」，永远不会出现破图。
+ * ============================================================ */
+
+:root {
+  /* 山谷底色 */
+  --bg-top: #f7faf5;
+  --bg-mid: #edf3ea;
+  --bg-bot: #e2ebdf;
+  --mist: rgba(255, 255, 255, .62);
+
+  /* 面板 */
+  --panel: #ffffff;
+  --panel-soft: rgba(255, 255, 255, .80);
+  --panel-2: #f3f7f1;
+  --panel-3: #e9f0e6;
+  --line: #d2ddcc;
+  --line-2: #b8c8b2;
+  --line-3: #9fb39a;
+
+  /* 文字 */
+  --ink: #26332b;
+  --ink-2: #55655b;
+  --ink-3: #8b9a90;
+  --ink-4: #a9b6ad;
+
+  /* 强调色 */
+  --forest: #2f6b4f;
+  --forest-2: #3f8f68;
+  --brass: #a8842f;
+  --brass-2: #c9a34a;
+  --rose: #b8503f;
+  --sky: #3f7fa8;
+  --violet: #6b5fa8;
+
+  /* 费用配色：灰 / 绿 / 蓝 / 紫 / 金（和 ST.COST_COLORS 保持一致） */
+  --c1: #8b98a3;
+  --c2: #3f8f5e;
+  --c3: #3f7fa8;
+  --c4: #6b5fa8;
+  --c5: #b8892f;
+
+  /* 阴影 */
+  --sh-1: 0 1px 2px rgba(38, 51, 43, .05), 0 2px 6px rgba(38, 51, 43, .05);
+  --sh-2: 0 3px 12px rgba(38, 51, 43, .09);
+  --sh-3: 0 12px 34px rgba(38, 51, 43, .16);
+
+  /* ---------- 格子大小：准备阶段和战斗阶段**共用一个 --cell** ----------
+   *
+   * ★ 这是「布阵怎么摆、打起来就在哪」的实现基础。
+   *
+   *   两边的格子必须同规格（同样的 --cell、同样的 --gap），因为
+   *   战斗画布上的我方半场**就是**布阵盘那 4 行平移下去 ——
+   *   阵型一样大、列位置逐列重合、间距也一样。
+   *   只要有一边用了不同的格子或不同的间距，玩家摆好的阵就会
+   *   「看起来被缩了一下」，行列对不上。
+   *   （之前的 bug 正是这个：画布把 CELL 同时当格子大小和间距用，
+   *     每列少算 8px，8 列累计差 56px。）
+   *
+   *   --cell 取五个上限的最小值：
+   *     ① --cell-max                       设计上限（想要多大）
+   *     ② (100vh - --cell-chrome) / 4      准备阶段：纵向挤得出来的（4 行）
+   *     ③ --cell-w                          准备阶段：横向扣掉两侧栏剩下的
+   *     ④ --arena-h                         战斗阶段：纵向放得下 8 行
+   *     ⑤ --arena-w                         战斗阶段：横向放得下 8 列
+   *
+   *   为什么必须这么写：写死 96px 的时候，1366×768 上纵向只剩 142px，
+   *   装不下 322px 的地图，地图溢出后直接盖在对手情报条和回合记录上面
+   *   （body 是 overflow:hidden，所以「看不出来」但确实压住了）。
+   *   现在不管屏幕什么形状，都解得出一个两边都装得下的值。
+   *
+   *   --cell-chrome = 准备阶段除格子以外所有纵向固定开销之和
+   *   （HUD + 商店 + 备战池 + 地图标签 + 各种间距），每个高度档位实测一次。
+   */
+  --cell-max: 120px;
+  --cell-chrome: 492px;                  /* 实测 484 + 8 余量 */
+  --gap: 8px;                   /* 格子间距：卡牌比格子大，所以这里要留够，绝不能重叠 */
+
+  /* 准备阶段侧栏宽度：固定 306px 在宽屏上没问题，但在 1024 宽的窗口里
+     两栏就吃掉 612px，地图只剩 36px 格子 —— 小到没法玩。 */
+  --side-w: min(306px, 19vw);
+  /* 横向：减去两侧栏 + 两处栏间距 28 + 主区内边距 40 + 格子之间的 7 个 gap 56 = 124。
+     ★ 这 56 一定要减：地图宽度是 8*格子 + 7*gap，只减 68 的话
+       格子一旦接近上限，地图就会比预算宽 56px，挤到侧栏上去。 */
+  --cell-w: calc((100vw - 2 * var(--side-w) - 124px) / 8);
+
+  /* 战斗阶段：左右两栏（对阵+播放 / 战报）跟着视口收。
+     它们只是配角，不能让它们把战场挤小 —— 战场是 8 格 + 7 个间距的正方形。 */
+  --ticker-w: min(300px, 21vw);
+  --combat-side-w: min(180px, 13vw);
+  /* 纵向：HUD 51 + 战斗区内边距 24 + 7 个 gap 56 + 6px 余量 = 137 → 137+ 才安全 */
+  --arena-h: calc((100vh - 136px) / 8);
+  /* 横向：内边距 40 + 两处间距 40 + 7 个 gap 56 + 8px 余量 = 144 */
+  --arena-w: calc((100vw - 144px - var(--ticker-w) - var(--combat-side-w)) / 8);
+
+  --cell: min(var(--cell-max),
+              calc((100vh - var(--cell-chrome)) / 4),
+              var(--cell-w),
+              var(--arena-h),
+              var(--arena-w));
+  /* ★ --cell-r：运行时由 arena.js 写回**取整后**的格子像素。
+     为什么需要它：--cell 是 min(100vh 那些算出来的)，值通常是小数（如 85.6）。
+     画布是位图，格子必须取整（不然 8 格累计会多出几像素、撑出滚动条）；
+     但如果只有画布取整、布阵盘还按 85.6 排版，两边每列就差 0.6px、
+     8 列累计又是 4px 的错位 ——「布阵怎么摆、打起来就在哪」就不成立了。
+     所以由 arena.js 算出整数、写回这一条，两边用同一个值。
+     JS 没跑起来时它退化成 --cell（小数），只是差不到 1px，不会崩。 */
+  --cell-r: var(--cell);
+  --shop-card-max: 152px;
+  /* 商店卡：5 张一排 + 4 个 gap 14 + 与右侧操作列的间距 16 + 操作列 196 + 内边距 40
+     = 5*卡宽 + 308。所以卡宽 ≤ (视口 - 310) / 5，否则窄窗口下商店会横着溢出去。 */
+  --shop-card: min(var(--shop-card-max), calc((100vw - 310px) / 5));
+  --shop-h: 204px;
+  --bench-cell: 70px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg-top); color: var(--ink); overflow: hidden;
+  font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+#app { position: absolute; inset: 0; }
+button { font: inherit; color: inherit; }
+.note { color: var(--ink-3); font-size: 11.5px; }
+
+/* ============================================================
+ * 场景
+ * ============================================================ */
+.scene {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .22s ease;
+  background:
+    radial-gradient(ellipse 88% 44% at 50% 106%, rgba(150, 190, 142, .40) 0%, transparent 72%),
+    radial-gradient(ellipse 86% 36% at 50% 114%, rgba(128, 174, 120, .30) 0%, transparent 72%),
+    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 46%, var(--bg-bot) 100%);
+}
+.scene.scene-on { opacity: 1; visibility: visible; pointer-events: auto; }
+.scene.scene-out { opacity: 0; }
+/* 入场动画向上起步，再落到最终位置。
+ *
+ * ★ 原来是从 translateY(+8px) 起步：场景整块被往下推 8px，而场景正好占满视口，
+ *   于是这 0.3 秒里最底下的备战池会被切掉 8px。改成向上起步就没这个问题 ——
+ *   动画期间内容只会比最终位置更高，多出来的那 6px 落在 HUD 的 10px 上边距里。
+ *   （这同时是几何自检能在无头浏览器里成立的前提：无头不驱动 rAF，
+ *    动画会永久停在起始帧，向下起步就等于「底部一直超出视口」。） */
+.scene.scene-in { animation: scenePop .3s cubic-bezier(.2, .9, .3, 1) both; }
+@keyframes scenePop {
+  from { opacity: 0; transform: translateY(-6px) scale(.998); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 场景里的正文一律抬到背景之上。
+   （.valley 是定位元素，不给 z-index 的话它会盖住正文。）
+   注意这条要放在最前面：后面的 .valley / .overlay 有更明确的规则会覆盖它。 */
+.scene > * { position: relative; z-index: 1; }
+
+#veil {
+  position: absolute; inset: 0; z-index: 60;
+  background: #f2f6f0; opacity: 0; visibility: hidden;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity .28s ease;
+}
+#veil.veil-on { opacity: 1; visibility: visible; }
+#veil-label {
+  color: var(--forest); font-size: 15px; letter-spacing: 3px; font-weight: 600;
+}
+
+/* ============================================================
+ * 「高级山谷」背景
+ *
+ * 做法：SVG 画四道真实曲线山脊（越远越淡、越虚），
+ * 叠两条会缓慢飘动的薄雾带、一束从太阳斜下来的光、
+ * 一层暗角、一层极细的颗粒。这样才有「远—中—近」的空间感，
+ * 而不是几个平铺的色块。
+ *
+ * 内容元素统一给 z-index:1，保证压在背景之上（.valley 是定位元素，
+ * 不给的话它会盖住正文）。
+ * ============================================================ */
+.svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+.valley { position: absolute; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
+.valley-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.valley.subdued { opacity: .34; }
+.valley.subdued .scrim {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .72) 0%, rgba(255, 255, 255, .32) 55%, rgba(255, 255, 255, .58) 100%);
+}
+
+/* 会飘的薄雾带 —— 位置错开、速度不同，就有了空气感 */
+.mist-band {
+  position: absolute; left: -30%; right: -30%; height: 190px;
+  background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(255, 255, 255, .95) 0%, rgba(255, 255, 255, 0) 72%);
+  filter: blur(22px);
+  animation: mistDrift 46s ease-in-out infinite alternate;
+}
+.mist-band.mb1 { top: 34%; animation-duration: 52s; }
+.mist-band.mb2 { top: 52%; opacity: .8; animation-duration: 38s; animation-direction: alternate-reverse; }
+@keyframes mistDrift {
+  from { transform: translateX(-5%); }
+  to { transform: translateX(5%); }
+}
+
+/* 从太阳斜下来的光柱 */
+.rays {
+  position: absolute; left: 50%; top: -8%; width: 46%; height: 96%;
+  transform: translateX(-50%) rotate(11deg);
+  background: repeating-linear-gradient(96deg,
+    rgba(255, 255, 255, 0) 0px,
+    rgba(255, 255, 255, .40) 26px,
+    rgba(255, 255, 255, 0) 84px,
+    rgba(255, 255, 255, .24) 128px,
+    rgba(255, 255, 255, 0) 210px);
+  filter: blur(16px);
+  opacity: .5;
+  animation: rayBreathe 16s ease-in-out infinite;
+}
+@keyframes rayBreathe {
+  0%, 100% { opacity: .38; transform: translateX(-50%) rotate(11deg) scaleY(1); }
+  50% { opacity: .60; transform: translateX(-50%) rotate(11deg) scaleY(1.05); }
+}
+
+.vignette {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 76% 68% at 50% 44%, rgba(255, 255, 255, 0) 42%, rgba(74, 104, 78, .16) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, .38) 0%, rgba(255, 255, 255, 0) 22%);
+}
+/* 极细颗粒，去掉「塑料感」 */
+.grain {
+  position: absolute; inset: 0; opacity: .09;
+  background-image: radial-gradient(rgba(38, 51, 43, .55) .5px, transparent .5px);
+  background-size: 3px 3px;
+}
+
+/* ---------- 封面 ---------- */
+#scene-cover {
+  align-items: center; justify-content: center;
+  background: linear-gradient(180deg, #fdfefb 0%, #eef5ea 46%, #dbe7d6 100%);
+}
+.cover-bg { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
+.float-unit {
+  position: absolute; bottom: -70px; color: #5c7d63;
+  animation-name: floatUp; animation-timing-function: linear; animation-iteration-count: infinite;
+  filter: blur(.8px);
+}
+@keyframes floatUp {
+  0%   { transform: translateY(0) rotate(0deg); }
+  100% { transform: translateY(-114vh) rotate(22deg); }
+}
+
+.cover-inner {
+  position: relative; z-index: 3;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 26px; padding: 20px;
+}
+.logo { text-align: center; }
+.logo-mark {
+  font-size: 52px; line-height: 1; margin-bottom: 4px;
+  filter: drop-shadow(0 6px 16px rgba(63, 111, 76, .28));
+  animation: markFloat 4.5s ease-in-out infinite;
+}
+@keyframes markFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.logo h1 {
+  margin: 0; font-weight: 900; color: var(--forest);
+  font-size: clamp(52px, 7.4vw, 96px);
+  letter-spacing: .12em; text-indent: .12em; line-height: 1.08;
+  text-shadow: 0 2px 0 #ffffff, 0 10px 30px rgba(47, 107, 79, .22);
+}
+.logo-sub {
+  margin-top: 2px; font-size: clamp(19px, 2.1vw, 28px); font-weight: 700;
+  letter-spacing: .34em; text-indent: .34em; color: var(--brass);
+  text-shadow: 0 1px 0 #fff;
+}
+.logo-tag {
+  margin-top: 14px; font-size: 13.5px; color: var(--ink-2); letter-spacing: .16em;
+}
+
+.cover-menu { display: flex; flex-direction: column; gap: 11px; width: 400px; }
+.menu-btn {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  padding: 14px 18px; cursor: pointer; text-align: left;
+  background: var(--panel-soft); border: 1px solid var(--line-2); border-radius: 12px;
+  box-shadow: var(--sh-1); backdrop-filter: blur(6px);
+  transition: transform .13s ease, border-color .13s ease, box-shadow .13s ease;
+}
+.menu-btn:hover { transform: translateY(-2px); border-color: var(--forest-2); box-shadow: var(--sh-2); }
+.menu-btn:active { transform: translateY(0); }
+.menu-btn .mb-icon { font-size: 25px; width: 34px; text-align: center; }
+.menu-btn .mb-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.menu-btn .mb-text b { font-size: 15.5px; letter-spacing: .08em; color: var(--ink); }
+.menu-btn .mb-text i { font-style: normal; font-size: 11.5px; color: var(--ink-3); }
+.menu-btn .mb-arrow { font-size: 21px; color: var(--ink-4); }
+.menu-btn.primary {
+  background: linear-gradient(180deg, #ffffff, #f2f8f0);
+  border-color: var(--forest-2); box-shadow: 0 4px 18px rgba(47, 107, 79, .16);
+}
+.menu-btn.primary:hover { border-color: var(--forest); box-shadow: 0 8px 26px rgba(47, 107, 79, .22); }
+.menu-btn.primary .mb-text b { color: var(--forest); }
+.menu-btn.locked {
+  background: #dfe4dc; border-color: #c8d0c4; box-shadow: none;
+  filter: grayscale(1) brightness(.94); cursor: pointer;
+}
+.menu-btn.locked:hover { transform: translateY(-1px); border-color: #b3bdb0; }
+.menu-btn.locked .mb-text b { color: #6f7a72; }
+.menu-btn.locked .mb-text i { color: #949e96; }
+.menu-btn .mb-lock { font-size: 15px; opacity: .7; }
+
+.cover-progress { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; min-height: 34px; }
+.prog-chip {
+  display: flex; align-items: center; gap: 7px; padding: 6px 14px;
+  background: var(--panel-soft); border: 1px solid var(--line); border-radius: 20px;
+  font-size: 12px; box-shadow: var(--sh-1); backdrop-filter: blur(6px);
+}
+.prog-chip .pc-label { color: var(--ink-3); }
+.prog-chip .pc-value { color: var(--forest); font-weight: 700; }
+.cover-foot { font-size: 11.5px; color: var(--ink-3); }
+.cover-foot .sep { margin: 0 8px; opacity: .5; }
+.cover-foot a { color: var(--ink-2); text-decoration: none; border-bottom: 1px dotted var(--line-3); }
+.cover-foot a:hover { color: var(--forest); }
+
+/* ============================================================
+ * HUD
+ * ============================================================ */
+.hud {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  padding: 8px 18px;
+  background: var(--panel-soft); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.hud-left { display: flex; align-items: center; gap: 10px; min-width: 220px; }
+.hud-stage { display: flex; flex-direction: column; line-height: 1.25; }
+.hud-stage-name { font-size: 14px; font-weight: 800; color: var(--forest); letter-spacing: .06em; }
+.hud-stage-sub { font-size: 11px; color: var(--ink-3); }
+.hud-stats { flex: 1; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.hud-stat {
+  display: flex; align-items: center; gap: 6px; padding: 5px 13px;
+  background: #ffffff; border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: var(--sh-1); font-variant-numeric: tabular-nums; font-size: 13px;
+}
+.hud-stat .hs-val { font-weight: 800; color: var(--ink); }
+.hud-stat.gold .hs-val { color: var(--brass); }
+.hud-stat .hs-note { color: var(--ink-3); font-size: 11px; }
+.hud-stat.streak-win { border-color: #e0cd97; background: #fdf8ea; }
+.hud-stat.streak-win .hs-val { color: var(--brass); }
+.hud-stat.streak-lose { border-color: #dcc3c0; background: #fbf1ef; }
+.hud-stat.streak-lose .hs-val { color: var(--rose); }
+.hs-bar {
+  display: inline-block; width: 56px; height: 6px; border-radius: 3px;
+  background: #e4eae1; overflow: hidden;
+}
+.hs-bar > span { display: block; height: 100%; width: 0; background: #cf6a5a; transition: width .3s; }
+.hs-bar.xp > span { background: var(--sky); }
+.hud-right { display: flex; align-items: center; gap: 12px; min-width: 180px; justify-content: flex-end; }
+.hud-field { font-size: 12px; color: var(--ink-3); }
+.hud-field b { color: var(--forest); font-size: 14px; }
+
+.icon-btn {
+  width: 34px; height: 34px; padding: 0; cursor: pointer; font-size: 15px;
+  background: #ffffff; border: 1px solid var(--line-2); border-radius: 9px;
+  box-shadow: var(--sh-1);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, border-color .12s, transform .1s;
+}
+.icon-btn:hover { background: var(--panel-2); border-color: var(--forest-2); }
+.icon-btn:active { transform: scale(.94); }
+
+/* ============================================================
+ * 准备阶段：商店（顶端）
+ * ============================================================ */
+.prep-shop {
+  flex: none; padding: 12px 20px 0;
+}
+.shop-head {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 9px;
+}
+.shop-title {
+  font-size: 13px; font-weight: 800; letter-spacing: .18em; color: var(--ink-2);
+  padding-left: 10px; border-left: 3px solid var(--forest-2);
+}
+.shop-head .spacer { flex: 1; }
+
+/* 卡牌一排 + 刷新/升级一列（金铲铲也是这个布局） */
+.shop-body {
+  display: flex; gap: 16px; justify-content: center; align-items: stretch;
+}
+.shop-actions {
+  display: flex; flex-direction: column; gap: 10px; width: 196px; flex: none;
+}
+
+/* ============================================================
+ * 大按钮：刷新 / 买经验
+ *
+ * 这两个是一局里点得最频繁的按钮，做成大块、高饱和、带光晕，
+ * 让它们稳在视觉层级的最上面。
+ * 之前是缩在商店标题旁边的两个小灰按钮，玩家根本注意不到 ——
+ * 「功能在不在」和「玩家看不看得见」是两件事。
+ * ============================================================ */
+.big-btn {
+  position: relative; flex: 1; min-height: 84px;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 2px; padding: 12px 14px 12px 58px;
+  border-radius: 14px; cursor: pointer; text-align: left;
+  border: 1.5px solid transparent; overflow: hidden;
+  transition: transform .13s cubic-bezier(.2, .9, .3, 1), box-shadow .13s, filter .13s;
+}
+.big-btn::after {   /* 斜向高光，让按钮看起来是「实体」而不是一块颜色 */
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(115deg, rgba(255, 255, 255, .30) 0%, rgba(255, 255, 255, 0) 46%);
+  pointer-events: none;
+}
+.big-btn:hover { transform: translateY(-2px); }
+.big-btn:active { transform: translateY(1px) scale(.993); }
+
+.big-btn .bb-icon {
+  position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  font-size: 30px; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .28));
+}
+.big-btn .bb-text { display: flex; flex-direction: column; line-height: 1.2; }
+.big-btn .bb-text b { font-size: 16px; font-weight: 900; letter-spacing: .06em; color: #fff; }
+.big-btn .bb-text em {
+  font-style: normal; font-size: 11px; color: rgba(255, 255, 255, .84); margin-top: 1px;
+}
+.big-btn .bb-cost {
+  position: absolute; top: 10px; right: 10px;
+  padding: 2px 9px; border-radius: 11px; font-size: 12px; font-weight: 900;
+  background: rgba(255, 255, 255, .95); color: var(--ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .22);
+}
+.big-btn .bb-cost i { font-style: normal; font-size: 11px; }
+.big-btn .bb-bar {
+  display: block; width: 100%; height: 5px; border-radius: 3px; margin-top: 7px;
+  background: rgba(0, 0, 0, .28); overflow: hidden;
+}
+.big-btn .bb-bar > span { display: block; height: 100%; width: 0; background: #fff; transition: width .3s; }
+
+/* 刷新：蓝绿渐变 */
+.big-btn.reroll {
+  background: linear-gradient(150deg, #45a9d8 0%, #2b7ba8 60%, #1f5f86 100%);
+  border-color: #7fd0ef;
+  box-shadow: 0 6px 20px rgba(43, 123, 168, .40), inset 0 1px 0 rgba(255, 255, 255, .35);
+}
+.big-btn.reroll:hover { box-shadow: 0 10px 28px rgba(43, 123, 168, .55); }
+
+/* 买经验：金铜渐变 */
+.big-btn.xp {
+  background: linear-gradient(150deg, #e0a83c 0%, #b8801f 60%, #8e5f14 100%);
+  border-color: #f0d089;
+  box-shadow: 0 6px 20px rgba(184, 128, 31, .40), inset 0 1px 0 rgba(255, 255, 255, .35);
+}
+.big-btn.xp:hover { box-shadow: 0 10px 28px rgba(184, 128, 31, .55); }
+
+/* 买不起：压暗但仍然看得见（藏起来会让人以为按钮没了） */
+.big-btn.poor { filter: grayscale(.72) brightness(.82); box-shadow: none; }
+.big-btn.poor:hover { transform: none; }
+/* 满级了 */
+.big-btn.maxed { filter: grayscale(.45) brightness(.92); }
+
+.shop-row {
+  display: grid; grid-template-columns: repeat(5, var(--shop-card));
+  gap: 14px; justify-content: center;
+}
+
+/* 商店卡：布局对齐金铲铲 ——
+   立绘铺满整张卡、费用徽章在左上、价格在右上、
+   名字压在底部暗色带里、羁绊小字在名字下面、顶部一条费用色。
+   立绘没放进来时 sc-fallback 的 emoji 会顶上来。 */
+.shop-card {
+  position: relative; width: var(--shop-card); height: var(--shop-h);
+  border-radius: 12px; overflow: hidden; cursor: pointer;
+  background: #fff; border: 1px solid var(--line-2);
+  box-shadow: var(--sh-2);
+  transition: transform .16s cubic-bezier(.2, .9, .3, 1), box-shadow .16s, border-color .16s;
+}
+.shop-card::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 5px; z-index: 6;
+}
+.shop-card.cost1::after { background: linear-gradient(90deg, #8b98a3, #bcc6ce); }
+.shop-card.cost2::after { background: linear-gradient(90deg, #3f8f5e, #74c491); }
+.shop-card.cost3::after { background: linear-gradient(90deg, #3f7fa8, #74b6dd); }
+.shop-card.cost4::after { background: linear-gradient(90deg, #6b5fa8, #a495e0); }
+.shop-card.cost5::after { background: linear-gradient(90deg, #b8892f, #eccb6a); }
+.shop-card:hover {
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: 0 16px 32px rgba(38, 51, 43, .24);
+  border-color: var(--forest-2);
+}
+.shop-card:active { transform: translateY(-2px) scale(.995); }
+.shop-card.no-afford { filter: grayscale(.62); opacity: .68; }
+.shop-card.sold {
+  background: var(--panel-3); border-style: dashed; border-color: var(--line);
+  box-shadow: none; cursor: default;
+  display: flex; align-items: center; justify-content: center;
+}
+.shop-card.sold::after { display: none; }
+.shop-card.sold:hover { transform: none; box-shadow: none; }
+.sc-empty { color: var(--ink-4); font-size: 11.5px; }
+
+.sc-art { position: absolute; inset: 0; background: linear-gradient(180deg, #f8fbf6, #e8f0e5); }
+.sc-fallback {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 58px;
+}
+.sc-artimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.sc-badge {
+  position: absolute; top: 11px; left: 9px; z-index: 5;
+  width: 25px; height: 25px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12.5px; font-weight: 900; color: #fff;
+  border: 2px solid rgba(255, 255, 255, .92);
+  box-shadow: 0 2px 6px rgba(38, 51, 43, .32);
+}
+.shop-card.cost1 .sc-badge { background: var(--c1); }
+.shop-card.cost2 .sc-badge { background: var(--c2); }
+.shop-card.cost3 .sc-badge { background: var(--c3); }
+.shop-card.cost4 .sc-badge { background: var(--c4); }
+.shop-card.cost5 .sc-badge { background: var(--c5); }
+/* 4/5 费加一圈呼吸光晕，抽到的时候一眼看出来值钱 */
+.shop-card.cost4 { box-shadow: 0 3px 14px rgba(107, 95, 168, .28); border-color: #b6aade; }
+.shop-card.cost5 {
+  box-shadow: 0 3px 18px rgba(184, 137, 47, .34); border-color: #dcc27e;
+  animation: legendaryGlow 2.6s ease-in-out infinite;
+}
+@keyframes legendaryGlow {
+  0%, 100% { box-shadow: 0 3px 14px rgba(184, 137, 47, .26); }
+  50% { box-shadow: 0 3px 26px rgba(184, 137, 47, .55); }
+}
+
+.sc-price {
+  position: absolute; top: 12px; right: 9px; z-index: 5;
+  padding: 2px 9px; border-radius: 11px; font-size: 11px; font-weight: 800;
+  background: rgba(255, 255, 255, .95); color: var(--ink);
+  box-shadow: 0 1px 4px rgba(38, 51, 43, .22);
+}
+.sc-nameband {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+  padding: 30px 8px 9px; text-align: center;
+  background: linear-gradient(180deg,
+    rgba(18, 26, 20, 0) 0%,
+    rgba(18, 26, 20, .58) 40%,
+    rgba(18, 26, 20, .88) 100%);
+}
+.sc-name {
+  font-size: 15px; font-weight: 900; color: #fff;
+  letter-spacing: .08em; text-shadow: 0 2px 7px rgba(0, 0, 0, .55);
+}
+.sc-traits {
+  font-size: 10.5px; color: rgba(255, 255, 255, .84);
+  margin-top: 2px; letter-spacing: .04em;
+}
+
+/* 商店概率条 + 锁定 */
+.odds { display: flex; gap: 6px; align-items: center; }
+.odd {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 9px 3px 7px; border-radius: 12px;
+  background: #fff; border: 1px solid var(--line);
+  font-size: 10.5px; color: var(--ink-2); box-shadow: var(--sh-1);
+}
+.odd b { font-weight: 800; }
+.odd em { font-style: normal; color: var(--ink-3); }
+.od-bar { display: inline-block; width: 26px; height: 6px; border-radius: 3px; background: #e6ece2; overflow: hidden; }
+.od-bar i { display: block; height: 100%; }
+.odd.o1 .od-bar i { background: var(--c1); }
+.odd.o2 .od-bar i { background: var(--c2); }
+.odd.o3 .od-bar i { background: var(--c3); }
+.odd.o4 .od-bar i { background: var(--c4); }
+.odd.o5 .od-bar i { background: var(--c5); }
+.odd.o4 { border-color: #c3b8e6; }
+.odd.o5 { border-color: #dcc27e; }
+#btn-lock.locked-on {
+  background: #fdf6e6; border-color: var(--brass-2); color: #7d6520; font-weight: 800;
+  box-shadow: 0 2px 10px rgba(168, 132, 47, .22);
+}
+
+/* ============================================================
+ * 准备阶段 · 中间：地图（自己阵容）
+ * ============================================================ */
+/* ============================================================
+ * 准备阶段 · 准备区：左栏 · 地图 · 右栏
+ *
+ * 8 列地图只有 700px 宽，屏幕两侧还空着 700px —— 把「对手情报 / 选中羁绊 /
+ * 装备栏 / 回合记录 / 开战」全部竖着排进左右侧栏以后，
+ * 垂直方向腾出来的 211px 全给了地图（地图高度 142 → 340+）。
+ *
+ * ★ 左右两栏都是 minmax(0, 1fr) 等宽，所以地图永远落在屏幕正中间，
+ *   和用户要的「自己阵容在正中间」一致；侧栏内容再用 max-width 收窄，
+ *   免得 1920 宽屏上面板被拉成一条。
+ * ============================================================ */
+.prep-main {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 14px; padding: 10px 20px; align-items: stretch;
+}
+.prep-side {
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 0; min-height: 0; width: 100%; max-width: var(--side-w);
+}
+.prep-side.left { justify-self: end; }
+.prep-side.right { justify-self: start; }
+
+.board-center {
+  flex: none; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px;
+}
+.board-label {
+  font-size: 11.5px; letter-spacing: .14em; color: var(--ink-3);
+  display: flex; align-items: center; gap: 8px;
+}
+.board-label::before, .board-label::after {
+  content: ''; width: 30px; height: 1px; background: var(--line-2);
+}
+
+/* ---------- 布阵盘上的中线标记 ----------
+ *
+ * ★ 布阵盘只有 4 行，看起来就像一个「完整的战场」，
+ *   很容易让人搞不清哪半场是谁的。所以在它的上沿画一条虚线中线 + 一句说明，
+ *   明确「上面还有一半是敌人的，开战才揭晓」。
+ *
+ *   用绝对定位（bottom: 100%）**不占排版高度** ——
+ *   如果把它做成普通流里的一个元素，--cell-chrome 就要 +20px、
+ *   格子跟着缩 5px，代价比收益大。
+ */
+.board-wrap { position: relative; }
+.board-midline {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 4px); height: 0;
+  border-top: 2px dashed var(--brass-2); opacity: .5;
+  pointer-events: none;
+}
+.board-midline > span {
+  position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
+  white-space: nowrap; font-size: 10px; letter-spacing: .08em; color: var(--brass);
+  background: rgba(255, 255, 255, .85); border-radius: 9px; padding: 0 8px;
+}
+
+/* 地图：8 列 × 4 行。间距 --gap 的存在是为了让比格子大的卡牌不互相压住 */
+.grid {
+  display: grid; grid-template-columns: repeat(8, var(--cell-r));
+  gap: var(--gap); justify-content: center;
+}
+
+/* 格子只负责「定义位置」，不负责「裁剪卡牌」。
+   overflow: visible 让卡牌可以溢出到格外，而且不参与排版 ——
+   地图的总尺寸完全由格子 + 间距决定。 */
+.cell {
+  width: var(--cell-r); height: var(--cell-r); border-radius: 12px; position: relative;
+  background: rgba(255, 255, 255, .58);
+  border: 1px solid var(--line);
+  overflow: visible;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .1s, border-color .1s, box-shadow .1s;
+}
+.cell.front-row { background: rgba(255, 255, 255, .78); border-color: var(--line-2); }
+#player-half .cell { cursor: pointer; }
+#player-half .cell:hover { border-color: var(--forest-2); background: #ffffff; box-shadow: var(--sh-1); }
+#player-half .cell.sel { border-color: var(--forest); box-shadow: 0 0 0 2px rgba(47, 107, 79, .22); }
+#player-half .cell.empty::after {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--line-2);
+}
+
+/* ---------- 棋子卡牌 ----------
+ *
+ * ★ 卡牌比格子大（宽 +6、高 +10），但**位置必须严谨**：
+ *   1. 严格居中在格子上（tleft/top 50% + translate(-50%,-50%)）
+ *   2. **绝不和邻居重叠** —— 靠 --gap 留出足够间距
+ *   3. 溢出是对称的，所以「这张牌属于哪一格」永远一目了然
+ *
+ *   之所以不重叠还能保持位置明确：格子间距 (--gap=8) 大于横向溢出量的一半 (3)，
+ *   所以相邻卡牌之间始终有 2px 以上的空隙。
+ *
+ *   `.cell` 用 overflow: visible —— 溢出不参与排版，
+ *   所以地图的总尺寸完全由格子 + 间距决定，卡牌怎么长都不会把布局撑歪。
+ */
+.u {
+  position: absolute; left: 50%; top: 50%;
+  width: calc(var(--cell-r) + 6px);
+  height: calc(var(--cell-r) + 10px);
+  transform: translate(-50%, -50%);
+  border-radius: 11px; overflow: hidden;
+  box-shadow: 0 3px 9px rgba(38, 51, 43, .30), inset 0 0 0 1px rgba(255, 255, 255, .5);
+  user-select: none;
+}
+.u-fallback {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  line-height: 1.04;
+}
+.u-art { position: absolute; inset: 0; }
+.u-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.u-emoji { font-size: calc(var(--cell-r) * 0.38); line-height: 1; }
+.u-name { font-size: calc(var(--cell-r) * 0.145); font-weight: 800; color: #1a241d; letter-spacing: -.2px; margin-top: 1px; }
+.u-stars {
+  position: absolute; top: 3px; left: 5px; z-index: 4;
+  font-size: calc(var(--cell-r) * 0.115); letter-spacing: -1px; color: #7a5a00;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .9);
+}
+.u-cost {
+  position: absolute; top: 3px; right: 5px; z-index: 4;
+  font-size: calc(var(--cell-r) * 0.115); font-weight: 900; color: #1a241d; opacity: .5;
+}
+.u-items {
+  position: absolute; bottom: 2px; right: 4px; z-index: 4;
+  font-size: calc(var(--cell-r) * 0.13); letter-spacing: -1px;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, .85));
+}
+/* 悬停 / 选中时把整张卡抬到邻居上面，避免被压住 */
+.cell:hover, .bench-cell:hover { z-index: 3; }
+.cell.sel, .bench-cell.sel { z-index: 4; }
+
+/* ---------- 面板 ---------- */
+.panel {
+  background: var(--panel-soft); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px;
+  box-shadow: var(--sh-1); backdrop-filter: blur(6px);
+}
+.panel-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px; font-size: 11.5px; font-weight: 800; letter-spacing: .14em; color: var(--ink-2);
+}
+.panel-head .note { font-weight: 400; letter-spacing: 0; font-size: 10.5px; color: var(--ink-4); }
+
+/* ---------- 对手情报：左栏第一块（竖着排，不再是横条） ---------- */
+.intel-strip {
+  flex: none; display: flex; flex-direction: column; gap: 6px;
+  padding: 9px 12px;
+  background: linear-gradient(135deg, #f4f1fc 0%, rgba(255, 255, 255, .82) 100%);
+  border: 1px solid #ddd6f0; border-radius: 11px;
+  box-shadow: var(--sh-1); position: relative; overflow: hidden;
+}
+.intel-strip::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, var(--violet), transparent);
+}
+.intel-head { display: flex; align-items: center; gap: 9px; }
+.intel-who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ec-avatar {
+  width: 34px; height: 34px; flex: none; border-radius: 9px;
+  background: linear-gradient(180deg, #f0edfa, #e4e0f4);
+  border: 1px solid #cfc8e6;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+}
+.ec-name { font-size: 14px; font-weight: 800; color: #4a4270; }
+.ec-threat { font-size: 12px; color: var(--violet); letter-spacing: 1px; }
+.ec-arch {
+  font-size: 11px; color: #7b73a3; align-self: flex-start;
+  padding: 1px 9px; border-radius: 10px; background: #ece7f8;
+}
+.ec-hint { font-size: 11.5px; color: var(--ink-2); line-height: 1.5; }
+
+/* ---------- 选中 / 装备 / 回合记录：都进了侧栏，不再占垂直空间 ---------- */
+.sel-panel { flex: none; }
+.item-panel { flex: none; }
+.sel-panel .panel-head .note,
+.item-panel .panel-head .note { display: none; }   /* 侧栏窄，标题里的提示省掉 */
+
+/* 选中 / 羁绊 */
+.sel-bar {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-height: 34px;
+  font-size: 12px;
+}
+.sb-title { font-weight: 800; color: var(--forest); font-size: 13px; }
+.sb-label { color: var(--ink-4); font-size: 11px; }
+.sb-stat { color: var(--ink-2); font-size: 11.5px; }
+.trait-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 13px;
+  background: #f1f6ef; border: 1px solid #d5e3d0; font-size: 11.5px; color: var(--ink-2);
+}
+.trait-chip b { color: var(--forest); }
+.trait-chip.on { background: #e8f3ea; border-color: #a9cdb4; }
+.trait-chip.on2 { background: #f0ecfa; border-color: #c3b8e6; }
+.trait-chip.on2 b { color: var(--violet); }
+.trait-chip.off { opacity: .6; }
+
+/* 星级被动：生效时用琥珀色高亮（这是个「越打越强」的正面效果），
+   1 星时的预览用灰色，和生效状态明确区分开 */
+.sb-passive {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px;
+  border-radius: 13px; font-size: 11.5px; font-weight: 700;
+  color: #8a5a00; background: linear-gradient(180deg, #fdf6e3, #f7ecc9);
+  border: 1px solid #e0cd97;
+}
+.sb-teaser {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px;
+  border-radius: 13px; font-size: 11px; color: var(--ink-3);
+  background: #f4f6f2; border: 1px dashed var(--line-2);
+}
+
+/* 装备技能名：水蓝色（讲话石的水系特效呼应），和棋子的被动徽章区分开 */
+.sb-skill {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px;
+  border-radius: 13px; font-size: 11.5px; font-weight: 700;
+  color: #16536f; background: linear-gradient(180deg, #eaf6fd, #d6ecf8);
+  border: 1px solid #a9d3ea;
+}
+
+/* 装备栏 */
+.item-row { display: flex; gap: 7px; flex-wrap: wrap; min-height: 38px; align-items: center; }
+.item-chip {
+  width: 38px; height: 38px; border-radius: 9px; cursor: pointer; font-size: 19px;
+  background: #ffffff; border: 1px solid var(--line-2); box-shadow: var(--sh-1);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .12s, border-color .12s;
+}
+.item-chip:hover { transform: translateY(-2px); border-color: var(--brass-2); }
+.item-chip.sel { border-color: var(--brass); box-shadow: 0 0 0 2px rgba(168, 132, 47, .22); }
+/* 装备图标用图片时的显示方式（art/items/<id>.png） */
+.item-artimg { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; display: block; }
+
+/* 棋子卡右下角的装备角标：图片和 emoji 两种形态混用，
+   所以统一按同一行高对齐，不会一个高一个低 */
+.u-items { display: flex; align-items: center; gap: 1px; }
+.u-itembadge { width: calc(var(--cell-r) * 0.17); height: calc(var(--cell-r) * 0.17);
+  border-radius: 3px; object-fit: cover; display: block; }
+.u-itembadge-emoji { font-size: calc(var(--cell-r) * 0.13); font-style: normal; letter-spacing: -1px; }
+
+/* 回合记录：右栏上半，吃掉开战按钮以上的全部空间 */
+.log-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.mini-log {
+  flex: 1; min-height: 0; overflow-y: auto; font-size: 11.5px; line-height: 1.65;
+  color: var(--ink-2); display: flex; flex-direction: column; gap: 1px;
+}
+.log-line { padding: 0 2px; }
+.log-line.sys { color: var(--forest); font-weight: 800; margin-top: 4px; }
+.log-line.gold { color: var(--brass); }
+.log-line.good { color: #2f7d4a; }
+.log-line.bad { color: var(--rose); }
+.log-line.star { color: var(--violet); font-weight: 800; }
+
+/* ============================================================
+ * 准备阶段：备战池（底端）
+ * ============================================================ */
+.prep-bench {
+  flex: none; padding: 0 20px 10px;
+}
+.bench-head {
+  display: flex; align-items: baseline; gap: 12px; margin-bottom: 7px;
+}
+.bench-title {
+  font-size: 13px; font-weight: 800; letter-spacing: .18em; color: var(--ink-2);
+  padding-left: 10px; border-left: 3px solid var(--brass-2);
+}
+.bench {
+  display: grid; grid-template-columns: repeat(9, var(--bench-cell));
+  gap: 9px; justify-content: center;
+}
+.bench-cell {
+  width: var(--bench-cell); height: var(--bench-cell); cursor: pointer;
+  border-radius: 9px; background: rgba(255, 255, 255, .55);
+  border: 1px solid var(--line); position: relative;
+  overflow: visible;                 /* 同上：备战池的卡牌也允许溢出格子 */
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .1s, background .1s;
+}
+.bench-cell:hover { border-color: var(--forest-2); background: #ffffff; }
+.bench-cell.empty::after {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--line-2);
+}
+.bench-cell.sel { border-color: var(--forest); box-shadow: 0 0 0 2px rgba(47, 107, 79, .22); }
+/* 备战池格子更小，卡牌按同一套「比格子大」的规则外扩（+6 / +10，和地图一致） */
+.bench-cell .u {
+  width: calc(var(--bench-cell) + 6px);
+  height: calc(var(--bench-cell) + 10px);
+}
+
+/* ============================================================
+ * 按钮 / 底部动作条
+ * ============================================================ */
+.btn {
+  padding: 7px 14px; cursor: pointer; border-radius: 9px; font-size: 12.5px; font-weight: 600;
+  background: #ffffff; border: 1px solid var(--line-2); color: var(--ink);
+  box-shadow: var(--sh-1);
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: background .12s, border-color .12s, transform .08s, box-shadow .12s;
+}
+.btn:hover { background: var(--panel-2); border-color: var(--forest-2); box-shadow: var(--sh-2); }
+.btn:active { transform: translateY(1px); }
+.btn b { color: var(--brass); }
+.btn-primary {
+  background: linear-gradient(180deg, #3f8f68, #2f6b4f); border-color: var(--forest);
+  color: #ffffff; box-shadow: 0 3px 12px rgba(47, 107, 79, .28);
+}
+.btn-primary:hover { background: linear-gradient(180deg, #48a175, #35795a); border-color: var(--forest); }
+.btn-ghost { background: transparent; border-color: var(--line); color: var(--ink-2); box-shadow: none; }
+.btn-ghost:hover { background: var(--panel-2); color: var(--ink); }
+.btn-sm { padding: 3px 10px; font-size: 11.5px; }
+.btn.disabled { opacity: .45; filter: grayscale(.6); pointer-events: none; }
+
+/* 开战：右栏下半（原来在屏幕最底那条横杠上，现在贴着棋盘右下角，
+   和金铲铲的「开始战斗」位置一致，也顺手把那 69px 还给了地图） */
+.action-bar {
+  flex: none; display: flex; flex-direction: column; gap: 9px;
+  padding: 11px 12px;
+  background: var(--panel-soft); backdrop-filter: blur(8px);
+  border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--sh-1);
+}
+.action-bar .hint { font-size: 11.5px; color: var(--ink-2); line-height: 1.5; }
+.btn-fight {
+  width: 100%; justify-content: center;
+  padding: 11px 20px; font-size: 15px; font-weight: 900; letter-spacing: .2em;
+  border-radius: 12px; border: 1px solid var(--forest);
+  background: linear-gradient(180deg, #48a175, #2f6b4f); color: #fff;
+  box-shadow: 0 6px 20px rgba(47, 107, 79, .3);
+}
+.btn-fight:hover { background: linear-gradient(180deg, #55b083, #367f5d); box-shadow: 0 8px 26px rgba(47, 107, 79, .4); }
+.btn-fight.disabled { background: #cfd8cb; border-color: #bcc7b8; color: #7d8880; box-shadow: none; }
+
+/* ============================================================
+ * 战斗界面
+ * ============================================================ */
+.combat-body {
+  flex: 1; min-height: 0; display: flex; gap: 20px; padding: 12px 20px; overflow: auto;
+  justify-content: center; align-items: flex-start;
+}
+.combat-stage { display: flex; flex-direction: column; justify-content: center; align-self: stretch; }
+/* 左侧一栏：对阵条 + 播放条。
+   播放条原来是压在画布下面的一整条，占掉 65px 垂直空间；
+   画布要放 8 行、又是正方形，垂直空间是它唯一的瓶颈 ——
+   而左右两侧本来就有富余的横向空间，所以这两条都挪到画布左边。 */
+.combat-side {
+  width: var(--combat-side-w); flex: none; align-self: stretch;
+  display: flex; flex-direction: column; justify-content: center; gap: 10px;
+}
+.vs-bar {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 12px; background: var(--panel-soft); border: 1px solid var(--line);
+  border-radius: 11px; font-size: 13px; box-shadow: var(--sh-1); backdrop-filter: blur(6px);
+}
+.vs-side.mine { color: var(--sky); font-weight: 800; }
+.vs-side.foe { color: var(--violet); font-weight: 800; }
+.vs-badge {
+  font-size: 11px; font-weight: 900; letter-spacing: 1px; color: var(--brass);
+  padding: 2px 10px; border: 1px solid var(--brass-2); border-radius: 12px; background: #fff;
+}
+/* ★ 边框改用 box-shadow 画，不用 border。
+   canvas 的元素宽度是用内联 style 设的（8 格 + 7 个间距），
+   如果再有 1px border，在 box-sizing: border-box 下内容盒就变成 w-2，
+   浏览器会把整张位图缩到 w-2 里显示 —— 于是画布上的一切都被缩了 0.2%，
+   「布阵怎么摆、打起来就在哪」就不成立了。
+   box-shadow 不占布局空间，边框照样有，坐标还是准的。 */
+#arena {
+  display: block; border: none; border-radius: 12px;
+  background: #f3f7f1;
+  box-shadow: 0 0 0 1px var(--line-2), var(--sh-2);
+}
+
+/* 播放控件竖着排在左栏下半部分。
+   窄栏里横着排会折成 4 行、高 173px 而且对不齐；
+   既然这一栏本来就比画布矮，竖排反而更清楚。 */
+.play-bar {
+  flex: none; display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 11px; background: var(--panel-soft); border: 1px solid var(--line);
+  border-radius: 11px; box-shadow: var(--sh-1); backdrop-filter: blur(6px);
+}
+.speed-group { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.spd {
+  padding: 6px 4px; cursor: pointer; font-size: 11.5px; border-radius: 7px; text-align: center;
+  background: #ffffff; border: 1px solid var(--line); color: var(--ink-2);
+}
+.spd:hover { border-color: var(--forest-2); color: var(--ink); }
+.spd.on { background: #e8f3ea; border-color: var(--forest-2); color: var(--forest); font-weight: 800; }
+.play-progress { flex: none; height: 6px; border-radius: 3px; background: #e4eae1; overflow: hidden; }
+.play-progress > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #8dc0a1, var(--forest-2)); }
+.play-time { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: center; }
+
+/* 战报栏跟着画布一起长高：align-self 让它拉伸到 combat-stage 的高度，
+   战报高度不再是写死的 500px，画布多高它就多高（原来 1080 屏上画布 736、
+   战报只有 500，右边空一大截） */
+.ticker-wrap { width: var(--ticker-w); flex: none; align-self: stretch; display: flex; flex-direction: column; gap: 8px; }
+.ticker-title {
+  font-size: 12px; font-weight: 800; letter-spacing: .14em; color: var(--ink-2);
+  padding-bottom: 6px; border-bottom: 1px solid var(--line);
+}
+.ticker {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 9px 11px;
+  background: #ffffff; border: 1px solid var(--line); border-radius: 11px;
+  box-shadow: var(--sh-1);
+  font: 11.5px/1.7 Consolas, "Cascadia Mono", monospace;
+  display: flex; flex-direction: column;
+}
+.tick-line { color: var(--ink-3); white-space: nowrap; }
+.tick-line.t-attack { color: var(--ink-2); }
+.tick-line.t-skill { color: var(--violet); }
+.tick-line.t-heal { color: #2f7d4a; }
+.tick-line.t-death { color: var(--rose); font-weight: 700; }
+/* 豆包「幻觉 / 开智」的赠礼：增伤是金、减伤是紫，和画布上的徽章同色 */
+.tick-line.t-gift { font-weight: 700; }
+.tick-line.t-gift-good { color: #9a6b00; }
+.tick-line.t-gift-bad { color: #7b46b8; }
+/* 荣誉「狙击1」：命中是暖金，打偏是灰蓝 —— 和画布上的喊话同色 */
+.tick-line.t-snipe { color: #8a6a12; font-weight: 700; }
+/* 蓄力（眼睛喷金色激光）：金色，介于普通和技能之间 */
+.tick-line.t-charge { color: #a67c00; }
+/* 牢大的坠机三段：用最重的样式 —— 一局最多各一次，要显眼 */
+.tick-line.t-crash { color: #b8503f; font-weight: 700; }
+.tick-line.t-revive { color: #9a6b00; font-weight: 700; }
+.tick-line.t-knockback { color: #8a5a2a; }
+/* 抓娃娃挡伤害：水青色，和护盾一个色系 */
+.tick-line.t-block { color: #1d6f86; font-weight: 700; }
+/* 张雪峰：超频越线 / 自毁 / 冰棍 / 冰冻 —— 一局各只写几条，写响一点 */
+.tick-line.t-ocas { color: #c0392b; font-weight: 700; }
+.tick-line.t-selfburn { color: #b8503f; }
+.tick-line.t-chill { color: #2c7fa8; }
+.tick-line.t-stun { color: #1d6f86; font-weight: 700; }
+.ticker-note { font-size: 11px; color: var(--ink-4); line-height: 1.6; }
+
+/* ============================================================
+ * 结算浮层
+ * ============================================================ */
+.overlay {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(240, 245, 238, .74);
+  opacity: 0; visibility: hidden; transition: opacity .25s;
+}
+.overlay.on { opacity: 1; visibility: visible; }
+.result-box {
+  width: 452px; padding: 28px 30px; border-radius: 18px; text-align: center;
+  background: #ffffff; border: 1px solid var(--line-2);
+  box-shadow: var(--sh-3);
+  transform: translateY(14px) scale(.97); transition: transform .3s cubic-bezier(.2, .9, .3, 1);
+}
+.overlay.on .result-box { transform: none; }
+.result-box.win { border-color: #a9cdb4; background: linear-gradient(180deg, #f4fbf5, #ffffff); }
+.result-box.lose { border-color: #ddb7b1; background: linear-gradient(180deg, #fdf4f2, #ffffff); }
+.result-box.draw { border-color: #e0cd97; background: linear-gradient(180deg, #fdf9ee, #ffffff); }
+.result-box.final { border-color: var(--brass-2); box-shadow: 0 18px 50px rgba(168, 132, 47, .24); }
+.result-badge {
+  width: 58px; height: 58px; margin: 0 auto 12px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 28px;
+  background: #fff; border: 2px solid var(--line-2);
+}
+.result-box.win .result-badge { border-color: var(--forest-2); color: var(--forest); }
+.result-box.lose .result-badge { border-color: #cf7a6a; color: var(--rose); }
+.result-box.draw .result-badge { border-color: var(--brass-2); color: var(--brass); }
+.result-box h2 { margin: 0 0 6px; font-size: 22px; letter-spacing: .16em; color: var(--ink); }
+.result-box.win h2 { color: var(--forest); }
+.result-box.lose h2 { color: var(--rose); }
+.result-box.draw h2 { color: var(--brass); }
+.result-sub { font-size: 11.5px; color: var(--ink-3); margin-bottom: 14px; }
+.result-note { font-size: 12.5px; color: var(--ink-2); line-height: 1.9; }
+.result-note b { color: var(--forest); }
+
+/* ============================================================
+ * 战后伤害占比
+ * 一行一个人：名字（定宽）→ 条（弹性）→ 百分比 + 绝对值（定宽右对齐）。
+ * 名字和数字都用定宽，条才能左边缘对齐 —— 不然每行的条起点都不一样，
+ * 「谁更长」这个最直观的信息就被破坏了。
+ * ============================================================ */
+.dmg-panel {
+  margin-top: 10px; padding-top: 9px;
+  border-top: 1px dashed var(--line);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.dmg-title { font-size: 11.5px; color: var(--ink-4); letter-spacing: .04em; }
+.dmg-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.dmg-who {
+  flex: 0 0 108px; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dmg-bar {
+  flex: 1 1 auto; height: 9px; border-radius: 5px;
+  background: var(--panel-3); overflow: hidden;
+}
+.dmg-fill {
+  display: block; height: 100%; border-radius: 5px;
+  background: linear-gradient(90deg, var(--forest), #7fbf6a);
+  transition: width .18s ease-out;
+}
+.dmg-num {
+  flex: 0 0 86px; text-align: right;
+  color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.dmg-row.zero .dmg-who { color: var(--ink-4); }
+.dmg-empty { font-size: 12px; color: var(--ink-4); }
+
+/* ============================================================
+ * 拖拽放卡
+ * ============================================================ */
+/* ★★ 「有立绘的棋子拖不动」的根因就在这里。
+ *
+ *   浏览器对 <img> 有**原生拖拽**（HTML5 drag-and-drop）：
+ *   在图片上按下再移动，浏览器会启动它，并且**取消整个指针序列**
+ *   （发 pointercancel）—— 拖拽刚开始就被自己的 pointercancel 收掉了。
+ *
+ *   症状很有迷惑性：**没有立绘的棋子（emoji 图标）能拖，有立绘的拖不动**，
+ *   而两者的拖拽代码一模一样，差别只在于前者根本没有 <img> 元素。
+ *
+ *   三道防线一起上（任何一道单独都可能被某个浏览器绕过去）：
+ *     ① img.draggable = false（JS，标准路径）
+ *     ② -webkit-user-drag: none（这里，老 WebKit）
+ *     ③ document 捕获阶段拦 dragstart（JS，兜底）
+ *   user-select:none 是顺带的 —— 拖拽时选中文字同样会打断指针序列。
+ *   touch-action:none 是为了触屏：不让浏览器把手势当成滚动抢走。
+ */
+.u, .u * { -webkit-user-drag: none; user-select: none; }
+.u { touch-action: none; }
+
+/* 跟着指针走的幽灵卡。
+ * ★ pointer-events:none 是必须的：不然 elementFromPoint 永远只会
+ *   命中幽灵自己，「拖到哪一格」就永远判不出来。 */
+.drag-ghost {
+  position: fixed; z-index: 9999;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  padding: 6px 12px; border-radius: 10px;
+  background: rgba(28, 40, 32, .88);
+  color: #fff; font-size: 12.5px; font-weight: 700;
+  display: flex; align-items: center; gap: 6px;
+  box-shadow: 0 8px 22px rgba(20, 30, 24, .34);
+  white-space: nowrap;
+}
+.drag-ghost .dg-emoji { font-size: 16px; }
+/* 正在被拖的那张卡淡一点，让「它已经跟着手走了」一眼看得出来 */
+.u.dragging { opacity: .32; }
+
+/* 落点高亮：只在拖拽过程中出现，松手立刻消失 */
+.cell.drop-ok, .bench-cell.drop-ok { outline: 2px dashed var(--forest); outline-offset: -2px; }
+.cell.drop-ok { background: rgba(90, 150, 90, .16); }
+.bench-cell.drop-ok { background: rgba(90, 150, 90, .16); }
+.result-acts { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
+.result-acts .btn { padding: 9px 22px; font-size: 13.5px; }
+
+/* ============================================================
+ * Toast / 弹窗 / 设置
+ * ============================================================ */
+#toasts {
+  position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%);
+  z-index: 80; display: flex; flex-direction: column; gap: 6px; align-items: center;
+  pointer-events: none;
+}
+.toast {
+  padding: 8px 18px; border-radius: 20px; font-size: 12.5px;
+  background: #ffffff; border: 1px solid var(--line-2); color: var(--ink);
+  box-shadow: var(--sh-2);
+  opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s;
+  white-space: nowrap;
+}
+.toast.toast-on { opacity: 1; transform: none; }
+.toast.t-warn { background: #fdf6e6; border-color: #e0cd97; color: #7d6520; }
+.toast.t-good { background: #eefaf0; border-color: #a9cdb4; color: #26663f; }
+.toast.t-star { background: #f2eefa; border-color: #c3b8e6; color: #574a94; font-weight: 800; }
+.toast.t-info { background: #eef5fa; border-color: #a8c6dd; color: #2c5a7a; }
+
+.modal-wrap {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(240, 245, 238, .72); opacity: 0; transition: opacity .2s;
+}
+.modal-wrap.modal-on { opacity: 1; }
+.modal {
+  width: 408px; padding: 24px 26px; border-radius: 18px;
+  background: #ffffff; border: 1px solid var(--line-2); box-shadow: var(--sh-3);
+  transform: translateY(12px) scale(.98); transition: transform .25s cubic-bezier(.2, .9, .3, 1);
+}
+.modal-wrap.modal-on .modal { transform: none; }
+.modal-title { margin: 0 0 16px; font-size: 16px; letter-spacing: .16em; color: var(--forest); font-weight: 800; }
+.modal-body { font-size: 13px; color: var(--ink-2); line-height: 1.85; }
+.modal-acts { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+
+.settings-panel { display: flex; flex-direction: column; gap: 15px; }
+.set-row { display: flex; align-items: center; gap: 10px; }
+.set-icon { width: 22px; text-align: center; font-size: 15px; }
+.set-label { width: 74px; font-size: 12.5px; color: var(--ink); flex: none; font-weight: 600; }
+.set-pct { width: 44px; text-align: right; font-size: 11.5px; color: var(--forest); font-variant-numeric: tabular-nums; font-weight: 700; }
+.set-range {
+  -webkit-appearance: none; appearance: none; flex: 1; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--forest-2) var(--fill, 50%), #e2e9df var(--fill, 50%));
+  outline: none; cursor: pointer;
+}
+.set-range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
+  background: #ffffff; border: 2px solid var(--forest-2); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(38, 51, 43, .25);
+}
+.set-range::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%; background: #ffffff;
+  border: 2px solid var(--forest-2); cursor: pointer;
+}
+.set-foot { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ============================================================
+ * 响应式：地图格子 / 商店卡 / 备战池 三档联动
+ *
+ * ★ 这一节只管「准备阶段」的尺寸。
+ * ★ 这里**没有**战斗画布的档位 —— 画布和布阵盘共用同一个 --cell，
+ *   它的两条上限（--arena-h / --arena-w，8 行 / 8 列）已经在
+ *   --cell 的 min() 里了，所以屏幕什么形状都不用再枚举档位。
+ *
+ *   一开始两边各有一套写死的常量 + 档位，结果就是：
+ *   改了棋盘宽度忘了改画布、加了个档位却算错了余量，一路踩坑。
+ *   现在凡是「跟着屏幕变」的尺寸，都写成 min(上限, 算出来的) 这种形式。
+ *
+ * ★ 每档只改 --cell-max 和 --cell-chrome，不直接写 --cell：
+ *   --cell = min(上限, 纵向挤出来的, 横向剩下的)，所以任意高度都不会
+ *   大到压住邻居（细节见文件顶部 --cell 的注释）。
+ *   --cell-chrome 是这一档的实测固定开销，比实测值多留 8px 余量。
+ * ============================================================ */
+@media (max-height: 980px) {
+  :root {
+    --cell-max: 108px; --cell-chrome: 480px;
+    --shop-card-max: 144px; --shop-h: 196px; --bench-cell: 66px;
+  }
+  .logo h1 { font-size: clamp(48px, 6.6vw, 82px); }
+}
+@media (max-height: 880px) {
+  :root {
+    --cell-max: 100px; --cell-chrome: 460px;
+    --shop-card-max: 136px; --shop-h: 182px; --bench-cell: 60px;
+  }
+  .sc-fallback { font-size: 50px; }
+  .sc-name { font-size: 14px; }
+}
+@media (max-height: 790px) {
+  :root {
+    --cell-max: 80px; --cell-chrome: 450px;
+    --shop-card-max: 124px; --shop-h: 164px; --bench-cell: 54px;
+  }
+  .logo h1 { font-size: clamp(42px, 5.6vw, 66px); }
+  .logo-mark { font-size: 40px; }
+  .sc-fallback { font-size: 42px; }
+  .sc-name { font-size: 13px; }
+  .sc-traits { font-size: 9.5px; }
+  .sc-badge { width: 21px; height: 21px; font-size: 11px; top: 8px; }
+  .sc-price { font-size: 10px; top: 9px; padding: 2px 7px; }
+  .sc-nameband { padding: 24px 6px 7px; }
+  /* 情报条和回合记录现在住在侧栏里，纵向本来就不紧张：
+     档案标签不必再藏，回合记录也不必再压到 48px（它现在靠 flex 自适应高度）。 */
+}
+
+/* ============================================================
+ * 手机（≤780px 宽）：把「三栏」折成「一列」，整页可以上下滚动
+ *
+ * ★★ 为什么必须单独做一套，而不是让 --cell 自己算小：
+ *    原来的 --cell = min(上限, 纵向挤出来的, 横向剩下的…)，
+ *    其中「横向剩下的」扣掉了**左右两条侧栏**（各 min(306px, 19vw)）
+ *    和 124px 的各种边距。390 宽的手机上这个式子算出来只有 **2~15px** ——
+ *    而 arena.js 里有一条 `n >= 20 才认` 的保护（免得算出 0 宽的画布），
+ *    于是它退回了默认值，棋盘被硬撑到 583px、横向溢出 97px。
+ *    就算把那道保护去掉，14px 的格子也没法玩。
+ *
+ * ★ 所以手机上做的不是"把格子调小"，而是**改结构**：
+ *     · 左右两栏折到棋盘**下面**（它们承载选中/羁绊/装备/开战，不能删）
+ *     · 整页允许纵向滚动 —— 于是纵向不再是瓶颈，--cell 只由宽度决定
+ *     · 商店 5 张卡按宽度均分（手机上正好一屏放得下，不用横向滑）
+ *     · 战斗画面同样折成一列：战场在最上面，控件和战报在下面
+ * ★ 手机上 --cell 只由宽度算：(100vw - 96px) / 8
+ *   其中 96 = 页面内边距 40 + 7 个格子间距 56。
+ *   390 宽 → 36px 格子、8 列共 344px，左右各留 23px。能点，也看得清。
+ * ============================================================ */
+@media (max-width: 700px), (max-height: 520px) {
+  :root {
+    /* 侧栏不再占横向（它们被折到棋盘下面了） */
+    --side-w: 0px;
+    --ticker-w: 100%;
+    --combat-side-w: 100%;
+    /* 横向只扣**页面内边距 40 + 7 个 gap 56**；纵向给一个宽松值，别让它成为瓶颈 */
+    --cell-w: calc((100vw - 96px) / 8);
+    --arena-w: calc((100vw - 96px) / 8);
+    --arena-h: calc((100vh - 110px) / 8);
+    --cell-chrome: 110px;
+    --cell-max: 64px;
+    /* 商店 5 张按宽度均分；备战池 9 格同理。
+       ★ 但都要带一个上限：横屏手机（844×390）宽得很、却矮得要命，
+         纯按宽度算会得到 211px 高的商店卡，把整页推出去。
+         上限让"宽而矮"和"窄而高"两种手机都能看。 */
+    --shop-card: min(calc((100vw - 56px) / 5), 104px);
+    --shop-h: min(calc((100vw - 56px) / 5 * 1.34), 140px);
+    --bench-cell: min(calc((100vw - 56px) / 9), 52px);
+  }
+
+  /* 折成一列之后纵向一定会超，所以让「场景」自己滚 ——
+     #app 和 body 仍然是 overflow: hidden，滚的是场景内部。 */
+  .scene { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+
+  /* ---------- 封面 ---------- */
+  .cover-inner { padding: 16px; gap: 18px; }
+  .cover-menu { width: min(400px, calc(100vw - 32px)); }
+  .logo h1 { font-size: clamp(38px, 12vw, 60px); }
+  .cover-foot { text-align: center; line-height: 1.8; }
+
+  /* ---------- HUD：手机上原来会折成三行、吃掉 173px ---------- */
+  .hud { padding: 7px 12px; gap: 6px; height: auto; flex-wrap: nowrap; }
+  .hud-left { min-width: 0; flex: 1 1 auto; gap: 6px; overflow: hidden; }
+  .hud-stage { min-width: 0; overflow: hidden; }
+  .hud-stage-name { font-size: 12.5px; display: block; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
+  .hud-stage-sub, .hs-note, #hud-streak-wrap { display: none; }
+  .hud-right { min-width: 0; flex: 0 0 auto; gap: 6px; }
+  .hud-field { font-size: 11px; padding: 2px 7px; white-space: nowrap; }
+  .hud-stats { gap: 6px; flex-wrap: nowrap; }
+  .hud-stat { padding: 2px 6px; font-size: 12px; gap: 4px; }
+  .hud-stat .hs-bar { width: 34px; }
+  .icon-btn { width: 34px; height: 34px; font-size: 16px; }
+
+  /* ---------- 商店：卡横排 + 两个大按钮横排 ---------- */
+  .prep-shop { padding: 8px 20px 0; }
+  .shop-head { margin-bottom: 7px; gap: 8px; }
+  .shop-head .odds { display: none; }        /* 概率条在手机上太挤，先让位 */
+  .shop-body { flex-direction: column; gap: 10px; }
+  .shop-row { gap: 8px; }
+  .shop-actions { flex-direction: row; width: 100%; gap: 8px; }
+  .big-btn { min-height: 62px; padding: 8px 10px 8px 44px; }
+  .big-btn .bb-icon { font-size: 22px; left: 12px; }
+  .big-btn .bb-text b { font-size: 13.5px; }
+  .big-btn .bb-text em { font-size: 10.5px; }
+  .big-btn .bb-cost { top: 6px; right: 8px; font-size: 11px; padding: 1px 7px; }
+
+  /* ---------- 准备区：棋盘在最上面，两条侧栏折到下面 ---------- */
+  .prep-main {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 10px 20px; flex: none;
+  }
+  .board-center { order: -1; flex: none; }
+  .board-label { font-size: 10px; }
+  .board-label::before, .board-label::after { width: 16px; }
+  .board-midline > span { font-size: 9px; padding: 0 6px; }
+
+  .prep-side {
+    max-width: none; width: 100%; flex: none;
+    flex-direction: row; flex-wrap: wrap; gap: 10px;
+  }
+  .prep-side.left, .prep-side.right { justify-self: stretch; }
+  .prep-side > * { flex: 1 1 168px; min-width: 0; }
+  .panel-head { font-size: 12px; padding: 7px 10px; }
+  .mini-log { max-height: 140px; }
+  .intel-strip .ec-hint { display: none; }   /* 长文本在手机上占太多高度 */
+  .action-bar { flex: 1 1 100%; }
+  .btn-fight { width: 100%; min-height: 52px; font-size: 16px; }
+
+  /* ---------- 备战池：9 格按宽度均分 ---------- */
+  .prep-bench { padding: 8px 20px 12px; flex: none; }
+  .bench-head { margin-bottom: 6px; }
+  .bench-head .note { display: none; }
+  .bench { gap: 6px; }
+
+  /* ---------- 战斗：战场在上，控件和战报在下 ---------- */
+  .combat-body {
+    flex-direction: column; gap: 10px; padding: 8px 20px 16px;
+    align-items: center; flex: none; overflow: visible;
+  }
+  .combat-stage { order: -1; align-self: center; }
+  /* ★★ 这里**不能**写 #arena { max-width: 100% }。
+     它看起来像一道稳妥的保险，实际上是"布阵盘和战场不一样宽"的来源：
+     手机竖屏下场景要纵向滚动，Windows 的滚动条会吃掉约 15px 可用宽度，
+     画布被 max-width 一压就比布阵盘窄 9px —— 而这条不变式
+     （画布宽度 = 布阵盘宽度）正是「布阵怎么摆、打起来就在哪」的地基。
+     现在的公式保证两边都放得下（100vw 里已经减掉了 40px 内边距 + 56px 间距），
+     多出来的那点滚动条余量由内边距吸收。 */
+
+  .combat-side { width: 100%; align-self: stretch; gap: 8px; }
+  .play-bar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .play-bar .speed-group { grid-template-columns: repeat(4, 1fr); flex: 1 1 140px; }
+  .play-bar .play-progress { flex: 1 1 100%; }
+  .ticker-wrap { width: 100%; align-self: stretch; }
+  .ticker { max-height: 220px; overflow-y: auto; }
+  .ticker-note { display: none; }
+
+  /* ---------- 结算浮层 ---------- */
+  .result-box { width: calc(100vw - 24px); max-height: calc(100vh - 24px); padding: 16px; }
+  .result-acts { flex-wrap: wrap; }
+  .result-acts .btn { flex: 1 1 120px; }
+}
+
+/* 触屏：去掉点击高亮和双击缩放，拖拽交给 pointer 事件 */
+@media (hover: none) and (pointer: coarse) {
+  * { -webkit-tap-highlight-color: transparent; }
+  button, .u, .shop-card, .bench .slot, .grid .cell { touch-action: manipulation; }
+  /* ★ 棋子要拖拽，所以它必须是 none —— manipulation 会允许浏览器拿走手势 */
+  .u { touch-action: none; }
+  /* 悬停才有意义的浮起效果在触屏上是"点完留在那儿"，取消掉 */
+  .shop-card:hover, .menu-btn:hover, .big-btn:hover { transform: none; }
+}
+
