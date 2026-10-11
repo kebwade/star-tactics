@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科币战争 — 游戏集成测试</title>
+<link rel="stylesheet" href="tests.css">
+<style>
+  #game { width: 1360px; height: 820px; border: 1px solid #2b3341; border-radius: 8px; display: block; }
+  .stage-hide { position: absolute; left: -9999px; top: 0; }
+</style>
+</head>
+<body>
+  <h1>游戏集成测试</h1>
+  <div class="sub">
+    这里把「玩家会做的事」写成脚本，让无头浏览器真的去点：<br>
+    封面 → 人机模式 → 商店买棋子 → 上场 → 刷新 → 买经验 → 合成升星 → 装装备 →
+    开战 → 结算 → 进下一关 / 重来 / 通关 / 战败 → 回到封面。
+  </div>
+
+  <div id="verdict" class="verdict">running…</div>
+  <div id="verdict-marker" style="display:none">running</div>
+
+  <h2>报告</h2>
+  <pre id="report" class="report">running…</pre>
+
+  <h2>被测试的游戏（真的在跑）</h2>
+  <iframe id="game" src="../index.html"></iframe>
+
+  <script src="harness.js"></script>
+  <script src="gametest.js"></script>
+</body>
+</html>
