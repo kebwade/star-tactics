@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科币战争 — 平衡实验室</title>
+<link rel="stylesheet" href="tests.css">
+</head>
+<body>
+  <h1>平衡实验室</h1>
+  <div class="sub">
+    把「平衡」从手感玄学变成能看的数据。改完 <code>js/units.js</code> 就跑一遍这里。<br>
+    所有数字都来自 <code>js/battle.js</code> 的确定性模拟 —— 同样的种子必然跑出同样的结果。
+  </div>
+
+  <div id="verdict" class="verdict">running…</div>
+  <div id="verdict-marker" style="display:none">running</div>
+
+  <h2>数值预警报告</h2>
+  <pre id="report" class="report">running…</pre>
+
+  <h2>A. 属性总览</h2>
+  <div class="sub">每个棋子 1★/2★/3★ 的实际面板。<code>resolveStats</code> 算出来的数字，就是战斗里真正用的数字。</div>
+  <div class="wrap"><div id="tbl-stats"></div></div>
+
+  <h2>B. 费用性价比</h2>
+  <div class="sub">每金币买到多少 DPS / 有效生命。用来抓「某个 1 费棋子偷偷超模」。</div>
+  <div class="wrap"><div id="tbl-efficiency"></div></div>
+
+  <h2>C. 1v1 擂台赛</h2>
+  <div class="sub">
+    24 个棋子两两对战，每个对局跑 5 个种子。<br>
+    <b>总榜</b>主要用来确认费用曲线没写反（同星级下高费碾压低费是应该的）；
+    <b>档内榜</b>才是真正的平衡信号 —— 同一费用档里谁超模、谁没用。
+  </div>
+  <div class="wrap"><div id="tbl-duel"></div></div>
+  <h2 style="font-size:13px">档内榜（真正的平衡信号）</h2>
+  <div class="wrap"><div id="tbl-duel-same-cost"></div></div>
+
+  <h2>D. 装备收益</h2>
+  <div class="sub">
+    除了主 C 身上那一件装备，两边阵容完全一样 —— 所以差值就是这一件装备的净贡献。<br>
+    三个主 C 分别代表物理、法术、治疗护盾三条收益路径，避免把「圣杯」这类专精装备误判成废装备。
+  </div>
+  <div class="wrap"><div id="tbl-items"></div></div>
+
+  <h2>E. 羁绊收益（让子标定）</h2>
+  <div class="sub">
+    镜像对局里任何优势都会放大成必胜，所以光比胜率会得到 8 个一模一样的 100%，毫无分辨力。<br>
+    改用<b>让子标定</b>：给没羁绊的一方逐级加全属性，找到双方打平的点 ——
+    于是每个羁绊都能换算成一句人话：「这个羁绊 ≈ 白送对面 +X% 全属性」。
+  </div>
+  <div class="wrap"><div id="tbl-traits"></div></div>
+  <h2 style="font-size:13px">让子曲线（胜率随让子幅度下降的过程）</h2>
+  <div class="wrap"><div id="tbl-trait-curve"></div></div>
+
+  <h2>F. 随机对局时长分布</h2>
+  <div class="sub">400 场随机阵容对战，用来看「一场该打多久」这个设计目标有没有达成。</div>
+  <div class="wrap"><div id="tbl-duration"></div></div>
+
+  <h2>G. 预设阵容对战</h2>
+  <div class="sub">四套写死的阵容互相对打，用来看「不同体系之间是否真的互有胜负」。</div>
+  <div class="wrap"><div id="tbl-presets"></div></div>
+  <div class="wrap" style="margin-top:12px"><div id="tbl-preset-rank"></div></div>
+
+  <script src="../js/util.js"></script>
+  <script src="../js/traits.js"></script>
+  <script src="../js/items.js"></script>
+  <script src="../js/units.js"></script>
+  <script src="../js/battle.js"></script>
+  <script src="harness.js"></script>
+  <script src="balancetest.js"></script>
+</body>
+</html>
