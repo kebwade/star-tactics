@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科币战争 — 关卡难度曲线</title>
+<link rel="stylesheet" href="tests.css">
+</head>
+<body>
+  <h1>关卡难度曲线</h1>
+  <div class="sub">
+    我没法手动玩 10 关，所以给每关配一份「参考玩家阵容」，让它和这关的对手真打一遍。<br>
+    赢太多说明这关太水，赢太少说明这关是劝退墙 —— 难度曲线就这样变成了能跑出来看的数字。
+  </div>
+
+  <div id="verdict" class="verdict">running…</div>
+  <div id="verdict-marker" style="display:none">running</div>
+
+  <h2>难度曲线</h2>
+  <div class="wrap"><div id="tbl-curve"></div></div>
+
+  <h2>调参仪表</h2>
+  <div class="sub">
+    光知道「第 4 关太水」没用，得知道该调到多少。<br>
+    这张表把每一关敌人的总星级从「全员 1 星」一路扫到「全员 2 星」，把胜率曲线整条打出来 ——
+    <b>◀</b> 就是胜率最接近目标的那个档位。
+  </div>
+  <div class="wrap"><div id="tbl-tune"></div></div>
+
+  <h2>报告</h2>
+  <pre id="report" class="report">running…</pre>
+
+  <script src="../js/util.js"></script>
+  <script src="../js/traits.js"></script>
+  <script src="../js/items.js"></script>
+  <script src="../js/units.js"></script>
+  <script src="../js/battle.js"></script>
+  <script src="../js/levels.js"></script>
+  <script src="harness.js"></script>
+  <script src="levelcurve.js"></script>
+</body>
+</html>
