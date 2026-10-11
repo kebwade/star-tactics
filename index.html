@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>科币战争 —— 巴巴博弈</title>
+<meta name="description" content="纯前端自走棋：凑羁绊、摆站位，让棋子自己打。24 关闯关 + 无尽模式，手机也能玩。">
+<!-- 手机上的观感：地址栏/状态栏配色跟着「高级山谷」的浅绿走；
+     apple-mobile-web-app-capable 让「添加到主屏幕」之后没有浏览器外框。 -->
+<meta name="theme-color" content="#eef4ea">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="科币战争">
+<!-- 图标：直接用 emoji 的 SVG data URI 当 favicon（省一个请求），
+     但**主屏图标必须是 PNG** —— iOS 的 apple-touch-icon 不认 SVG，
+     给它 SVG 的话「添加到主屏幕」会拿页面截图当图标，看着像没做图标。 -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔️</text></svg>">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="game.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============================================================
+       「高级山谷」背景素材（定义一次，两个场景用 <use> 共享）
+       曲线用真实 SVG path 画，比 CSS 椭圆像样得多；
+       越远的山越淡越虚（加高斯模糊），近处的最实最深。
+       ============================================================ -->
+  <svg class="svg-defs" aria-hidden="true" focusable="false">
+    <defs>
+      <radialGradient id="vSun" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#fffdf1" stop-opacity=".95"/>
+        <stop offset="55%" stop-color="#fffdf1" stop-opacity=".34"/>
+        <stop offset="100%" stop-color="#fffdf1" stop-opacity="0"/>
+      </radialGradient>
+      <linearGradient id="vH4" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#dfeada"/><stop offset="100%" stop-color="#ccdec7"/>
+      </linearGradient>
+      <linearGradient id="vH3" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#c8dcc2"/><stop offset="100%" stop-color="#afcbaa"/>
+      </linearGradient>
+      <linearGradient id="vH2" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#b4ceac"/><stop offset="100%" stop-color="#99be93"/>
+      </linearGradient>
+      <linearGradient id="vH1" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#a2c49a"/><stop offset="100%" stop-color="#84b07e"/>
+      </linearGradient>
+      <filter id="vSoft" x="-12%" y="-12%" width="124%" height="124%">
+        <feGaussianBlur stdDeviation="10"/>
+      </filter>
+      <filter id="vSoft2" x="-12%" y="-12%" width="124%" height="124%">
+        <feGaussianBlur stdDeviation="4"/>
+      </filter>
+      <g id="valleyGroup">
+        <!-- 太阳 -->
+        <ellipse cx="720" cy="176" rx="330" ry="250" fill="url(#vSun)"/>
+        <!-- 最远的一道山脊：最淡最虚，中间下沉形成谷地 -->
+        <path d="M0,470 C140,418 260,468 400,518 C540,568 620,600 720,608 C820,616 900,568 1040,508 C1180,448 1300,428 1440,468 L1440,900 L0,900 Z"
+              fill="url(#vH4)" opacity=".62" filter="url(#vSoft)"/>
+        <!-- 第二层 -->
+        <path d="M0,562 C160,510 300,570 440,620 C560,662 640,690 720,696 C800,702 880,660 1010,610 C1150,556 1290,540 1440,576 L1440,900 L0,900 Z"
+              fill="url(#vH3)" opacity=".82" filter="url(#vSoft2)"/>
+        <!-- 第三层 -->
+        <path d="M0,662 C170,620 320,672 460,712 C580,746 650,766 720,770 C790,774 860,748 990,706 C1130,660 1280,650 1440,684 L1440,900 L0,900 Z"
+              fill="url(#vH2)" opacity=".92"/>
+        <!-- 最近的一道山脊：最实最深 -->
+        <path d="M0,762 C180,730 340,772 480,800 C600,824 660,838 720,840 C780,842 840,826 970,796 C1110,762 1280,756 1440,780 L1440,900 L0,900 Z"
+              fill="url(#vH1)"/>
+      </g>
+    </defs>
+  </svg>
+
+  <!-- ============================================================
+       封面
+       ============================================================ -->
+  <section class="scene scene-on scene-in" id="scene-cover">
+    <div class="valley" aria-hidden="true">
+      <svg class="valley-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMax slice">
+        <use href="#valleyGroup"></use>
+      </svg>
+      <div class="mist-band mb1"></div>
+      <div class="mist-band mb2"></div>
+      <div class="rays"></div>
+      <div class="vignette"></div>
+      <div class="grain"></div>
+    </div>
+    <div class="cover-bg" id="cover-bg"></div>
+
+    <div class="cover-inner">
+      <div class="logo">
+        <div class="logo-mark">⚔️</div>
+        <h1>科币战争</h1>
+        <div class="logo-sub">—— 巴巴博弈 ——</div>
+        <div class="logo-tag">凑羁绊 · 摆站位 · 让棋子自己打</div>
+      </div>
+
+      <div class="cover-menu">
+        <button class="menu-btn primary" id="btn-pve">
+          <span class="mb-icon">🤖</span>
+          <span class="mb-text"><b>人机模式</b><i>24 关闯关 + 无尽模式 · 从见习剑士打到巴巴博弈</i></span>
+          <span class="mb-arrow">›</span>
+        </button>
+
+        <button class="menu-btn locked" id="btn-pvp" disabled aria-disabled="true">
+          <span class="mb-icon">🌐</span>
+          <span class="mb-text"><b>对战模式</b><i>暂未开放</i></span>
+          <span class="mb-lock">🔒</span>
+        </button>
+
+        <button class="menu-btn" id="btn-settings">
+          <span class="mb-icon">⚙️</span>
+          <span class="mb-text"><b>设置</b><i>声音 · 画面亮度</i></span>
+          <span class="mb-arrow">›</span>
+        </button>
+      </div>
+
+      <div class="cover-progress" id="cover-progress"></div>
+      <div class="cover-foot">
+        纯前端 · 零依赖 · 打开即玩（手机也能玩）
+        <span class="sep">|</span>
+        <a href="console.html">开发控制台</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       人机模式 · 准备阶段
+       布局顺序：商店在最上面 → 自己阵容在正中间 → 备战池在最下面
+       ============================================================ -->
+  <section class="scene" id="scene-game">
+    <!-- 游戏内也铺同一套山谷背景，但压得很淡，保证信息读得清 -->
+    <div class="valley subdued" aria-hidden="true">
+      <svg class="valley-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMax slice">
+        <use href="#valleyGroup"></use>
+      </svg>
+      <div class="scrim"></div>
+      <div class="vignette"></div>
+    </div>
+
+    <header class="hud">
+      <div class="hud-left">
+        <button class="icon-btn" id="btn-quit" title="回到封面">‹</button>
+        <div class="hud-stage">
+          <span class="hud-stage-name" id="hud-stage">第一关 · 热身</span>
+          <span class="hud-stage-sub" id="hud-stage-sub">第 1 / 10 关</span>
+        </div>
+      </div>
+      <div class="hud-stats">
+        <div class="hud-stat" id="hud-hp-wrap">
+          <span class="hs-icon">❤️</span><span class="hs-val" id="hud-hp">100</span>
+          <span class="hs-bar"><span id="hud-hp-fill"></span></span>
+        </div>
+        <div class="hud-stat gold"><span class="hs-icon">🪙</span><span class="hs-val" id="hud-gold">10</span></div>
+        <div class="hud-stat">
+          <span class="hs-icon">⭐</span><span class="hs-val" id="hud-lvl">2</span>
+          <span class="hs-bar xp"><span id="hud-xp-fill"></span></span>
+          <span class="hs-note" id="hud-xp-text">0/2</span>
+        </div>
+        <div class="hud-stat" id="hud-streak-wrap">
+          <span class="hs-icon" id="hud-streak-icon">·</span><span class="hs-val" id="hud-streak">0</span>
+        </div>
+      </div>
+      <div class="hud-right">
+        <div class="hud-field">上场 <b id="hud-field">0/2</b></div>
+        <button class="icon-btn" id="btn-settings2" title="设置">⚙️</button>
+      </div>
+    </header>
+
+    <!-- ① 商店：屏幕顶端（对齐金铲铲：卡牌一排，刷新/升级在右边一列） -->
+    <div class="prep-shop">
+      <div class="shop-head">
+        <span class="shop-title">商店</span>
+        <div class="odds" id="shop-odds"></div>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" id="btn-lock">🔓 锁定</button>
+      </div>
+      <div class="shop-body">
+        <div class="shop-row" id="shop-row"></div>
+        <div class="shop-actions">
+          <button class="big-btn reroll" id="btn-reroll">
+            <span class="bb-icon">🎲</span>
+            <span class="bb-text"><b>刷新商店</b><em>换一批牌</em></span>
+            <span class="bb-cost">2 <i>🪙</i></span>
+          </button>
+          <button class="big-btn xp" id="btn-xp">
+            <span class="bb-icon">📈</span>
+            <span class="bb-text"><b>买经验</b><em id="xp-hint">还差 2 升级</em></span>
+            <span class="bb-bar"><span id="xp-bar-fill"></span></span>
+            <span class="bb-cost">4 <i>🪙</i></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ② 准备区：左栏 · 地图 · 右栏
+         面板从棋盘下方挪到了棋盘左右两侧。
+         8 列地图只有 700px 宽，两侧本来就空着 700px；横着堆在棋盘上下时，
+         六个面板要吃掉 211px 的垂直空间，地图被挤到只有 142px 高、
+         直接压到情报条和回合记录上面。竖着排进侧栏以后，
+         这 211px 全部回到地图上。 -->
+    <div class="prep-main">
+      <aside class="prep-side left">
+        <!-- 对手情报 -->
+        <div class="intel-strip">
+          <div class="intel-head">
+            <div class="ec-avatar" id="enemy-emoji">❓</div>
+            <div class="intel-who">
+              <span class="ec-name" id="enemy-name">未知对手</span>
+              <span class="ec-threat" id="enemy-threat">★☆☆☆☆</span>
+            </div>
+          </div>
+          <span class="ec-arch" id="enemy-arch">体系未知</span>
+          <div class="ec-hint" id="enemy-hint">情报不足。</div>
+        </div>
+
+        <!-- 选中 / 羁绊 -->
+        <div class="panel sel-panel">
+          <div class="panel-head"><span>选中 / 羁绊</span></div>
+          <div class="sel-bar" id="sel-bar">
+            <span class="note">点棋盘上的棋子选中它；点空格子，再点备战池的棋子就能上场。</span>
+          </div>
+        </div>
+
+        <!-- 装备栏 -->
+        <div class="panel item-panel">
+          <div class="panel-head"><span>装备栏</span><span class="note">点装备 → 再点棋子</span></div>
+          <div class="item-row" id="item-row"></div>
+        </div>
+      </aside>
+
+      <!-- ③ 地图：自己阵容 8×4，永远在屏幕正中间 -->
+      <div class="board-center">
+        <div class="board-label">我方半场 · 最上面一行贴着中线（前排）</div>
+        <div class="board-wrap">
+          <!-- 贴在布阵盘上沿的中线标记：绝对定位，不占排版高度。
+               有了它才看得出来「上面还有一半是敌人的」——
+               不然这个 4 行的盘看起来就像一个完整的战场。 -->
+          <div class="board-midline" aria-hidden="true">
+            <span>▲ 中线 · 对面在上面，开战才揭晓 ▲</span>
+          </div>
+          <div class="grid" id="player-half"></div>
+        </div>
+      </div>
+
+      <aside class="prep-side right">
+        <!-- 回合记录 -->
+        <div class="panel log-panel">
+          <div class="panel-head"><span>回合记录</span></div>
+          <div class="mini-log" id="mini-log"></div>
+        </div>
+
+        <!-- 开战 -->
+        <div class="action-bar">
+          <div class="hint" id="action-hint">准备阶段：买棋子、摆站位，准备好了就开战。</div>
+          <button class="btn btn-fight" id="btn-fight">⚔️ 开战</button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ④ 备战池：屏幕底端 -->
+    <div class="prep-bench">
+      <div class="bench-head">
+        <span class="bench-title">备战池</span>
+        <span class="note">3 个同名同星自动合成高一星 · 点棋子选中，右键卖掉</span>
+      </div>
+      <div class="bench" id="bench"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       人机模式 · 战斗阶段
+       ============================================================ -->
+  <section class="scene" id="scene-combat">
+    <div class="valley subdued" aria-hidden="true">
+      <svg class="valley-svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMax slice">
+        <use href="#valleyGroup"></use>
+      </svg>
+      <div class="scrim"></div>
+      <div class="vignette"></div>
+    </div>
+
+    <header class="hud">
+      <div class="hud-left">
+        <div class="hud-stage">
+          <span class="hud-stage-name" id="chud-stage">战斗中</span>
+          <span class="hud-stage-sub" id="chud-sub"></span>
+        </div>
+      </div>
+      <div class="hud-stats">
+        <div class="hud-stat"><span class="hs-icon">❤️</span><span class="hs-val" id="chud-hp">100</span></div>
+        <div class="hud-stat gold"><span class="hs-icon">🪙</span><span class="hs-val" id="chud-gold">10</span></div>
+        <div class="hud-stat"><span class="hs-icon">⭐</span><span class="hs-val" id="chud-lvl">2</span></div>
+      </div>
+      <div class="hud-right">
+        <button class="icon-btn" id="btn-settings3" title="设置">⚙️</button>
+      </div>
+    </header>
+
+    <!-- 战场：画布独占中间，两侧分别是「对阵条 + 播放条」和「战报」。
+         原来播放条压在画布下面，白占 65px 垂直空间 ——
+         画布是正方形的，要放 8 行，垂直空间就是它唯一的瓶颈，
+         所以把播放条挪到右边战报下面，画布直接多出一整行多一点的高度。 -->
+    <div class="combat-body">
+      <div class="combat-side">
+        <div class="vs-bar">
+          <span class="vs-side mine" id="vs-me">我方</span>
+          <span class="vs-badge">VS</span>
+          <span class="vs-side foe" id="vs-enemy">对手</span>
+        </div>
+        <div class="play-bar">
+          <button class="icon-btn" id="btn-pause" title="暂停 / 继续">⏸</button>
+          <button class="icon-btn" id="btn-replay" title="重播">⟲</button>
+          <div class="speed-group">
+            <button class="spd" data-s="0.5">0.5×</button>
+            <button class="spd on" data-s="1">1×</button>
+            <button class="spd" data-s="2">2×</button>
+            <button class="spd" data-s="4">4×</button>
+          </div>
+          <button class="btn" id="btn-skip">跳到结算</button>
+          <div class="play-progress"><span id="play-fill"></span></div>
+          <span class="play-time" id="play-time">0.0s</span>
+        </div>
+      </div>
+
+      <div class="combat-stage">
+        <canvas id="arena"></canvas>
+      </div>
+
+      <div class="ticker-wrap">
+        <div class="ticker-title">战斗回放</div>
+        <div class="ticker" id="ticker"></div>
+        <div class="ticker-note note">
+          画面上的一切，都是把战斗模拟器吐出的事件流播一遍。
+          同一份结果重播多少次都完全一样 —— 所以「重播」不是录像，是真的没在算第二次。
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="result-overlay">
+      <div class="result-box" id="result-box">
+        <div class="result-badge" id="result-badge">✓</div>
+        <h2 id="result-title">本关通过</h2>
+        <div class="result-sub" id="result-sub"></div>
+        <div class="result-body" id="result-body"></div>
+        <div class="result-acts" id="result-acts"></div>
+      </div>
+    </div>
+  </section>
+
+  <div id="veil"><div id="veil-label"></div></div>
+
+</div>
+
+<script src="js/util.js"></script>
+<script src="js/traits.js"></script>
+<script src="js/items.js"></script>
+<script src="js/units.js"></script>
+<script src="js/art.js"></script>
+<script src="js/battle.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/arena.js"></script>
+<script src="js/cover.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
