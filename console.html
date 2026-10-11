@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科币战争 · 开发控制台（开发工具，不是游戏）</title>
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+
+<header>
+  <h1>科币战争 · 开发控制台</h1>
+  <span class="tag">摆两套阵容 → 跑模拟 → 播事件流</span>
+  <span class="spacer"></span>
+  <label>种子 <input type="number" id="seed" value="20260101"></label>
+  <button id="btn-random">随机阵容</button>
+  <button id="btn-swap">交换双方</button>
+  <button id="btn-clear">清空</button>
+  <button id="btn-run" class="primary">开战</button>
+</header>
+
+<main>
+
+  <!-- 摆阵容 -->
+  <div class="row">
+    <div class="card side-a">
+      <h2>A 方（上半场 · 先手）</h2>
+      <div class="board" id="board-a"></div>
+      <div class="boardhint">点一个格子选中它，再从下面的棋子池点一个棋子放进去。后排（上面）放远程，前排（下面）放近战。</div>
+      <div class="traits" id="traits-a"></div>
+    </div>
+    <div class="card side-b">
+      <h2>B 方（下半场 · 后手）</h2>
+      <div class="board" id="board-b"></div>
+      <div class="boardhint">前排在最上面一行。双方镜像布置时，先手优势已经被行动顺序抵消掉了。</div>
+      <div class="traits" id="traits-b"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="editor" id="editor">
+      <span class="note">没有选中任何棋子。点棋盘上的棋子来改星级和装备。</span>
+    </div>
+    <div class="pool" id="pool"></div>
+  </div>
+
+  <!-- 战斗 -->
+  <div class="card">
+    <div class="result" id="result"></div>
+    <div class="controls">
+      <button id="btn-play" class="primary">▶ 播放</button>
+      <button id="btn-restart">⟲ 重播</button>
+      <button id="btn-skip">跳到结束</button>
+      <span class="note">速度</span>
+      <button class="spd" data-s="0.25">0.25×</button>
+      <button class="spd" data-s="0.5">0.5×</button>
+      <button class="spd on" data-s="1">1×</button>
+      <button class="spd" data-s="2">2×</button>
+      <button class="spd" data-s="4">4×</button>
+      <span class="clock" id="clock">—</span>
+      <div id="bar"><div id="barfill"></div></div>
+    </div>
+    <div class="arena-wrap">
+      <canvas id="arena" width="384" height="520"></canvas>
+      <div class="logwrap">
+        <h2 style="margin-bottom:6px">战斗日志 <span class="note">（事件流原文，渲染层只是把它播成画面）</span></h2>
+        <div id="log"><div class="logline sys">还没有战斗。摆好阵容，点右上角「开战」。</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 统计 -->
+  <div class="card hidden" id="stats-card">
+    <h2>战后统计</h2>
+    <div id="stats"></div>
+  </div>
+
+  <div class="card">
+    <h2>自检</h2>
+    <div class="note">
+      这一页只是「看得见」的那一层。<code>battle.js</code> 对不对，由另外两个页面负责：
+      <br>· <a href="index.html" style="color:var(--gold)">← 回到游戏</a> &nbsp; <a href="tests/simtest.html" style="color:var(--blue)">tests/simtest.html</a>
+      —— 确定性、事件流不变量、羁绊/装备/技能结算、极端输入（127 项断言）
+      <br>· <a href="tests/balancetest.html" style="color:var(--blue)">tests/balancetest.html</a>
+      —— 1v1 擂台、装备/羁绊实测收益、时长分布（改完数值跑这个）
+      <br>· 命令行：<kbd>powershell -ExecutionPolicy Bypass -File tools\run-tests.ps1 -Page all</kbd>
+    </div>
+  </div>
+
+</main>
+
+<script src="js/util.js"></script>
+<script src="js/traits.js"></script>
+<script src="js/items.js"></script>
+<script src="js/units.js"></script>
+<script src="js/battle.js"></script>
+<script src="js/console.js"></script>
+</body>
+</html>
