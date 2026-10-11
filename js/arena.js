@@ -1,0 +1,2480 @@
+/* ============================================================
+ * 科币战争 — 战斗表现层
+ *
+ * 这里的代码**不认识规则**：不算伤害、不掷骰子、不判胜负。
+ * 它只是把 battle.js 吐出来的事件流按时间轴播一遍。
+ *
+ * 「自动寻敌」也是模拟器里就有的（每 tick 选最近的敌人、走过去、进射程就打），
+ * 这一层负责的是**让你看得见它在寻敌**：走位位移、出手突进、受击后仰。
+ *
+ * 打击感清单（全都是消费同一个事件流换来的，加特效完全不用碰规则）：
+ *   伤害飘字 · 命中白闪 · 屏幕震动 · 命中火花 · 技能冲击环
+ *   击中顿帧(hitstop) · 血色滞后条 · 攻击突进 · 受击后仰 · 阵亡碎裂
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var ST = window.ST;
+
+  // 棋盘尺寸从模拟器配置取，不要在这里另写一份 —— 改了棋盘宽度却忘了改这里，
+  // 会出现「画布比实际棋盘小一圈、右边两列棋子看不见」这种很难查的问题。
+  var COLS = ST.BATTLE_CFG.COLS, ROWS = ST.BATTLE_CFG.ROWS;
+  var CELL = 72;              // 格子大小，和准备阶段棋盘的 --cell 完全一致
+  var GAP = 8;                // 格间距，和准备阶段棋盘的 --gap 完全一致
+  var PITCH = 80;             // 格子 + 间距：画布的定位步长
+  var HIT_FLASH = 0.18;
+
+  var A = (window.Arena = {});
+
+  var cv = null, ctx = null;
+  var state = null;
+  var raf = 0, lastFrame = 0, running = false;
+  var onFinish = null;
+  var speed = 1;
+  var debug = false;
+
+  var fx = [];               // 特效池
+  var shakeMag = 0;          // 屏幕震动幅度
+  var FX_MAX = 220;
+
+  A.COLS = COLS;
+  A.ROWS = ROWS;
+  A.cell = function () { return CELL; };
+  /** 卡牌的绘制尺寸（比格子大，见 drawUnit 的注释） */
+  A.cardSize = function () { return { w: CELL + 6, h: CELL + 10 }; };
+
+  /* 浅色山谷主题的配色（和 game.css 的变量对齐） */
+  var C = {
+    enemyHalf: '#f0f1fa',
+    mineHalf: '#eef4ef',
+    grid: 'rgba(38,51,43,.055)',
+    center: 'rgba(168,132,47,.42)',
+    enemyEdge: '#8578b8',
+    mineEdge: '#3f7fa8',
+    hpEnemy: '#a58fd0',
+    hpMine: '#57a86f',
+    hpLag: '#e0a294',
+    mana: '#5b9fd8',
+    shield: '#ffffff',
+    barBg: 'rgba(38,51,43,.26)',
+    corpse: '#b8503f'
+  };
+
+  /* ============================================================
+   * 初始化 / 尺寸
+   * ============================================================ */
+  /**
+   * 把 CSS 变量解析成真正的像素值。
+   *
+   * ★ 不能写成 parseFloat(getComputedStyle(root).getPropertyValue('--x'))：
+   *   自定义属性的「计算值」保留的是原样的 token 流，不是算完的数。
+   *   所以 --cell 一旦被写成 min(...) 这种表达式，parseFloat 得到的是 NaN，
+   *   兜底分支又踩同一个坑，最后静默退回常量 —— 表现就是不管屏幕多大，
+   *   画布都死死钉在同一个尺寸。
+   *   把变量挂到真实元素上让浏览器排版，读回来的才是「用值」。
+   */
+  function varPx(name) {
+    var probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;left:-9999px;top:0;height:0;width:var(' + name + ')';
+    document.body.appendChild(probe);
+    var px = probe.getBoundingClientRect().width;
+    document.body.removeChild(probe);
+    return px;
+  }
+
+  /**
+   * 格子尺寸和格间距都从 CSS 读 —— 和准备阶段的棋盘**同一个** --cell / --gap。
+   *
+   * ★ 这里曾经有一个很难看出来的 bug：
+   *   画布把 CELL 同时当成了「格子大小」和「格子间距」，于是
+   *     布阵盘第 c 列中心 = c × (格子 + 间距) + 格子/2
+   *     画布  第 c 列中心 = c × 格子 + 格子/2
+   *   每列差 8px，8 列累计 56px —— 玩家摆好的阵型一开战就被横向压缩了一点，
+   *   行列都对不齐。这就是「布阵时怎么摆、打起来位置却不一样」的根源。
+   *
+   *   现在画布用 pitch = 格子 + 间距 定位，于是：
+   *     · 列中心和布阵盘逐列重合
+   *     · 我方那 4 行 = 布阵盘整块平移 4 个 pitch（像素级一致）
+   *     · 整个战场 = 8 行 × 8 列 = 布阵盘（4 行）的两倍高
+   *
+   *   还有第二个坑：--cell 是 min(...) 算出来的，值通常是小数（如 85.6）。
+   *   画布是位图、格子必须取整，但如果只让画布取整、布阵盘仍按 85.6 排版，
+   *   两边每列又差 0.6px。所以这里取整之后再写回 --cell-r，
+   *   **两边共用同一个整数**（见 A.resize）。
+   */
+  function readCell() {
+    try {
+      var n = varPx('--cell');
+      // ★ 必须向下取整。8 个格子每个多 0.5px 就是 4px，
+      //   窄一点的屏上画布正好因此比预算宽 4px，战斗界面会出横向滚动条。
+      if (isFinite(n) && n >= 20) return Math.floor(n);
+    } catch (e) {}
+    return 66;
+  }
+
+  function readGap() {
+    try {
+      var g = varPx('--gap');
+      if (isFinite(g) && g >= 0) return Math.max(0, Math.round(g));
+    } catch (e) {}
+    return 8;
+  }
+
+  /** 战场的总宽 / 总高：8 格 + 7 个间距 —— 和布阵盘的算法完全一样 */
+  function fieldW() { return COLS * PITCH - GAP; }
+  function fieldH() { return ROWS * PITCH - GAP; }
+
+  A.init = function (canvasEl) {
+    cv = canvasEl;
+    A.resize();
+    if (!running) { running = true; raf = requestAnimationFrame(frame); }
+    window.addEventListener('resize', function () { A.resize(); });
+  };
+
+  /** 格子尺寸 / 间距都跟着 CSS 走（响应式一变，画布跟着重算） */
+  A.resize = function () {
+    if (!cv) return;
+    CELL = readCell();
+    GAP = readGap();
+    PITCH = CELL + GAP;
+    /* ★ 把取整后的格子写回 CSS（--cell-r），让**布阵盘和战场用同一个整数**。
+     *   只让画布取整的话，布阵盘还按小数值排版，每列差零点几像素、
+     *   8 列累计就是几像素的错位 —— 阵型看起来「差不多但就是不对」。
+     *   注意写的是 --cell-r，不是 --cell 本身：
+     *   --cell 是 min(...) 算出来的「意图值」，被覆盖掉就再也算不回来了。 */
+    try {
+      document.documentElement.style.setProperty('--cell-r', CELL + 'px');
+    } catch (e) {}
+
+    var dpr = window.devicePixelRatio || 1;
+    var w = fieldW(), h = fieldH();
+    cv.style.width = w + 'px';
+    cv.style.height = h + 'px';
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!state) drawIdle();
+  };
+
+  /** 战场总宽（= 8 格 + 7 个间距 = 布阵盘的宽度） */
+  A.fieldW = function () { return fieldW(); };
+  /** 战场总高（= 布阵盘高度的两倍，因为它是 8 行对 4 行） */
+  A.fieldH = function () { return fieldH(); };
+  A.pitch = function () { return PITCH; };
+  A.gap = function () { return GAP; };
+
+  A.setDebug = function (v) { debug = v; };
+  A.toggleDebug = function () { debug = !debug; return debug; };
+  A.setSpeed = function (s) { speed = s; };
+  A.getSpeed = function () { return speed; };
+
+  /* ============================================================
+   * 播放
+   * ============================================================ */
+  A.play = function (result, opts, done) {
+    opts = opts || {};
+    onFinish = done || null;
+    fx.length = 0;
+    shakeMag = 0;
+    if (opts.onEvent) A.onEvent = opts.onEvent;
+
+    var pb = {
+      result: result,
+      t: 0,
+      idx: 0,
+      playing: true,
+      total: result.log.length ? result.log[result.log.length - 1].t : 0,
+      units: {},
+      names: {},
+      flashes: [],
+      reveal: 0,
+      hitstop: 0
+    };
+
+    var init = result.initial.units;
+    for (var i = 0; i < init.length; i++) {
+      var u = init[i];
+      var d = ST.UNIT_BY_ID[u.defId] || {};
+      pb.names[u.uid] = u;
+      pb.units[u.uid] = {
+        uid: u.uid, side: u.side, defId: u.defId, name: u.name, emoji: u.emoji,
+        color: u.color, cost: d.cost || 1, items: (u.items || []).slice(),
+        maxHp: u.maxHp, hp: u.hp, hpLag: u.hp, shield: u.shield,
+        mana: u.mana, maxMana: u.maxMana,
+        r: u.r, c: u.c, rr: u.r, cc: u.c, alive: true, star: u.star,
+        lunge: 0, lungeDx: 0, lungeDy: 0,
+        flinch: 0, flinchDx: 0, flinchDy: 0, flash: 0,
+        // 星级被动「越打越快」的当前层数：0 = 还没叠（或这个棋子没有被动）
+        frenzy: 0, frenzyFlash: 0, frenzyCapped: false,
+        frenzyCap: u.frenzyCap || 0,
+        /* 星级被动「幻觉 / 开智」挂在身上的伤害倍率。
+           buffMul 恒等于 1 就是没有效果；buffUntil 是失效时刻，
+           播放时间越过它就自动忽略 —— 渲染层不需要「到期」事件。 */
+        buffMul: 1, buffUntil: -1, buffFlash: 0,
+        /* 星级被动「抓娃娃」还剩几次免伤。
+           卡牌上会常驻一个 🛡N 的徽章 —— 这只鸭子只有 95 血，
+           全部生存能力都押在这串次数上，玩家必须能一眼看出还剩多少。 */
+        guardLeft: u.guardMax || 0, guardFlash: 0,
+        /* 张雪峰「超频」：攻速加成（开局 1.0，每次普攻 +0.02，无上限）。
+           over 打开之后卡片会有红色描边 —— 那是"正在自毁"的信号。 */
+        oc: u.ocStart || 0, ocOver: false, ocFlash: 0, ocBurnFlash: 0,
+        /* 「巧乐兹」的冰棍层数（挂在自己身上） */
+        chill: 0, chillMax: u.chillMax || 0, chillFlash: 0,
+        /* 奶龙「捧腹大笑」：笑到什么时候。播放时间越过它就自动消失 ——
+           和 buffUntil 是同一个套路，不需要「结束」事件。 */
+        laughUntil: -1, laughFlash: 0, laughMove: !!u.laughMove, laughAlly: !!u.laughHeal,
+        /* 下一颗 😂 飘字的时刻（连续飘字用，见 updateUnitFx） */
+        laughFxAt: 0,
+        /* 羊帆「羊巅峰」：蓄势好了没有（卡片上常驻 🐑×20 徽章） */
+        peakReady: false,
+        /* 楚生疑犯「遁入暗影」：现在是不是暗影状态。
+           画面上表现为半透明 + 冷色描边 + 卡片上挂一枚 🌑 徽章。 */
+        shadow: false,
+        /* Dank1ng：耍折叠刀到什么时候（这段时间里不攻击）、
+           空悲切（无限能量）开了没有、法力条刚回满的闪光。 */
+        knifeUntil: -1, knifeFlash: 0,
+        endless: false, manaFlash: 0,
+        /* ★ 纯 CD 技能的冷却条。
+           cdSeconds > 0 的棋子**不吃法力**（gainMana 直接返回），
+           所以 mana 永远不会自己往上涨 —— 法力条在这里是一条冷却条，
+           必须由渲染层按时间自己算：cdT 是"这次冷却是什么时候开始的"。
+           起手值 0：技能开局就在转（和 game.js 的说明一致）。 */
+        cdSeconds: u.cdSeconds || 0, cdT: 0
+      };
+    }
+    /* ★★ 「阴暗领域」：和单位一样，**一局开始时是空的**。
+       领域不是开局就有的东西，全靠 field 事件往里加。
+       ★ 这份列表和 battle.js 的 st.fields 是**两份独立的账**：
+         那边管规则（谁在里面被减速），这边管画面（在哪画多大一片黑）。
+         两边都只认"事件 + 时间戳"，谁也不读对方的内部状态。 */
+    pb.fields = [];
+    state = pb;
+    return pb;
+  };
+
+  A.isPlaying = function () { return !!(state && state.playing); };
+  A.isDone = function () { return !!(state && state.t >= state.total); };
+  A.progress = function () { return state ? (state.total > 0 ? state.t / state.total : 0) : 0; };
+  A.time = function () { return state ? state.t : 0; };
+  A.total = function () { return state ? state.total : 0; };
+  A.fxCount = function () { return fx.length; };
+  /* 给自检用的：把当前特效的**标量字段**列出来。
+     ★ 只返回数值和字符串，不返回任何内部对象 —— 特效是每帧都在变的活数据，
+       测试只需要知道「现在场上有哪些特效、字幕多大」，
+       拿到引用去改反而会让测试和实现纠缠在一起。
+     ★ `size` 统一报**最终画出来的像素字号**：
+       字幕（callout）本来就是按像素存的，而伤害飘字（num）存的是
+       「相对倍率 + 缩放」，真正的字号要到 drawFx 里才算出来。
+       两边各报各的话，测试写起来就得知道"这个 type 的 size 是哪种含义"——
+       那正是最容易写错的地方，所以在这里统一换算好。 */
+  A.fxList = function () {
+    var out = [];
+    for (var i = 0; i < fx.length; i++) {
+      var e = fx[i];
+      var sz = e.size;
+      if (e.type === 'num') {
+        var ns = NUM_STYLE[e.kind] || NUM_STYLE.phys;
+        sz = Math.round((CELL * 0.235) * ns.size * (e.scale || 1));
+      } else if (e.type === 'mote') {
+        sz = Math.round(e.size);
+      }
+      out.push({ type: e.type, text: e.text, kind: e.kind, size: sz, life: e.life,
+                 color: e.color, x: e.x, y: e.y, age: e.age, vy: e.vy });
+    }
+    return out;
+  };
+  A.shake = function () { return shakeMag; };
+  A.units = function () { return state ? state.units : null; };
+  /** 当前**还没过期**的领域（给自检用：只返回标量，不返回内部对象） */
+  A.fields = function () {
+    if (!state || !state.fields) return [];
+    var out = [];
+    for (var i = 0; i < state.fields.length; i++) {
+      var f = state.fields[i];
+      if (f.until <= state.t) continue;
+      out.push({ id: f.id, r: f.r, c: f.c, radius: f.radius,
+                 until: f.until, side: f.side, asCut: f.asCut, allyCut: f.allyCut });
+    }
+    return out;
+  };
+
+  A.pause = function () { if (state) state.playing = false; };
+  A.resume = function () {
+    if (!state) return;
+    if (state.t >= state.total) A.restart();
+    else state.playing = true;
+  };
+  A.restart = function () {
+    if (!state) return;
+    A.play(state.result, { onEvent: A.onEvent }, onFinish);
+  };
+  /** 跳到结算：一次性消费完剩下的事件。逻辑完全一样，只是不等时间轴。 */
+  A.skip = function () {
+    if (!state) return;
+    while (state.idx < state.result.log.length) {
+      applyEvent(state.result.log[state.idx]);
+      state.idx++;
+    }
+    state.t = state.total;
+    state.playing = false;
+    state.reveal = 1;
+    fx.length = 0;
+    shakeMag = 0;
+    if (onFinish) { var f = onFinish; onFinish = null; f(); }
+  };
+
+  A.onEvent = null;
+  A.onFrame = null;
+
+  /* ============================================================
+   * 特效
+   * ============================================================ */
+  function addNum(x, y, text, kind, scale) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'num', x: x, y: y, text: text, kind: kind || 'phys',
+      age: 0, life: kind === 'crit' ? 0.95 : 0.78,
+      vx: (Math.random() - 0.5) * 24, vy: kind === 'crit' ? -58 : -46,
+      scale: scale || 1
+    });
+  }
+  function addRing(x, y, color, maxR, life) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'ring', x: x, y: y, color: color, maxR: maxR, age: 0, life: life || 0.42 });
+  }
+
+  /* ---------- 讲话石「飞入寻常百姓家」的水系特效 ----------
+   *
+   * 两件东西拼出「河水」的观感：
+   *   addRiver   一条从佩戴者流向受害者的水带：三层粗细不同的曲线叠出水感，
+   *              前端只画到「已经流到哪」，后面再跟一撮水花
+   *   addRipple  地面上的一圈水波：压扁成椭圆，看着像水面而不是普通光环
+   */
+  function addRiver(x1, y1, x2, y2) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'river', x1: x1, y1: y1, x2: x2, y2: y2, age: 0, life: 0.40 });
+  }
+
+  function addRipple(x, y, maxR) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'ripple', x: x, y: y, maxR: maxR || CELL * 1.05, age: 0, life: 0.55 });
+  }
+  /* ---------- 荣誉「狙击1」的弹道 ----------
+   *
+   *   一条**极粗、极亮**的曳光弹 + 枪口闪光 + 弹头。
+   *
+   *   ★ 2026-10 改版：原来是一条 5px 的光带，生命 0.22 秒 —— 实测在
+   *     95px 的格子上几乎看不见，玩家根本不知道这一枪打出去了。
+   *     现在拆成 5 层（26px 大光晕 → 13px 光晕 → 6px 彩线 → 2.6px 白热芯 → 弹头），
+   *     最粗那层有整个格子的四分之一宽。
+   *
+   *   ★ 生命从 0.22 拉到 0.30，而且**前 55% 完全不衰减** ——
+   *     以前一出来就在淡出，等于把最亮的那几帧浪费掉了。
+   *
+   *   没打中的时候子弹不是消失，而是**继续飞出去**（`over` 传一段越过的距离），
+   *   让「打偏了」这件事在画面上真的发生过 —— 否则 miss 和「什么都没发生」看不出区别。
+   */
+  function addTracer(x1, y1, x2, y2, color, over) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'tracer', x1: x1, y1: y1, x2: x2, y2: y2,
+      over: over || 0, color: color, age: 0, life: 0.30
+    });
+  }
+
+  /** 枪口闪光：从枪口炸开的一圈光环，只在开枪那一瞬间出现 */
+  function addMuzzle(x, y, color) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'muzzle', x: x, y: y, color: color, age: 0, life: 0.20 });
+  }
+
+  /* ---------- 荣誉的「眼睛喷金色激光」 ----------
+   *
+   * 这是**蓄力**的视觉：技能攒满之后它站着不动 CHARGE_TIME（0.5 秒），
+   * 两只眼睛各射出一道金色激光指向目标，越来越粗、越来越亮，
+   * 时间一到才真的开枪（那条又粗又白的曳光弹）。
+   *
+   * ★ 它和其他特效最大的区别：**life 是和规则对齐的**（e.dur = CFG.CHARGE_TIME）。
+   *   不是"随便放 0.5 秒好看一下"—— 激光消失的那一帧，子弹正好出膛。
+   *   所以改这个时长要去改 CFG.CHARGE_TIME，不要在渲染层单独调。
+   */
+  function addEyeLaser(x1, y1, x2, y2, dur) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'eyelaser', x1: x1, y1: y1, x2: x2, y2: y2,
+      age: 0, life: dur || 0.5
+    });
+  }
+
+  /* ---------- 角色台词（字幕） ----------
+   *
+   * ★★ 这是**所有角色的台词**统一走的那一个入口，不是荣誉专用的。
+   *    以后再加「打中了喊一句 / 放技能喊一句」的角色，一律调这个函数，
+   *    字号、底板、弹出动画、停留时长就都是同一套，不会每个角色长得不一样。
+   *
+   * ★ 为什么必须有底板：以前只是描边的一行字，压在卡牌立绘和血条上，
+   *   实测根本看不清（深色立绘 + 深色描边 ≈ 一团黑）。
+   *   现在是一块半透明深色圆角底板 + 彩色描边 + 同色外发光，
+   *   底下是什么画面都能读出来。
+   *
+   * 字号默认 CELL × 0.62：95px 的格子上约 59px，
+   * 「Vamos」横过去大约 1.6 张卡牌宽 —— 就是要这么显眼，它是台词，不是数值。
+   */
+  /* ---------- 角色台词（字幕） ----------
+   *
+   * ★★ 这是**所有角色的台词**统一走的那一个入口，不是荣誉专用的。
+   *    以后再加「打中了喊一句 / 放技能喊一句」的角色，一律调这个函数，
+   *    字号、弹出动画、停留时长就都是同一套，不会每个角色长得不一样。
+   *
+   * ★ 数据侧也可以不碰渲染层：技能里写一行 `callout: 'Man！'`
+   *   （见 units.js 的「肘击」），cast 事件会把它带出来，
+   *   上面那个 case 就会自动弹字幕。**加台词不需要改 arena.js。**
+   *
+   * ★★ 2026-10 二次改版：**去掉底板和边框，只要字**。
+   *    见下面 drawFx 里 callout 分支的注释。
+   *
+   * 字号默认 CELL × 0.62：95px 格子上约 59px，
+   * 「Vamos」横过去大约 1.6 张卡牌宽 —— 就是要这么显眼，它是台词，不是数值。
+   */
+  var CALLOUT_SIZE = 0.62;
+  function addCallout(x, y, text, color, size) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'callout', x: x, y: y, text: text, color: color,
+      size: size || Math.round(CELL * CALLOUT_SIZE),
+      age: 0, life: 1.45, vx: 0, vy: -CELL * 0.52
+    });
+  }
+
+  /* ---------- 牢大「坠机」的三段特效 ---------- */
+
+  /** 落下中的直升机：一条从画面顶端砸向落点的尾迹，活到坠毁那一刻为止 */
+  function addStrike(x, y, delay, revive) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'strike', x: x, y: y, top: 0, revive: !!revive,
+      color: revive ? '#ffd66e' : '#c8703c',
+      age: 0, life: Math.max(0.25, delay || 0.5)
+    });
+  }
+
+  /** 爆炸：外圈冲击波 + 内圈火球，半径直接由坠机的 3×3 决定 */
+  function addBlast(x, y, r1, r2) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'blast', x: x, y: y, r1: r1, r2: r2, age: 0, life: 0.55 });
+  }
+
+  /** 复活光柱：一道从地面冲上去的金色光 */
+  function addPillar(x, y) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'pillar', x: x, y: y, age: 0, life: 0.75 });
+  }
+
+  /* ---------- 羊帆「巅峰谢幕」的自爆蓄力 ----------
+   *   牢大的坠机是"天上掉东西下来"，羊帆的自爆是"它自己要炸了"——
+   *   两者都是「倒下 → 1 秒 → 3×3 爆炸」，但那 1 秒里画面上该有的是
+   *   完全不同的东西：一个要画飞行轨迹，一个要画**原地涨起来的危险**。
+   *
+   *   ★ life 直接等于事件里的 delay（CFG.CRASH_DELAY）：
+   *     不是"随便放 1 秒好看一下"—— 这个圈涨满的那一刻，爆炸正好结算。
+   *     和荣誉的激光（life = CHARGE_TIME）是同一个约定。
+   */
+  function addCharge(x, y, dur) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'chargeGlow', x: x, y: y, age: 0, life: Math.max(0.25, dur || 1) });
+  }
+
+  function addSparks(x, y, n, color, power) {    for (var i = 0; i < n; i++) {
+      if (fx.length > FX_MAX) return;
+      var a = Math.random() * Math.PI * 2;
+      var s = (power || 120) * (0.5 + Math.random());
+      fx.push({
+        type: 'spark', x: x, y: y, color: color, age: 0,
+        life: 0.22 + Math.random() * 0.22,
+        vx: Math.cos(a) * s, vy: Math.sin(a) * s - 30,
+        len: 5 + Math.random() * 7
+      });
+    }
+  }
+  function addShake(mag) { shakeMag = Math.min(15, shakeMag + mag); }
+
+  /* ---------- 「大笑」特效：往上飘的字 / emoji ----------
+   *
+   * ★ 这是**两个机制共用**的一套特效：
+   *     奶龙「捧腹大笑」   —— 笑的人自己头顶冒 😂
+   *     嘉豪「男人领域」   —— 被控住的人头顶冒「哈哈」
+   *   同一套 Mote 就够了：只是文字、颜色、数量不一样。
+   *
+   * ★ 为什么要做成"飘上去的字"而不是再加一圈光环：
+   *   光环是**一瞬间**的，而这两个机制都是**持续几秒**的状态。
+   *   一帧的光环没法表达"它现在还在笑"，飘字可以 ——
+   *   连续冒 3 秒，玩家一眼就知道这段时间里它一直处于那个状态。
+   *   所以奶龙的飘字是**每 0.28 秒一颗、连着冒满 3 秒**（见 updateLaughFx）。
+   *
+   * ★ 只吃标量参数，和别的特效一样 —— 测试可以拿 fxList() 读出
+   *   文本和字号，不用碰任何内部对象。
+   */
+  function addMote(x, y, text, color, size, life, vx, vy, rot) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'mote', x: x, y: y, text: text, color: color,
+      size: size || Math.round(CELL * 0.30),
+      vx: (vx === undefined) ? (Math.random() - 0.5) * CELL * 0.55 : vx,
+      vy: (vy === undefined) ? -CELL * (0.75 + Math.random() * 0.35) : vy,
+      rot: (rot === undefined) ? (Math.random() - 0.5) * 0.5 : rot,
+      age: 0, life: life || 0.85
+    });
+  }
+
+  /** 一撮往上飘的笑：给「大笑 / 被逗笑」用 */
+  function addGiggle(x, y, n, text, color, spread) {
+    for (var i = 0; i < n; i++) {
+      var dx = (Math.random() - 0.5) * (spread || CELL * 0.85);
+      addMote(x + dx, y + (Math.random() - 0.5) * CELL * 0.30,
+        text, color, undefined, undefined, undefined, undefined, undefined);
+    }
+  }
+
+  /* ---------- Dank1ng「先过中门再谈未来」的两件东西 ----------
+   *
+   *   ① 骷髅：技能击杀之后**留在原地**的一个记号。
+   *      ★ 它和别的飘字最大的区别是**几乎不飘**（vy 只有 -2% 格子/秒）——
+   *        "留在原地"是要求里明说的，飘上去就变成"数字"了。
+   *      ★ 寿命也比普通飘字长得多（1.8 秒），而且带一圈慢慢扩散的暗环，
+   *        这样在一堆特效里能认出"这里死过人"。
+   *
+   *   ② 折叠刀：击杀之后耍 3 秒的那把刀。
+   *      ★ life 直接等于技能数据里的 knifeDur —— 和荣誉的激光、
+   *        羊帆的自爆蓄力同一套约定：**演出时长就是规则时长**，
+   *        刀收起来的那一帧，它正好可以重新攻击。
+   *      ★ 画成一个绕着卡片转的短刃（一段越来越尖的弧），
+   *        另外每转一圈甩出一小撮寒光。
+   */
+  function addSkull(x, y) {
+    addMote(x, y - CELL * 0.10, '💀', '#e8f0f4', Math.round(CELL * 0.42),
+      1.8, 0, -CELL * 0.02, 0);
+    addRing(x, y, 'rgba(40,46,56,.75)', CELL * 0.85, 0.6);
+  }
+
+  function addKnife(x, y, dur) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'knife', x: x, y: y, age: 0, life: Math.max(0.2, dur || 3) });
+  }
+
+  /* ★ 定位用 PITCH（格子 + 间距），不是 CELL。
+   *
+   *   布阵盘第 c 列中心 = c × (格子 + 间距) + 格子/2
+   *   画布  第 c 列中心 = 必须和上面那一行**逐字相同**，否则玩家摆的阵型
+   *   一开战就会整体缩一点、行列对不上（差 7 × 间距 = 56px）。
+   *   行同理。这就是「布阵怎么摆、打起来就该在哪」的实现方式。 */
+  function cellX(u) { return u.cc * PITCH + CELL / 2; }
+  function cellY(u) { return u.rr * PITCH + CELL / 2; }
+
+  /* ============================================================
+   * 事件消费
+   * ============================================================ */
+  function applyUpTo(t) {
+    var log = state.result.log;
+    while (state.idx < log.length && log[state.idx].t <= t) {
+      applyEvent(log[state.idx]);
+      state.idx++;
+    }
+  }
+
+  function dirTo(from, to) {
+    var dx = cellX(to) - cellX(from);
+    var dy = cellY(to) - cellY(from);
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    return { dx: dx / len, dy: dy / len };
+  }
+
+  function applyEvent(e) {
+    var pb = state, u, tgt, src, d;
+    switch (e.type) {
+      case 'move':
+        u = pb.units[e.who];
+        if (u) { u.r = e.r; u.c = e.c; }
+        break;
+
+      case 'attack': case 'skill': case 'damage':
+        tgt = pb.units[e.to];
+        src = pb.units[e.from];
+        if (tgt) {
+          tgt.hp = e.hpAfter;
+          if (e.shieldLoss) tgt.shield = Math.max(0, tgt.shield - e.shieldLoss);
+          tgt.flash = 1;
+          if (src) {
+            d = dirTo(tgt, src);          // 被打的人往后仰（远离攻击者）
+            tgt.flinch = 1;
+            tgt.flinchDx = d.dx;
+            tgt.flinchDy = d.dy;
+          }
+          var isThorn = (e.reason === 'thorn');
+          var kind = e.type === 'attack'
+            ? (e.peak ? 'peak' : (e.crit ? 'crit' : 'phys'))
+            : (e.type === 'skill' ? 'magic' : (isThorn ? 'thornWater' : 'thorn'));
+          addNum(cellX(tgt), cellY(tgt) - CELL * 0.42, String(Math.round(e.dmg)), kind,
+            e.crit ? 1.35 : 1);
+          /* ★★ 羊帆「羊巅峰」的 20 倍一击。
+           *
+           *   这一下必须"看得出来是大事"：数字本身已经放大到 1.9 倍字号，
+           *   再叠一套爆发（红金双环 + 大圈火星 + 顿帧 + 震屏），
+           *   混战里也能一眼认出"刚才那一下不是普通普攻"。
+           *   ★ 震屏和顿帧都比暴击更重（暴击 6.5 / 0.055，这里是 9 / 0.09）——
+           *     20 倍伤害如果只靠飘字表达，玩家会以为是数字显示错了。 */
+          if (e.peak && tgt) {
+            addRing(cellX(tgt), cellY(tgt), 'rgba(255,120,60,.95)', CELL * 1.9, 0.6);
+            addRing(cellX(tgt), cellY(tgt), 'rgba(255,214,110,.95)', CELL * 1.1, 0.42);
+            addSparks(cellX(tgt), cellY(tgt), 22, '#ffd24d', 300);
+            addSparks(cellX(tgt), cellY(tgt), 10, '#ff7a3c', 210);
+            addShake(9);
+            pb.hitstop = 0.09;
+            if (src) addCallout(cellX(src), cellY(src) - (CELL + 10) / 2 - CELL * 0.34,
+                                '羊巅峰', '#ffd24d');
+          }
+          if (isThorn) {
+            /* ★ 讲话石「飞入寻常百姓家」的水系特效。
+             *
+             *   一条水带从佩戴者流向这个受害者 + 受害者脚下一圈水波。
+             *   一次受击会同时弹到九宫格里所有人（最多 9 个），
+             *   所以水带必须**细、快、半透明** —— 九条粗线同时出现就成一团糊了。
+             *   水花用冷色（浅蓝），和物理命中的白/暖色一眼能分开。 */
+            if (src) addRiver(cellX(src), cellY(src), cellX(tgt), cellY(tgt));
+            addRipple(cellX(tgt), cellY(tgt), CELL * 0.95);
+            addSparks(cellX(tgt), cellY(tgt), 5, '#8fcbe8', 150);
+            addShake(1.2);
+          } else {
+            addSparks(cellX(tgt), cellY(tgt), e.crit ? 9 : 4,
+              e.crit ? '#e6b23c' : (e.type === 'skill' ? '#8d7ad4' : '#6b7a70'),
+              e.crit ? 190 : 120);
+            if (e.crit) addShake(6.5);
+            else if (e.type === 'skill') addShake(4.5);
+            else addShake(1.5);
+            if (e.crit || e.type === 'skill') pb.hitstop = 0.055;   // 顿帧
+          }
+        }
+        if (src) {
+          /* ★ 纯 CD 型棋子（奶龙）的普攻**不会**给它加蓝 ——
+             battle.js 里 gainMana 对它直接返回，而 attack 事件里的
+             manaAfter 是"设想法力型会加多少"，对它来说是假数据。
+             照抄进渲染层的话，冷却条会在每次普攻时被顶高一截、
+             又被下一帧的重算拉回去，看起来像在抖。 */
+          if (e.type === 'attack' && e.manaAfter !== undefined && !(src.cdSeconds > 0)) {
+            src.mana = e.manaAfter;
+          }
+          /* ★ 巅峰一击把"蓄势"用掉了 —— 卡片上的 🐑×20 徽章跟着消失。
+             不清的话，玩家会以为下一发还是 20 倍。 */
+          if (e.peak) src.peakReady = false;
+          if (tgt) {
+            d = dirTo(src, tgt);          // 出手的人往目标方向突一下
+            src.lunge = 1;
+            src.lungeDx = d.dx;
+            src.lungeDy = d.dy;
+          }
+        }
+        if (e.type !== 'damage' && A.onEvent) A.onEvent(e);
+        break;
+
+      case 'heal':
+        u = pb.units[e.to];
+        if (u) {
+          u.hp = e.hpAfter;
+          /* 星级被动（兽性 / 野性）的挨打回血用独立的样式：
+             偏暖的绿 + 小一号字体。它是「被动在生效」，
+             和奶妈主动奶一口应该看得出来不是一回事。 */
+          var passiveHeal = (e.reason === 'passive');
+          addNum(cellX(u), cellY(u) - CELL * 0.42, '+' + Math.round(e.amount),
+                 passiveHeal ? 'healPassive' : 'heal', 1);
+          addRing(cellX(u), cellY(u),
+                  passiveHeal ? 'rgba(170,205,110,.8)' : 'rgba(90,190,120,.75)',
+                  CELL * (passiveHeal ? 0.42 : 0.55), 0.5);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+
+      case 'shield':
+        u = pb.units[e.to];
+        if (u) {
+          u.shield = e.shieldAfter;
+          if (e.reason !== 'trait') addRing(cellX(u), cellY(u), 'rgba(150,190,230,.8)', CELL * 0.5, 0.45);
+        }
+        break;
+
+      /* ★ 荣誉的蓄力：两只眼睛喷金色激光。
+       *
+       *   眼睛的位置是**估**出来的 —— 立绘是一张方形照片，没有眼睛坐标。
+       *   取卡面上方三分之一、左右各偏 16% 卡宽：竖版人物立绘的头基本都在那儿，
+       *   对荣誉这张实测是准的。以后换立绘如果眼睛位置差得多，改这两个系数就行。
+       *
+       *   激光指向**目标当时的位置**（蓄力开始时锁定）。
+       *   目标这 0.5 秒里走开的话激光不会跟着拐弯 —— 那反而像"锁定"的感觉，
+       *   而且规则层本来也是在开枪那一刻才重新选目标的，两边行为一致。 */
+      case 'charge': {
+        var cu = pb.units[e.who];
+        if (cu) {
+          var ccx = cellX(cu), ccy = cellY(cu);
+          var chh = CELL + 10, cww = CELL + 6;
+          var eyeY = ccy - chh / 2 + chh * 0.34;
+          var eyeDx = cww * 0.16;
+          var tgt2 = e.to ? pb.units[e.to] : null;
+          var ax = tgt2 ? cellX(tgt2) : ccx;
+          var ay = tgt2 ? cellY(tgt2) : (ccy - CELL);
+          addEyeLaser(ccx - eyeDx, eyeY, ax, ay, e.dur);
+          addEyeLaser(ccx + eyeDx, eyeY, ax, ay, e.dur);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* ★ 「抓娃娃」：这一下被完全挡下来了。
+       *
+       *   表现上要一眼看出「打不动它」：
+       *   一圈青色护盾环 + 一小撮火星 + 一个「挡」字飘出来，
+       *   而且卡片上的 🛡N 会闪一下、数字 -1。
+       *
+       *   ★ 这里**没有任何伤害数字**，因为这一下真的一分血都没掉 ——
+       *     光有特效、血照扣，是这个机制最容易出的假动作；
+       *     规则层是靠「block 事件 + 0 伤害 + 血条不动」三件事一起保证的。 */
+      case 'block': {
+        var bu2 = pb.units[e.who];
+        if (bu2) {
+          bu2.guardLeft = e.left;
+          bu2.guardFlash = 1;
+          var bx2 = cellX(bu2), by2 = cellY(bu2);
+          addRing(bx2, by2, 'rgba(126,240,216,.9)', CELL * 0.78, 0.40);
+          addRing(bx2, by2, 'rgba(255,255,255,.75)', CELL * 0.46, 0.28);
+          addSparks(bx2, by2, 7, '#8fd8f0', 165);
+          addNum(bx2, by2 - CELL * 0.46, '挡', 'guardClang', 0.92);
+        }
+        break;
+      }
+
+      /* ★ 张雪峰「超频」：每次普攻叠攻速，越过阈值那一下开始自毁。
+       *
+       *   表现上分两段：
+       *     · 平时只是卡片上的 ⚡+N% 往上跳
+       *     · **越过阈值那一瞬间**弹一句台词「你快不过我你信吗」+ 一圈红环 ——
+       *       这是这一整套被动里最重要的一个信号：从现在起他在烧自己的血。
+       *       不喊出来的话，玩家只会看到自己的血莫名其妙往下掉。 */
+      case 'ocas': {
+        var ou2 = pb.units[e.who];
+        if (ou2) {
+          ou2.oc = e.pct;
+          ou2.ocFlash = 1;
+          if (e.justOver) {
+            ou2.ocOver = true;
+            addRing(cellX(ou2), cellY(ou2), 'rgba(255,90,70,.95)', CELL * 1.5, 0.55);
+            addSparks(cellX(ou2), cellY(ou2), 18, '#ff6a4a', 260);
+            addCallout(cellX(ou2), cellY(ou2) - (CELL + 10) / 2 - CELL * 0.34,
+                       '你快不过我你信吗', '#ff6a4a');
+            addShake(8);
+            pb.hitstop = 0.08;
+          }
+        }
+        break;
+      }
+
+      /* ★ 超频自毁：每秒掉 44% 当前生命。红色的数字 + 一小撮红火星，
+         和"挨打"的伤害数字区分开（那个是白/黄的）。 */
+      case 'selfburn': {
+        var su3 = pb.units[e.who];
+        if (su3) {
+          su3.hp = e.hpAfter;
+          su3.ocBurnFlash = 1;
+          su3.flash = 0.6;
+          addNum(cellX(su3), cellY(su3) - CELL * 0.42, '-' + Math.round(e.amount),
+                 'selfBurn', 1.05);
+          addSparks(cellX(su3), cellY(su3), 5, '#ff6a4a', 120);
+        }
+        break;
+      }
+
+      /* ★ 「巧乐兹」的冰棍：一层一个冰蓝小环，层数记在卡片上。
+         满层冰冻走的是下面那条 stun（reason='freeze'）。 */
+      case 'chill': {
+        var cu3 = pb.units[e.to];
+        if (cu3) {
+          cu3.chill = e.stacks;
+          cu3.chillMax = e.max;
+          cu3.chillFlash = 1;
+          addRing(cellX(cu3), cellY(cu3), 'rgba(150,220,255,.85)', CELL * 0.5, 0.32);
+          addSparks(cellX(cu3), cellY(cu3), 4, '#b6e6ff', 110);
+        }
+        break;
+      }
+
+      /* ★ 奶龙「捧腹大笑」：给自己开一段 3 秒的肉盾窗口。
+       *
+       *   要让人一眼看出"它现在打不动"：
+       *   金色大笑环 + 台词 + 卡片上一枚 😂 徽章（常驻到笑完）；
+       *   ★★ 另外还有一套**会持续 3 秒的飘字**（😂 一颗颗往上冒）——
+       *      光环和台词都是"一瞬间"的，而这个状态要挂 3 秒。
+       *      只放一帧特效的话，玩家看到字飘走之后仍然不知道
+       *      "这 3 秒它到底在干嘛"。飘字由 updateLaughFx 每 0.28 秒补一颗，
+       *      起手这里先给一撮密的，让它"砰"地开始。
+       *   ★ 减伤和回血都**没有**单独的特效 ——
+       *     减伤本该表现为"伤害数字变小"，回血本来就有绿色的 +N。
+       *     再给它们各加一套特效，画面上就全是光了。 */
+      case 'laugh': {
+        var gu2 = pb.units[e.who];
+        if (gu2) {
+          gu2.laughUntil = e.until;
+          gu2.laughFlash = 1;
+          gu2.laughMove = !!e.move;
+          gu2.laughAlly = !!e.allyHeal;
+          /* ★ 冷却从**放技能这一刻**重新开始。
+             battle.js 里 cdAcc 也是在 castSkill 里清零的，
+             两边同一个锚点，条子才会和真正能再放的时间对上。 */
+          gu2.cdT = state.t;
+          gu2.mana = 0;
+          gu2.laughFxAt = 0;              // 飘字的下一颗：立刻开始
+          var lx = cellX(gu2), ly = cellY(gu2);
+          addRing(lx, ly, 'rgba(255,206,86,.95)', CELL * (e.allyHeal ? 1.6 : 1.0), 0.55);
+          addRing(lx, ly, 'rgba(255,240,190,.9)', CELL * 0.62, 0.34);
+          addSparks(lx, ly, 12, '#ffd66e', 190);
+          addGiggle(lx, ly - CELL * 0.18, 7, '😂', '#ffce56', CELL * 1.1);
+          addCallout(lx, ly - (CELL + 10) / 2 - CELL * 0.34, '捧腹大笑', '#ffce56');
+          if (e.allyHeal) {
+            addRing(lx, ly, 'rgba(150,235,170,.9)', CELL * 2.4, 0.7);
+            addSparks(lx, ly, 10, '#9cebaf', 200);
+          }
+          addShake(5);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      case 'cast':
+        u = pb.units[e.from];
+        if (u) {
+          u.mana = 0;
+          addRing(cellX(u), cellY(u), 'rgba(130,110,200,.85)', CELL * 1.15, 0.5);
+          addSparks(cellX(u), cellY(u), 7, '#8d7ad4', 140);
+          addShake(2.5);
+          /* ★ 羊帆「羊巅峰」：技能只做一件事 —— 给下一次普攻蓄势。
+             所以这里把「已蓄势」记在卡片上，会常驻显示一枚 🐑×20 徽章，
+             一直到那一下真的打出去（attack 事件的 peak 标记）才消失。
+             ★ 蓄势状态**必须常驻可见**：20 倍伤害是这个角色一整局的高光，
+               玩家如果看不到"现在这一发是大的"，只会觉得伤害数字乱跳。 */
+          if (e.kind === 'peak') {
+            u.peakReady = true;
+            addRing(cellX(u), cellY(u), 'rgba(255,210,90,.9)', CELL * 0.9, 0.5);
+            addSparks(cellX(u), cellY(u), 10, '#ffd24d', 170);
+          }
+          /* ★ 技能喊话：数据里写了 callout 就弹（牢大的「Man！」、羊帆的「羊巅峰」）。
+             渲染层不需要知道是哪个技能 —— 想喊什么由 units.js 决定。 */
+          if (e.callout) {
+            addCallout(cellX(u), cellY(u) - (CELL + 10) / 2 - CELL * 0.34,
+                       e.callout, '#ffd24d');
+          }
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+
+      /* ★ 牢大「坠机」的三段演出。
+       *
+       *   ① down   倒下了，但还没落地 —— 画一个不稳定的阴影/火星，
+       *             让玩家知道「这还没完」（那 1 秒里它是不参与胜负的）
+       *   ② crash  直升机砸下来的那一下：一整块 3×3 的爆炸
+       *   ③ revive 从残骸里站起来：金色光柱 + 扩散环
+       *
+       *   ★ 这三段的时间关系是**规则保证**的（CFG.CRASH_DELAY / CRASH_RADIUS），
+       *     渲染层照抄事件里的 r/c/radius，不自己算范围 ——
+       *     画出来的圈和真正挨打的那九格永远是同一个。 */
+      case 'down': {
+        var du = pb.units[e.who];
+        if (du) {
+          /* ★★ 这里有两种完全不同的"倒下之后还有一下"：
+           *     坠机（牢大）  一架直升机从画面顶上砸下来 —— addStrike
+           *     自爆（羊帆）  它**自己**在原地蓄力炸开，天上什么都没有 —— addCharge
+           *   画成一样的话，玩家会以为羊帆也在召唤直升机。
+           *   判据就是事件里的 `boom`，渲染层不猜。 */
+          if (e.boom) {
+            addRing(cellX(du), cellY(du), 'rgba(255,110,60,.9)', CELL * 0.9, 0.55);
+            addSparks(cellX(du), cellY(du), 10, '#ff7a3c', 150);
+            addCharge(cellX(du), cellY(du), e.delay);
+          } else {
+            addRing(cellX(du), cellY(du), 'rgba(210,120,60,.85)', CELL * 0.7, 0.5);
+            addSparks(cellX(du), cellY(du), 8, '#c8703c', 120);
+            // 落下中的直升机：一条从画面顶端落向这一格的残影
+            addStrike(cellX(du), cellY(du), e.delay, !!e.revive);
+          }
+        }
+        break;
+      }
+
+      case 'crash': {
+        var cx2 = e.c * PITCH + CELL / 2, cy2 = e.r * PITCH + CELL / 2;
+        addBlast(cx2, cy2, CELL * (e.radius + 0.5), CELL * (e.radius + 1.6));
+        addSparks(cx2, cy2, 34, '#ffb066', 420);
+        addSparks(cx2, cy2, 18, '#ffe9a8', 260);
+        addSparks(cx2, cy2, 12, '#8d7f70', 180);
+        if (e.boom) {
+          // 自爆：金红双环代替直升机那种土色烟尘，一眼能分开两件事
+          addRing(cx2, cy2, 'rgba(255,120,60,.95)', CELL * (e.radius + 1.1), 0.6);
+          addRing(cx2, cy2, 'rgba(255,220,120,.9)', CELL * (e.radius + 1.5), 0.45);
+          if (e.stun > 0) addCallout(cx2, cy2 - CELL * 0.9, '巅峰谢幕', '#ffd24d');
+        }
+        addShake(15);
+        pb.hitstop = 0.16;
+        break;
+      }
+
+      case 'revive': {
+        var ru = pb.units[e.who];
+        if (ru) {
+          ru.alive = true; ru.hp = e.hp; ru.shield = 0;
+          ru.r = e.r; ru.c = e.c; ru.rr = e.r; ru.cc = e.c;
+          ru.flash = 1;
+          addPillar(cellX(ru), cellY(ru));
+          addRing(cellX(ru), cellY(ru), 'rgba(255,214,110,.95)', CELL * 1.7, 0.6);
+          addSparks(cellX(ru), cellY(ru), 20, '#ffd66e', 220);
+          addCallout(cellX(ru), cellY(ru) - (CELL + 10) / 2 - CELL * 0.34,
+                     '我回来了', '#ffd24d');
+          addShake(9);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* 肘击的击退：被推的人沿单轴滑出去（走的是同一个 rr/cc 插值，
+         所以画面上就是"被打飞一段"，不需要单独写动画）。 */
+      case 'knockback': {
+        var ku = pb.units[e.to];
+        if (ku) {
+          ku.r = e.r; ku.c = e.c;
+          addSparks(cellX(ku), cellY(ku), 8, '#ffd9a8', 160);
+          addRing(cellX(ku), cellY(ku), 'rgba(255,190,120,.8)', CELL * 0.6, 0.4);
+        }
+        break;
+      }
+
+      /* ★★ Dank1ng「先过中门再谈未来」的击杀后续：骷髅 + 耍刀。
+       *
+       *   两个事件是成对出现的（同一个 tick、同一个受害者），所以画在一起：
+       *   骷髅钉在尸体那一格（"这里死过人"），它自己开始转刀（"这 3 秒不打了"）。
+       *
+       *   ★ 位置不能从 pb.units[e.to] 读 —— 目标已经阵亡，卡片只是还留在
+       *     画面里（drawCorpse）；而事件里带了 r/c，直接用最准。
+       */
+      case 'skull': {
+        var skx = e.c * PITCH + CELL / 2, sky = e.r * PITCH + CELL / 2;
+        addSkull(skx, sky);
+        addSparks(skx, sky, 8, '#c9d6de', 130);
+        break;
+      }
+
+      case 'knife': {
+        var kfe = pb.units[e.who];
+        if (kfe) {
+          kfe.knifeUntil = e.until;
+          kfe.knifeFlash = 1;
+          addKnife(cellX(kfe), cellY(kfe), e.dur);
+          addRing(cellX(kfe), cellY(kfe), 'rgba(210,228,255,.9)', CELL * 1.1, 0.45);
+          addShake(4);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* ★★ 「空悲切」：队友全部阵亡的那一刻，Dank1ng 的法力条永远满格。
+       *   这是它的**绝境被动**，必须有一个响亮的信号 ——
+       *   否则玩家只会看到"它怎么突然一秒一发了"。
+       *   ★ 关的时候（队友被复活）也要给一个信号：这个状态是双向的。 */
+      case 'endless': {
+        var eu = pb.units[e.who];
+        if (eu) {
+          eu.endless = !!e.on;
+          eu.mana = e.mana;
+          eu.flash = 1;
+          var ex2 = cellX(eu), ey2 = cellY(eu);
+          if (e.on) {
+            addRing(ex2, ey2, 'rgba(190,60,70,.95)', CELL * 1.8, 0.7);
+            addRing(ex2, ey2, 'rgba(255,180,140,.9)', CELL * 1.0, 0.5);
+            addSparks(ex2, ey2, 20, '#e0745c', 260);
+            addCallout(ex2, ey2 - (CELL + 10) / 2 - CELL * 0.34, '空悲切', '#ff9a7a');
+            addShake(8);
+          } else {
+            addRing(ex2, ey2, 'rgba(150,170,190,.75)', CELL * 1.2, 0.5);
+          }
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* ★ 「锁头」：击杀之后法力条瞬间回满。
+         只闪一下条子 + 一小撮火星 —— 它是个高频的"续上"动作，
+         做成大特效会把真正的大事（骷髅 / 空悲切）盖掉。 */
+      case 'refill': {
+        var rfu = pb.units[e.who];
+        if (rfu) {
+          rfu.mana = e.mana;
+          rfu.manaFlash = 1;
+          addSparks(cellX(rfu), cellY(rfu), 5, '#ffd98a', 120);
+        }
+        break;
+      }
+
+      /* ★★ 楚生疑犯「阴暗领域」：一片**留在场上的地形**。
+       *
+       *   这是渲染层第一次遇到"不属于任何单位"的持续效果 ——
+       *   以前所有"挂几秒"的东西都画在单位身上（徽章、描边、光环），
+       *   单位一死就跟着没了。领域反过来：施法者死了、走开了、被推走了，
+       *   雨照样下，站在里面的人照样减半。
+       *
+       *   ★ 所以它只能记一份自己的列表（pb.fields），按 until 过期 ——
+       *     和 buffUntil / laughUntil 是同一套约定：不需要"结束"事件，
+       *     每帧读的时候比一次时间就行（见 step 里的过滤）。
+       *   ★ 半径/时长/减速比例全部照抄事件，渲染层**不自己算范围** ——
+       *     画出来的那片黑和真正被减速的格子永远是同一个。
+       */
+      case 'field': {
+        pb.fields.push({
+          id: e.id, r: e.r, c: e.c, radius: e.radius,
+          until: e.until, side: e.side, asCut: e.asCut, allyCut: e.allyCut,
+          born: state.t
+        });
+        var fx2 = e.c * PITCH + CELL / 2, fy2 = e.r * PITCH + CELL / 2;
+        addRing(fx2, fy2, 'rgba(60,74,92,.95)', CELL * (e.radius + 0.6), 0.7);
+        addRing(fx2, fy2, 'rgba(150,170,200,.7)', CELL * (e.radius + 1.1), 0.55);
+        addSparks(fx2, fy2, 16, '#7d92b0', 220);
+        addCallout(fx2, fy2 - CELL * 0.9, '阴暗领域', '#9fb6d4');
+        addShake(6);
+        break;
+      }
+
+      /* ★ 楚生疑犯 3 星的「遁入暗影」：开 / 关两个方向都要有表现。
+       *   ★ 开的瞬间是一圈向内收的暗色环 + 台词；关的时候是一条冷色外环（现形）。
+       *     这两个时刻玩家必须看得见 —— 因为暗影期间它既打不死也不会被打，
+       *     状态读不出来就变成了"这个单位怎么没血条了"。 */
+      case 'shadow': {
+        var shu = pb.units[e.who];
+        if (shu) {
+          shu.shadow = !!e.on;
+          shu.flash = 1;
+          var sx = cellX(shu), sy = cellY(shu);
+          if (e.on) {
+            addRing(sx, sy, 'rgba(40,48,66,.95)', CELL * 1.5, 0.6);
+            addRing(sx, sy, 'rgba(120,140,180,.8)', CELL * 0.8, 0.45);
+            addSparks(sx, sy, 18, '#6c7ea0', 240);
+            addCallout(sx, sy - (CELL + 10) / 2 - CELL * 0.34, '遁入暗影', '#9fb6d4');
+            addShake(7);
+          } else {
+            addRing(sx, sy, 'rgba(200,220,255,.95)', CELL * 1.7, 0.6);
+            addSparks(sx, sy, 16, '#c8dcff', 230);
+            addCallout(sx, sy - (CELL + 10) / 2 - CELL * 0.34, '现形', '#c8dcff');
+            addShake(7);
+          }
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* ★ 荣誉「狙击1」：命中喊 Vamos，没命中喊 Kale。
+       *
+       *   喊话挂在**开枪的人自己**的卡牌上方（这是它的台词，不是受击反馈），
+       *   子弹则永远是「从自己飞向目标」——
+       *   命中就在目标身上炸开，没命中就飞过去消失在画面外。
+       *
+       *   判定本身（20% / 星级保底）全在模拟器里，这一层只负责表达：
+       *   玩家不该靠读日志才知道这一枪有没有中。
+       *
+       *   ★ 2026-10 加强：曳光弹加粗到 26px 光晕，另加一圈**枪口闪光**
+       *     （不然混战里看不出这一枪是谁开的），命中的爆点也整体放大了一倍。 */
+      case 'snipe': {
+        var su = pb.units[e.from], st2 = pb.units[e.to];
+        if (su) {
+          var hitCol = e.hit ? (e.sure ? '#7ef0d8' : '#ffe07a') : '#9fb0bd';
+          var sx = cellX(su), sy = cellY(su);
+          addMuzzle(sx, sy, hitCol);
+          if (st2) addTracer(sx, sy, cellX(st2), cellY(st2),
+                             hitCol, e.hit ? 0 : CELL * 2.2);
+          else addTracer(sx, sy, sx, sy - CELL * 2, hitCol, 0);
+          /* 喊话挂在卡牌**上方**：卡牌半高 + 一个字号的高度。
+             保底命中的那几发换个色（青），让「这发是运，不是运气」看得出来。 */
+          addCallout(sx, sy - (CELL + 10) / 2 - CELL * 0.34,
+                     e.hit ? 'Vamos' : 'Kale', hitCol);
+          if (e.hit && st2) {
+            addSparks(cellX(st2), cellY(st2), 22, '#ffe9a8', 300);
+            addSparks(cellX(st2), cellY(st2), 10, '#ffffff', 190);
+            addRing(cellX(st2), cellY(st2), 'rgba(255,233,168,.95)', CELL * 1.5, 0.42);
+            addRing(cellX(st2), cellY(st2), 'rgba(255,255,255,.9)', CELL * 0.85, 0.30);
+            addShake(11);
+            pb.hitstop = 0.10;              // 命中就顿帧 —— 20% 的爽点必须给足
+          } else if (!e.hit && st2) {
+            // 打偏也要有存在感：目标旁边一小撮「擦过去」的灰白色气流
+            addSparks(cellX(st2), cellY(st2), 6, '#9fb0bd', 130);
+          }
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      case 'stun':
+        u = pb.units[e.to];
+        if (u) {
+          /* ★ 冰冻（巧乐兹满层）走同一条 stun 事件，但表现要更重 ——
+             它是攒了 10 层换来的 3 秒硬控，不是随手一个眩晕。 */
+          var isFreeze = (e.reason === 'freeze');
+          if (isFreeze) {
+            u.chill = 0;                       // 层数被清空
+            addRing(cellX(u), cellY(u), 'rgba(150,220,255,.95)', CELL * 1.15, 0.55);
+            addRing(cellX(u), cellY(u), 'rgba(255,255,255,.9)', CELL * 0.7, 0.4);
+            addSparks(cellX(u), cellY(u), 16, '#cdeeff', 220);
+            addCallout(cellX(u), cellY(u) - (CELL + 10) / 2 - CELL * 0.34,
+                       '冰冻', '#8fd8f0');
+            addShake(7);
+          } else {
+            /* ★★ 嘉豪「男人领域」：被控住的人**头顶冒「哈哈」** ——
+             *   和奶龙「捧腹大笑」用的是同一套 Mote 特效（只是换字换色）。
+             *   一个被"领域"控住的人正在大笑，这件事不用解释，
+             *   画面上飘几声哈哈就讲明白了。
+             *
+             *   ★ 为什么这里连时长都不用看：眩晕的表现就是"现在动不了"，
+             *     飘字是**一次性**的起手特效（一次施法冒一撮），
+             *     不是持续状态 —— 和奶龙那 3 秒的连续飘字是两件事。
+             *     3 星的 2.4 秒从"卡片上挂着动弹不得"本身就能看出来。
+             *
+             *   ★ 一次控多个人时，每个人各自走一遍这里 —— 三条 stun 事件
+             *     就是三撮哈哈，谁被控住了看得一清二楚。 */
+            var sx = cellX(u), sy = cellY(u);
+            addRing(sx, sy, 'rgba(230,180,60,.85)', CELL * 0.72, 0.5);
+            addRing(sx, sy, 'rgba(255,236,180,.75)', CELL * 0.44, 0.30);
+            addSparks(sx, sy, 6, '#f0c46a', 150);
+            addGiggle(sx, sy - CELL * 0.16, e.count > 1 ? 3 : 2, '哈哈', '#ffd98a',
+                      CELL * 0.6);
+          }
+        }
+        break;
+
+      /* ★ 星级被动「越打越快」。
+       *
+       *   规则不在这一层 —— 这里只是把「现在叠到多少了」记在单位身上，
+       *   卡片右下角会画一个小小的 ⚡+35%，并且每叠一层闪一下。
+       *
+       *   为什么非要画出来：这是个**只涨不跌**的成长，
+       *   但玩家如果看不到数字，只会觉得「好像打得快了一点」，
+       *   完全感受不到「我把一个 1 费卡养到 3 星、它现在攻速是 3 倍」这件事。
+       *   数值全在模拟器里，可见性是这一层的责任。 */
+      case 'frenzy':
+        u = pb.units[e.who];
+        if (u) {
+          u.frenzy = e.pct;
+          u.frenzyFlash = 1;                       // 闪一下，表示又叠了一层
+          if (e.capped && !u.frenzyCapped) {
+            u.frenzyCapped = true;                   // 到上限只在第一次给个环
+            addRing(cellX(u), cellY(u), 'rgba(230,150,40,.9)', CELL * 0.85, 0.5);
+          }
+        }
+        break;
+
+      /* ★ 星级被动「幻觉 / 开智」：豆包奶完一口，被奶的人身上多一个伤害改动。
+       *
+       *   正负两种结果用**冷暖两色**分开：增伤是金色，减伤是紫的。
+       *   玩家不需要看懂数字，看颜色就知道这一口奶是帮了还是坑了 ——
+       *   这正是「幻觉」这个被动要传达的东西。
+       *
+       *   卡片左上角另外有一个持续显示的 ↑+20% / ↓-20% 徽章（见 drawUnit），
+       *   因为这一下的特效是瞬时的，而效果要挂 4 秒。 */
+      case 'gift': {
+        u = pb.units[e.to];
+        if (u) {
+          u.buffMul = e.mul;
+          u.buffUntil = e.until;
+          u.buffFlash = 1;
+          var gx = cellX(u), gy = cellY(u);
+          addRing(gx, gy, e.good ? 'rgba(255,214,110,.85)' : 'rgba(178,124,224,.85)',
+                  CELL * 0.74, 0.45);
+          addSparks(gx, gy, e.good ? 6 : 5, e.good ? '#ffd66e' : '#b27ce0', 130);
+          addNum(gx, gy - CELL * 0.66, e.good ? '增伤' : '减伤',
+                 e.good ? 'giftGood' : 'giftBad', 1);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      case 'death':
+        u = pb.units[e.who];
+        if (u) {
+          u.alive = false; u.hp = 0; u.shield = 0;
+          addRing(cellX(u), cellY(u), 'rgba(184,80,63,.85)', CELL * 1.5, 0.62);
+          addSparks(cellX(u), cellY(u), 16, '#b8503f', 230);
+          addSparks(cellX(u), cellY(u), 8, '#8a6a5a', 150);
+          addShake(9);
+          pb.hitstop = 0.075;            // 击杀顿帧，最有「重量」的一下
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+
+      /* ★ 队友换位（被堵死的近战和前方队友交换位置）。
+       *
+       *   两个单位的 r/c 同时改掉，剩下的交给插值 ——
+       *   rr/cc 是每帧朝 r/c 逼近的，所以画面上就是两张卡**互相错身滑过去**，
+       *   不需要单独写动画。
+       *   再各给一小撮灰蓝火花，让「他俩换了位置」这件事被注意到。 */
+      case 'swap': {
+        var ua = pb.units[e.a], ub = pb.units[e.b];
+        if (ua) { ua.r = e.aR; ua.c = e.aC; ua.swaps = (ua.swaps || 0) + 1; }
+        if (ub) { ub.r = e.bR; ub.c = e.bC; ub.swaps = (ub.swaps || 0) + 1; }
+        if (ua && ub) {
+          addSparks(cellX(ua), cellY(ua), 4, '#9fb4c4', 90);
+          addSparks(cellX(ub), cellY(ub), 4, '#9fb4c4', 90);
+        }
+        break;
+      }
+
+      case 'snap':
+        for (var i = 0; i < e.u.length; i++) {
+          var row = e.u[i], uu = pb.units[row[0]];
+          if (!uu) continue;
+          uu.hp = row[1]; uu.shield = row[2]; uu.mana = row[3];
+          uu.r = row[4]; uu.c = row[5]; uu.alive = !!row[6];
+        }
+        break;
+
+      case 'end':
+        pb.playing = false;
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  /* ============================================================
+   * 主循环
+   *
+   * 时间推进刻意和 requestAnimationFrame 解耦：
+   *   frame() 只负责「按真实时间算出 dt，然后交给 step(dt)」。
+   * 这样有个很实际的好处 —— **无头浏览器不驱动 rAF**，
+   * 但测试可以直接循环调 Arena.step(1/30) 把整场战斗推完，
+   * 于是寻敌位移、伤害飘字、震屏这些全都能被自动验证，
+   * 而不是只能靠肉眼看着「感觉差不多」。
+   * ============================================================ */
+  var peak = { fx: 0, shake: 0, t: 0 };
+  A.peak = function () { return peak; };
+  A.resetPeak = function () { peak.fx = 0; peak.shake = 0; peak.t = 0; };
+
+  A.step = function (dt) {
+    if (!state || !(dt > 0)) return false;
+    var wasPlaying = state.playing;
+    if (state.reveal < 1) state.reveal = Math.min(1, state.reveal + dt * 2.2);
+
+    if (state.playing) {
+      if (state.hitstop > 0) {
+        state.hitstop -= dt;                 // 顿帧：时间轴暂停，画面特效照常走
+      } else {
+        state.t += dt * speed;
+        if (state.t >= state.total) {
+          state.t = state.total;
+          applyUpTo(state.t);
+          state.playing = false;
+        } else {
+          applyUpTo(state.t);
+        }
+      }
+    }
+
+    // 插值：让「每 tick 走一格」看起来像滑过去而不是瞬移
+    var k = 1 - Math.exp(-dt * 22);
+    var kLag = 1 - Math.exp(-dt * 5.5);      // 滞后条回得更慢，才看得出「刚掉了多少」
+    for (var uid in state.units) {
+      var u = state.units[uid];
+      u.rr += (u.r - u.rr) * k;
+      u.cc += (u.c - u.cc) * k;
+      u.hpLag += (u.hp - u.hpLag) * kLag;
+      if (u.lunge > 0) u.lunge = Math.max(0, u.lunge - dt * 6);
+      if (u.flinch > 0) u.flinch = Math.max(0, u.flinch - dt * 4.5);
+      if (u.flash > 0) u.flash = Math.max(0, u.flash - dt * 7);
+      if (u.frenzyFlash > 0) u.frenzyFlash = Math.max(0, u.frenzyFlash - dt * 3.2);
+      if (u.buffFlash > 0) u.buffFlash = Math.max(0, u.buffFlash - dt * 3.2);
+      if (u.guardFlash > 0) u.guardFlash = Math.max(0, u.guardFlash - dt * 3.2);
+      if (u.ocFlash > 0) u.ocFlash = Math.max(0, u.ocFlash - dt * 3.2);
+      if (u.ocBurnFlash > 0) u.ocBurnFlash = Math.max(0, u.ocBurnFlash - dt * 3.2);
+      if (u.chillFlash > 0) u.chillFlash = Math.max(0, u.chillFlash - dt * 3.2);
+      if (u.laughFlash > 0) u.laughFlash = Math.max(0, u.laughFlash - dt * 3.2);
+      if (u.knifeFlash > 0) u.knifeFlash = Math.max(0, u.knifeFlash - dt * 3.2);
+      if (u.manaFlash > 0) u.manaFlash = Math.max(0, u.manaFlash - dt * 3.2);
+      // 伤害改动到期：靠时间戳自然失效，不需要事件来通知
+      if (u.buffMul !== 1 && state.t >= u.buffUntil) { u.buffMul = 1; u.buffUntil = -1; }
+      /* 大笑也会靠时间戳自然结束。★ 不需要 laughEnd 事件 ——
+         时长写在 laughUntil 里，谁都能自己算出来还剩几秒。
+         事件只负责"开始笑"这一下。 */
+      if (u.laughUntil >= 0 && state.t >= u.laughUntil) { u.laughUntil = -1; }
+      /* ★★ 大笑期间的**连续飘字**（😂 一颗颗往上冒）。
+       *
+       *   「正在大笑」是一个要挂 3 秒的状态，而 laugh 事件只有一帧。
+       *   这一帧的特效飘走之后，画面上就只剩一条金色描边和一枚小徽章，
+       *   在十几张卡牌的混战里基本等于看不见。
+       *   所以这里每 0.28 秒补一颗飘字，冒满这 3 秒 ——
+       *   谁是"那个一直笑得停不下来的家伙"，一眼就能扫出来。
+       *
+       *   ★ 放在**每帧重算**而不是发事件：一条"还在笑"的日志
+       *     每 0.28 秒写一次，一次大笑就是 10 条毫无信息量的日志。
+       *     时间戳（laughUntil）已经写在事件里了，渲染层自己会数。
+       *   ★ 3 星额外给旁边的队友也冒两颗：那 3×3 里的人正在被治疗，
+       *     圈里飘起 😂 是最便宜的"我也在笑"的表达。 */
+      if (u.laughUntil >= 0 && state.t >= u.laughFxAt) {
+        u.laughFxAt = state.t + 0.28;
+        addGiggle(cellX(u), cellY(u) - CELL * 0.16, 1, '😂', '#ffce56', CELL * 0.5);
+        if (u.laughAlly) {
+          for (var muid in state.units) {
+            var mt = state.units[muid];
+            if (mt.side !== u.side || mt.uid === u.uid || !mt.alive) continue;
+            if (Math.max(Math.abs(mt.r - u.r), Math.abs(mt.c - u.c)) > 1) continue;
+            addGiggle(cellX(mt), cellY(mt) - CELL * 0.16, 1, '😂', '#9cebaf', CELL * 0.4);
+          }
+        }
+      }
+      /* ★ 纯 CD 技能的冷却条。放在**每帧重算**而不是靠事件推进：
+         battle.js 的 cooldownTick 不发事件（每 1/30 秒发一条会把事件流灌爆），
+         所以这里按 cdSeconds 和 cdT 自己算 —— 事件流仍然是唯一事实来源，
+         因为 cdT 只由 cast / laugh 事件写。 */
+      if (u.cdSeconds > 0) {
+        var cdFrac = (state.t - u.cdT) / u.cdSeconds;
+        u.mana = Math.max(0, Math.min(1, cdFrac)) * u.maxMana;
+      }
+    }
+
+    for (var f = state.flashes.length - 1; f >= 0; f--) {
+      state.flashes[f].age += dt;
+      if (state.flashes[f].age > HIT_FLASH) state.flashes.splice(f, 1);
+    }
+
+    for (var i = fx.length - 1; i >= 0; i--) {
+      var e = fx[i];
+      e.age += dt;
+      if (e.type === 'num' || e.type === 'spark') {
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        e.vy += (e.type === 'num' ? 130 : 420) * dt;
+      }
+      if (e.age >= e.life) fx.splice(i, 1);
+    }
+
+    if (shakeMag > 0.05) shakeMag *= Math.exp(-dt * 7.5);
+    else shakeMag = 0;
+
+    /* ★ 过期的领域要清掉。
+       ★ 放在 step 里清、而不是在 drawFields 里过滤：draw 一帧最多跑一次，
+         而"领域表越来越长"这件事是每帧累积的 —— 在那里清最省。
+         和 buffUntil 一样，过期**不需要任何人通知**，比一次时间就行。 */
+    if (state.fields && state.fields.length) {
+      for (var fi2 = state.fields.length - 1; fi2 >= 0; fi2--) {
+        if (state.fields[fi2].until <= state.t) state.fields.splice(fi2, 1);
+      }
+    }
+
+    if (fx.length > peak.fx) peak.fx = fx.length;
+    if (shakeMag > peak.shake) peak.shake = shakeMag;
+    if (state.t > peak.t) peak.t = state.t;
+
+    draw();
+    if (A.onFrame) A.onFrame(state);
+
+    if (wasPlaying && !state.playing && onFinish) {
+      var cb = onFinish;
+      onFinish = null;
+      setTimeout(cb, 520);
+    }
+    return true;
+  };
+
+  function frame(now) {
+    var dt = lastFrame ? Math.min(0.06, (now - lastFrame) / 1000) : 0;
+    lastFrame = now;
+    if (state) A.step(dt);
+    raf = requestAnimationFrame(frame);
+  }
+
+  /* ============================================================
+   * 绘制
+   * ============================================================ */
+  function drawIdle() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldW(), fieldH());
+    drawBg();
+  }
+
+  /**
+   * 战场底图。
+   *
+   * ★ 格子和准备阶段的棋盘画成同一种样子（同样的圆角白格、同样的间距），
+   *   这样「我摆的阵」和「打起来的阵」在视觉上就是一块东西平移了一下，
+   *   而不是两套看起来差不多的网格。
+   */
+  function drawBg() {
+    var W = fieldW(), H = fieldH();
+    /* 中线要画在**战场的真实中心** H/2，不能画在 ROWS*PITCH/2。
+       两者差半个间距（4px）：战场高 = 8 格 + 7 个间距，比 8 个 pitch 少一个间距。
+       画歪 4px 的话，「双方各占一半」看起来就是一边多一点点。 */
+    var mid = H / 2;
+
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#f1f2fa');
+    g.addColorStop(0.5, '#f0f3f0');
+    g.addColorStop(1, '#e9f1e7');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // 己方半场淡淡暖一点，提示「这是我的地盘」
+    ctx.fillStyle = 'rgba(120,180,140,.07)';
+    ctx.fillRect(0, mid, W, H - mid);
+
+    // 和布阵盘一样的圆角格子（前排更亮一点，和 .cell.front-row 对齐）
+    var half = ST.BATTLE_CFG.ROWS_PER_SIDE;
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        // 双方各自最靠中线的那一行算「前排」，和准备阶段的 front-row 同一套规则
+        var front = (r === half - 1) || (r === half);
+        ctx.fillStyle = front ? 'rgba(255,255,255,.80)' : 'rgba(255,255,255,.55)';
+        ctx.strokeStyle = C.grid;
+        ctx.lineWidth = 1;
+        roundRect(c * PITCH + .5, r * PITCH + .5, CELL - 1, CELL - 1, 10);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // 中线：比格线更明显
+    ctx.strokeStyle = C.center;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(W, mid);
+    ctx.stroke();
+
+    /* ★ 在两个半场各写一个地面水印。
+     *
+     *   没有这两个字的时候，「我方的棋子到底站在哪半场」是看不出来的 ——
+     *   只能靠背下来「上面是敌人」。而布阵盘只有 4 行、看起来就像一整个战场，
+     *   于是「我摆在我半场、怎么跑到敌人半场去了」这种疑问非常容易产生。
+     *   写在最底层（棋子画在上面），所以只是像地面上的漆字，不挡任何信息。 */
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '700 ' + Math.max(12, Math.round(CELL * 0.20)) +
+      'px "Microsoft YaHei", "Segoe UI", sans-serif';
+    ctx.fillStyle = 'rgba(120,112,175,.20)';       // 敌方：淡紫
+    ctx.fillText('敌方半场', W / 2, mid * 0.42);
+    ctx.fillStyle = 'rgba(58,124,90,.22)';         // 我方：淡绿
+    ctx.fillText('我方半场', W / 2, mid + (H - mid) * 0.42);
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  /** 按 object-fit: cover 的方式铺满（和 CSS 里一致） */
+  function drawCover(img, dx, dy, dw, dh) {
+    var iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return;
+    var s = Math.max(dw / iw, dh / ih);
+    var w = iw * s, h = ih * s;
+    ctx.drawImage(img, dx + (dw - w) / 2, dy + (dh - h) / 2, w, h);
+  }
+
+  function starText(n) { return n >= 3 ? '★★★' : (n === 2 ? '★★' : ''); }
+
+  var NUM_STYLE = {
+    phys: { fill: '#ffffff', edge: '#3c4a41', size: 1.0 },
+    crit: { fill: '#ffd24d', edge: '#7a5200', size: 1.35 },
+    magic: { fill: '#d9c8ff', edge: '#4a3a80', size: 1.12 },
+    thorn: { fill: '#ffb3a6', edge: '#7a2a1c', size: 1.0 },
+    // 讲话石反弹：水色，和普通反伤（暖红）区分开
+    thornWater: { fill: '#dff2ff', edge: '#1d5f86', size: 1.02 },
+    heal: { fill: '#b6f5c7', edge: '#1f6b38', size: 1.05 },
+    // 星级被动的挨打回血：偏暖的绿，和奶妈的治疗区分开
+    healPassive: { fill: '#d8f5a8', edge: '#3f6b18', size: 0.92 },
+    // 豆包「幻觉 / 开智」：增伤是金、减伤是紫 —— 冷暖一眼分好坏
+    giftGood: { fill: '#ffd66e', edge: '#7a5200', size: 0.86 },
+    giftBad: { fill: '#d6b0f5', edge: '#4a2a70', size: 0.86 },
+    // 抓娃娃挡下攻击：水青色，和「护盾」的观感一致
+    guardClang: { fill: '#c8f6ff', edge: '#1d5f86', size: 0.88 },
+    // 超频自毁：红得刺眼，和"挨打"的白/黄数字一眼分得开
+    selfBurn: { fill: '#ff8a6a', edge: '#6b1d10', size: 1.05 },
+    /* ★ 羊帆「羊巅峰」的 20 倍一击。
+       ★★ 字号必须**明显大过暴击**（1.35）—— 它是这个角色一整局唯一的高光，
+          和"偶尔一下打得好"完全不是一个量级。1.9 倍已经接近血条高度了。 */
+    peak: { fill: '#ffd24d', edge: '#8a1f10', size: 1.9 }
+  };
+
+  function drawFx() {
+    for (var i = 0; i < fx.length; i++) {
+      var e = fx[i];
+      var p = e.age / e.life;
+      var a = 1 - p;
+      if (e.type === 'num') {
+        var st = NUM_STYLE[e.kind] || NUM_STYLE.phys;
+        var size = Math.round((CELL * 0.235) * st.size * e.scale);
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, a * 1.7);
+        ctx.font = '900 ' + size + 'px "Segoe UI", "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = Math.max(2.5, size * 0.22);
+        ctx.strokeStyle = st.edge;
+        ctx.strokeText(e.text, e.x, e.y);
+        ctx.fillStyle = st.fill;
+        ctx.fillText(e.text, e.x, e.y);
+        ctx.restore();
+      } else if (e.type === 'ring') {
+        var r = e.maxR * (0.25 + p * 0.75);
+        ctx.save();
+        ctx.globalAlpha = a * 0.9;
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = Math.max(2, 5 * (1 - p));
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'spark') {
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        var sp = Math.sqrt(e.vx * e.vx + e.vy * e.vy) || 1;
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y);
+        ctx.lineTo(e.x - e.vx / sp * e.len, e.y - e.vy / sp * e.len);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'river') {
+        /* 水带：从佩戴者流向受害者。
+           三层粗细/透明度不同的曲线叠在一起，单看一层都太规矩，
+           叠起来才像水。前端只画到「已经流到哪」（t），像水正冲过去。 */
+        var ddx = e.x2 - e.x1, ddy = e.y2 - e.y1;
+        var dlen = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+        var pnx = -ddy / dlen, pny = ddx / dlen;          // 垂直方向：用来做波纹起伏
+        var amp = Math.min(8, dlen * 0.12) * Math.sin(p * Math.PI);
+        var t = Math.min(1, p * 1.5);
+        var headX = e.x1 + ddx * t, headY = e.y1 + ddy * t;
+        ctx.save();
+        ctx.lineCap = 'round';
+        var widths = [6.0, 3.4, 1.5], alphas = [0.26, 0.5, 0.95];
+        for (var wi = 0; wi < 3; wi++) {
+          var off = (wi - 1) * 2.1;
+          ctx.lineWidth = widths[wi] * (1 - p * 0.45);
+          ctx.globalAlpha = Math.min(1, a * alphas[wi] * 1.7);
+          ctx.strokeStyle = wi === 2 ? 'rgba(236,250,255,.95)' : 'rgba(116,186,232,.95)';
+          var mx = e.x1 + ddx * 0.5 + pnx * (amp + off * 1.5);
+          var my = e.y1 + ddy * 0.5 + pny * (amp + off * 1.5);
+          ctx.beginPath();
+          ctx.moveTo(e.x1 + pnx * off, e.y1 + pny * off);
+          ctx.quadraticCurveTo(mx, my, headX + pnx * off, headY + pny * off);
+          ctx.stroke();
+        }
+        // 水流前端的水花
+        ctx.globalAlpha = Math.min(1, a * 1.7);
+        ctx.fillStyle = 'rgba(232,248,255,.92)';
+        for (var di = 0; di < 3; di++) {
+          var ang = (di / 3) * Math.PI * 2 + p * 7;
+          ctx.beginPath();
+          ctx.arc(headX + Math.cos(ang) * 3.4, headY + Math.sin(ang) * 3.4,
+                  2.0 * (1 - p * 0.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      } else if (e.type === 'ripple') {
+        /* 地面水波：压扁成椭圆（ry = rx * 0.40），
+           圆环看着像光环，扁的才像地面上的水面。 */
+        var rr = e.maxR * (0.20 + p * 0.80);
+        ctx.save();
+        ctx.globalAlpha = a * 0.85;
+        ctx.strokeStyle = 'rgba(126,196,238,.95)';
+        ctx.lineWidth = Math.max(1.5, 4.5 * (1 - p));
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y + CELL * 0.20, rr, rr * 0.40, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = a * 0.45;
+        ctx.strokeStyle = 'rgba(226,246,255,.95)';
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y + CELL * 0.20, rr * 0.62, rr * 0.25, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'tracer') {
+        /* ★ 狙击曳光弹：五层叠出来的「一道光」。
+         *
+         *   为什么要叠这么多层：单画一条粗线只是一个色块，
+         *   叠上「大光晕 → 小光晕 → 实心彩线 → 白热芯 → 弹头」之后，
+         *   才会看起来像**在发光**。最外层 26px ≈ 四分之一个格子。
+         *
+         *   前端跑得比尾端快得多（t = p^0.42）⇒ 画面上是「唰地冲出去」，
+         *   而不是一条线慢慢伸长。
+         *
+         *   亮度曲线也改了：前 55% 的生命**一点都不衰减**（fade = 1）。
+         *   以前是一出现就在淡出，最亮的那几帧全浪费在起手上了。
+         *
+         *   没命中的那一发会越过目标继续飞（over），飞出多远都照画。 */
+        var tx = e.x2 - e.x1, ty = e.y2 - e.y1;
+        var tl = Math.sqrt(tx * tx + ty * ty) || 1;
+        var ex = e.x2 + tx / tl * e.over, ey = e.y2 + ty / tl * e.over;
+        var tp = Math.pow(Math.min(1, p * 1.35), 0.42);
+        var hx = e.x1 + (ex - e.x1) * tp, hy = e.y1 + (ey - e.y1) * tp;
+        var tail = 0.40;                              // 拖尾长度（占全程比例）
+        var bx = e.x1 + (ex - e.x1) * Math.max(0, tp - tail);
+        var by = e.y1 + (ey - e.y1) * Math.max(0, tp - tail);
+        var fade = p < 0.55 ? 1 : Math.max(0, 1 - (p - 0.55) / 0.45);
+        var beam = Math.min(1.15, Math.max(CELL / 95, 0.7));   // 小屏幕上按格子同比缩一点
+        ctx.save();
+        ctx.lineCap = 'round';
+        /* 五层从粗到细叠上去，越里层越不透明。
+           ★ 透明度是照着「外圈是光晕、内圈是实体」调的：
+             外层太实会变成一根塑料管子，太虚又看不见 —— 实测 0.14/0.30/0.60/1.0 这组
+             在最亮的板面背景上也一眼能认出来。
+           写成五段而不是抽个小函数：这是在 for 循环里给每一帧现算的路径，
+           抽函数既不省事也更容易写错。 */
+        ctx.globalAlpha = Math.min(1, fade * 0.14);   // ① 外层氛围 40px
+        ctx.strokeStyle = e.color; ctx.lineWidth = 40 * beam;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy); ctx.stroke();
+        ctx.globalAlpha = Math.min(1, fade * 0.30);   // ② 大光晕 26px
+        ctx.lineWidth = 26 * beam;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy); ctx.stroke();
+        ctx.globalAlpha = Math.min(1, fade * 0.60);   // ③ 中层光晕 13px
+        ctx.lineWidth = 13 * beam;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy); ctx.stroke();
+        ctx.globalAlpha = Math.min(1, fade);          // ④ 实心彩线 6px
+        ctx.lineWidth = 6 * beam;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy); ctx.stroke();
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.6 * beam;   // ⑤ 白热芯
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy); ctx.stroke();
+        // ⑤ 弹头：彩色光环 + 白热核心
+        var hr = (5.5 + 3 * (1 - tp)) * beam;
+        ctx.globalAlpha = Math.min(1, fade * 0.55);
+        ctx.fillStyle = e.color;
+        ctx.beginPath(); ctx.arc(hx, hy, hr * 1.9, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = fade;
+        ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(hx, hy, hr * 0.55, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'muzzle') {
+        /* 枪口闪光：一圈迅速扩散的白热光环 + 四道十字亮线。
+           它存在的意义是**回答「这一枪是从谁那儿打出来的」** ——
+           只有一条弹道的话，混战时根本看不出来源。 */
+        var mp = Math.min(1, p * 1.6);
+        var mr = CELL * (0.16 + 0.42 * mp);
+        var mfade = 1 - p;
+        ctx.save();
+        ctx.globalAlpha = mfade * 0.85;
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = Math.max(2, 6 * (1 - p));
+        ctx.beginPath(); ctx.arc(e.x, e.y, mr, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = mfade;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(2, 4 * (1 - p));
+        ctx.lineCap = 'round';
+        for (var mi = 0; mi < 4; mi++) {
+          var mAng = mi * Math.PI / 2 + Math.PI / 4;
+          var r1 = CELL * 0.10, r2 = CELL * (0.20 + 0.26 * mp);
+          ctx.beginPath();
+          ctx.moveTo(e.x + Math.cos(mAng) * r1, e.y + Math.sin(mAng) * r1);
+          ctx.lineTo(e.x + Math.cos(mAng) * r2, e.y + Math.sin(mAng) * r2);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.globalAlpha = mfade * 0.9;
+        ctx.beginPath(); ctx.arc(e.x, e.y, CELL * 0.11 * (1 - p * 0.4), 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'strike') {
+        /* 落下中的直升机：一条越来越近、越来越亮的尾迹 + 一个越缩越小的光点。
+           ★ 它的寿命就是 CFG.CRASH_DELAY —— 尾迹消失的那一帧爆炸正好开始，
+             和荣誉的蓄力激光是同一个思路：**特效的寿命跟着规则走**。 */
+        var sp2 = p;
+        var sx2 = e.x, sy2 = e.y - CELL * 3.2 * (1 - sp2);
+        ctx.save();
+        ctx.globalAlpha = 0.25 + 0.6 * sp2;
+        ctx.strokeStyle = e.color;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = (2 + 5 * sp2);
+        ctx.beginPath();
+        ctx.moveTo(sx2, sy2 - CELL * 1.5);
+        ctx.lineTo(sx2, sy2);
+        ctx.stroke();
+        ctx.globalAlpha = 0.5 + 0.5 * sp2;
+        ctx.strokeStyle = 'rgba(255,240,210,.9)';
+        ctx.lineWidth = Math.max(1, 1.6 * sp2);
+        ctx.beginPath();
+        ctx.moveTo(sx2, sy2 - CELL * 1.0);
+        ctx.lineTo(sx2, sy2);
+        ctx.stroke();
+        // 落点上的靶心，告诉玩家「要砸这里」
+        ctx.globalAlpha = 0.35 + 0.5 * sp2;
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y + CELL * 0.18, CELL * (1.1 - 0.5 * sp2), CELL * (0.42 - 0.2 * sp2),
+                    0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'blast') {
+        /* 坠机爆炸：两圈冲击波 + 中间一团火球。
+           外圈半径直接来自事件的 3×3，所以画出来的范围和真正挨打的九格一致。 */
+        var bp = Math.min(1, p * 1.25);
+        var bfade = 1 - p;
+        ctx.save();
+        // 火球
+        var fireR = e.r1 * (0.35 + 0.65 * Math.pow(bp, 0.5));
+        var g2 = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, fireR);
+        g2.addColorStop(0, 'rgba(255,245,200,' + (bfade * 0.95).toFixed(3) + ')');
+        g2.addColorStop(0.45, 'rgba(255,150,60,' + (bfade * 0.70).toFixed(3) + ')');
+        g2.addColorStop(1, 'rgba(180,60,20,0)');
+        ctx.fillStyle = g2;
+        ctx.beginPath(); ctx.arc(e.x, e.y, fireR, 0, Math.PI * 2); ctx.fill();
+        // 冲击波：一圈迅速扩到 3×3 之外的大环
+        ctx.globalAlpha = bfade * 0.9;
+        ctx.strokeStyle = 'rgba(255,220,150,.95)';
+        ctx.lineWidth = Math.max(2, 9 * (1 - p));
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r2 * (0.2 + 0.8 * bp), 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = bfade * 0.5;
+        ctx.strokeStyle = 'rgba(255,255,255,.9)';
+        ctx.lineWidth = Math.max(1.5, 4 * (1 - p));
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r1 * (0.3 + 0.9 * bp), 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'pillar') {
+        /* 复活光柱：一道从地面冲上去的金色光 + 底部一圈尘环。 */
+        var pp2 = Math.min(1, p * 1.5);
+        var pf = 1 - p;
+        ctx.save();
+        var pw = CELL * (0.34 + 0.5 * pp2);
+        var ph = CELL * (1.2 + 2.2 * pp2);
+        var g3 = ctx.createLinearGradient(0, e.y, 0, e.y - ph);
+        g3.addColorStop(0, 'rgba(255,214,110,' + (pf * 0.85).toFixed(3) + ')');
+        g3.addColorStop(0.6, 'rgba(255,236,170,' + (pf * 0.45).toFixed(3) + ')');
+        g3.addColorStop(1, 'rgba(255,255,240,0)');
+        ctx.fillStyle = g3;
+        ctx.fillRect(e.x - pw / 2, e.y - ph, pw, ph);
+        // 中间那道白热芯
+        ctx.globalAlpha = pf * 0.9;
+        ctx.fillStyle = 'rgba(255,255,240,.9)';
+        ctx.fillRect(e.x - pw * 0.14, e.y - ph * 0.85, pw * 0.28, ph * 0.85);
+        // 底部的尘环
+        ctx.globalAlpha = pf * 0.7;
+        ctx.strokeStyle = 'rgba(255,230,180,.9)';
+        ctx.lineWidth = Math.max(2, 5 * (1 - p));
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y + CELL * 0.2, CELL * (0.5 + 1.0 * pp2), CELL * (0.2 + 0.4 * pp2),
+                    0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'knife') {
+        /* ★ Dank1ng 的折叠刀：绕着卡片转的一把短刃。
+         *
+         *   走的是和 strike（直升机落下）一样的"长时间特效"路子：
+         *   life = 技能数据里的 knifeDur，所以它存在多久 = 它不能攻击多久。
+         *   ★ 转速刻意偏快（每 0.55 秒一圈）：3 秒要转五圈半，
+         *     一眼就能看出"它现在在忙着耍刀，不是在发呆"。
+         *   ★ 刃身用两段线拼：外侧细亮、内侧粗暗 —— 单根线看着像指示箭头。
+         *   ★ 最后 20% 收尾：刀锋收进卡面里，暗示"收刀了，接下来要出手"。
+         */
+        var kp = Math.min(1, p);
+        var kx = e.x, ky = e.y;
+        var kR = CELL * (0.62 - 0.10 * Math.max(0, (kp - 0.8) / 0.2));
+        var kAng = e.age * (Math.PI * 2 / 0.55) - Math.PI / 2;
+        var kFade = kp > 0.8 ? Math.max(0, 1 - (kp - 0.8) / 0.2) : 1;
+        ctx.save();
+        ctx.globalAlpha = 0.85 * kFade;
+        ctx.lineCap = 'round';
+        for (var kb = 0; kb < 2; kb++) {
+          var a0 = kAng + kb * 0.30;
+          var x0 = kx + Math.cos(a0) * kR, y0 = ky + Math.sin(a0) * kR;
+          var x1 = kx + Math.cos(a0) * kR * 0.45, y1 = ky + Math.sin(a0) * kR * 0.45;
+          ctx.strokeStyle = kb === 0 ? 'rgba(255,255,255,.95)' : 'rgba(150,165,185,.75)';
+          ctx.lineWidth = kb === 0 ? 3.2 : 2.0;
+          ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+        }
+        // 刀尖那一小撮寒光
+        ctx.globalAlpha = 0.7 * kFade;
+        ctx.fillStyle = 'rgba(230,244,255,.9)';
+        ctx.beginPath();
+        ctx.arc(kx + Math.cos(kAng) * kR, ky + Math.sin(kAng) * kR, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'chargeGlow') {
+        /* ★ 自爆蓄力：一圈**越收越紧、越涨越亮**的红环 + 中心一颗在憋的火种。
+         *
+         *   和爆炸特效刚好相反 —— 爆炸是"从中心炸开"，蓄力是"往中心收"。
+         *   收的动作本身就是"要炸了"的通用视觉语言，不需要再加字幕解释。
+         *   收满（p → 1）的那一帧，crash 事件正好结算。
+         *
+         *   ★ 最后一刻闪得更快：p > 0.7 之后用 sin 抖频率，
+         *     这是"倒计时"的读法，比匀速扩张更容易让人感到紧迫。 */
+        var gp = Math.min(1, p);
+        var gAlpha = 0.35 + 0.65 * gp;
+        var gRing = CELL * (1.35 - 0.85 * gp);          // 半径从 1.35 格收到 0.5 格
+        var gPulse = gp > 0.7 ? (Math.sin(e.age * 40) * 0.5 + 0.5) : 1;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, gAlpha * (0.55 + 0.45 * gPulse));
+        ctx.strokeStyle = 'rgba(255,110,60,.95)';
+        ctx.lineWidth = Math.max(2.5, 3 + 6 * gp);
+        ctx.beginPath();
+        ctx.ellipse(e.x, e.y + CELL * 0.18, gRing, gRing * 0.62, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        // 中心的火种：越接近爆炸越大
+        var gr = CELL * (0.10 + 0.24 * gp);
+        var g2 = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, gr * 2.2);
+        g2.addColorStop(0, 'rgba(255,255,230,.95)');
+        g2.addColorStop(0.45, 'rgba(255,190,90,.75)');
+        g2.addColorStop(1, 'rgba(255,110,60,0)');
+        ctx.globalAlpha = 0.75 + 0.25 * gPulse;
+        ctx.fillStyle = g2;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, gr * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'eyelaser') {
+        /* ★ 蓄力激光：越蓄越粗、越蓄越亮，最后一瞬间炸一下。
+         *
+         *   亮度曲线用的是 p^1.7 而不是线性 —— 线性的话前半段就已经很亮了，
+         *   看起来像"一直在射"，而不是"在攒"。
+         *   最后 12% 补一圈闪光，作为「蓄满了」的信号：下一秒子弹就出膛。
+         *
+         *   金色系：#ffe07a 主体 + #ffb32e 外晕 + 白热芯。 */
+        var ex1 = e.x1, ey1 = e.y1;
+        var edx = e.x2 - e.x1, edy = e.y2 - e.y1;
+        var elen = Math.sqrt(edx * edx + edy * edy) || 1;
+        var ep = p;
+        // 出膛前那 12% 先闪一下，把「蓄满了」说清楚
+        var burst = ep > 0.88 ? 1 + (ep - 0.88) / 0.12 * 1.6 : 1;
+        var eAlpha = Math.pow(ep, 1.7) * burst;
+        var eW = (0.8 + 5.4 * ep) * burst;
+        ctx.save();
+        ctx.lineCap = 'round';
+        // ① 外晕
+        ctx.globalAlpha = Math.min(1, eAlpha * 0.30);
+        ctx.strokeStyle = '#ffb32e';
+        ctx.lineWidth = eW * 3.4;
+        ctx.beginPath(); ctx.moveTo(ex1, ey1); ctx.lineTo(e.x2, e.y2); ctx.stroke();
+        // ② 主体
+        ctx.globalAlpha = Math.min(1, eAlpha * 0.92);
+        ctx.strokeStyle = '#ffe07a';
+        ctx.lineWidth = eW * 1.5;
+        ctx.beginPath(); ctx.moveTo(ex1, ey1); ctx.lineTo(e.x2, e.y2); ctx.stroke();
+        // ③ 白热芯
+        ctx.globalAlpha = Math.min(1, eAlpha);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(1, eW * 0.55);
+        ctx.beginPath(); ctx.moveTo(ex1, ey1); ctx.lineTo(e.x2, e.y2); ctx.stroke();
+        // ④ 眼睛本身：一个越来越大的金点 + 外发光
+        var er = CELL * (0.035 + 0.075 * ep) * burst;
+        ctx.shadowColor = '#ffd54a';
+        ctx.shadowBlur = CELL * 0.22 * ep;
+        ctx.globalAlpha = Math.min(1, eAlpha * 1.2);
+        ctx.fillStyle = '#fff3c4';
+        ctx.beginPath(); ctx.arc(ex1, ey1, er, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      } else if (e.type === 'mote') {
+        /* ★ 往上飘的笑（😂 / 哈哈）。
+         *
+         *   走的是和 callout 完全相反的路线：callout 是**主角台词**，
+         *   有弹出、有停顿、字号半个格子；mote 是**氛围**，
+         *   小、快、一气冒好几颗，看的是"这几秒它一直在笑"。
+         *
+         *   1. 先淡入 12%（一出来就是半透明的话，连续冒的时候会闪）
+         *   2. 全程往上飘 + 左右匀速摆（sin），最后 35% 才淡出
+         *   3. 稍微转一点角度（±0.25 rad）—— 完全水平的一排字很"假"
+         *   4. 用 emoji 字体：😂 在 "Segoe UI Emoji" 里才有颜色，
+         *      落到中文字体上会变成黑白轮廓甚至豆腐块
+         */
+        var mfade = Math.min(1, p / 0.12) * Math.min(1, (1 - p) / 0.35);
+        ctx.save();
+        ctx.globalAlpha = mfade * 0.95;
+        ctx.font = Math.round(e.size) + 'px "Segoe UI Emoji", "Apple Color Emoji", ' +
+                   '"Segoe UI", "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.translate(e.x + e.vx * e.age * 0.5 + Math.sin(p * 9) * CELL * 0.07,
+                      e.y + e.vy * e.age * 0.5);
+        ctx.rotate(e.rot * Math.sin(p * 3.4));
+        /* ★ 描边只给**文字**加，emoji 不加。
+         *   理由：😂 本身就是一张彩色小图，再描一圈深色边会糊成一团黑饼；
+         *   而「哈哈」是纯色字，压在深色立绘上不描边根本读不出来。
+         *   判据用代理对（emoji 的首个 charCode 落在 0xD800~0xDBFF），
+         *   比"看文本里有几个字"可靠 —— 😂 在 UTF-16 里正好是 2 个字符，
+         *   和「哈哈」一样长。 */
+        if (e.text.charCodeAt(0) < 0xD800) {
+          ctx.lineJoin = 'round';
+          ctx.miterLimit = 2;
+          ctx.lineWidth = Math.max(2, e.size * 0.18);
+          ctx.strokeStyle = 'rgba(8,12,10,.45)';
+          ctx.strokeText(e.text, 0, 0);
+        }
+        ctx.fillStyle = e.color;
+        ctx.fillText(e.text, 0, 0);
+        ctx.restore();
+      } else if (e.type === 'callout') {
+        /* ★ 角色台词（Vamos / Kale / Man！）。这是**字幕**，不是伤害飘字 ——
+         *
+         *   ★★ 2026-10 二次改版：**去掉底板和边框，只要字**。
+         *      上一版是一块深色圆角牌子 + 彩色描边，虽然清楚，
+         *      但压在一张张小卡牌上像贴了一张 UI 组件，不像"喊出来的话"。
+         *      现在只靠**字本身**：厚深色描边勾出轮廓 + 亮色填充，
+         *      底下是什么画面都能读出来，但看上去就是一行字。
+         *
+         *   1. 字号 CELL × 0.62（95px 格子上约 59px），隔老远也读得出来
+         *   2. 描边要够厚（字号的 20%）—— 没有底板之后，它就是唯一的可读性保障
+         *   3. 弹出用 easeOutBack（0.4 → 1.0，中途冲过一点再收回），
+         *      比线性淡入"喊"得有力得多
+         *   4. 停留 1.45 秒、向上飘半个格子，前端 6% 淡入、末尾 25% 淡出 ——
+         *      中间那一大段是**完全不透明**的，那才是能看清的部分 */
+        var csz = e.size;
+        ctx.save();
+        ctx.font = '900 ' + csz + 'px "Segoe UI", "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // 弹出：0 → 1，easeOutBack 会冲过 1 一点点再回来
+        var et = Math.min(1, p / 0.20);
+        var c1 = 1.70158, c3 = c1 + 1;
+        var ease = 1 + c3 * Math.pow(et - 1, 3) + c1 * Math.pow(et - 1, 2);
+        var scale = 0.40 + 0.60 * ease;
+
+        // 不透明度：前端 6% 淡入，末尾 25% 淡出，中间整段实心
+        var calpha = Math.min(1, p / 0.06) * Math.min(1, (1 - p) / 0.25);
+
+        var rise = e.vy * Math.min(1, p * 1.1);
+        ctx.globalAlpha = Math.min(1, calpha);
+        ctx.translate(e.x, e.y + rise + Math.sin(p * 20) * 1.2);
+        ctx.rotate(Math.sin(p * 16) * 0.022);
+        ctx.scale(scale, scale);
+
+        /* 只有字：厚深色描边勾轮廓 + 亮色填充。
+           ★ 描边用 lineJoin='round'，否则大字在转角处会炸出尖刺。 */
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.lineWidth = Math.max(4, csz * 0.20);
+        ctx.strokeStyle = 'rgba(8,12,10,.94)';
+        ctx.strokeText(e.text, 0, csz * 0.03);
+        ctx.lineWidth = Math.max(2, csz * 0.085);
+        ctx.strokeStyle = 'rgba(8,12,10,.55)';
+        ctx.strokeText(e.text, 0, csz * 0.03);
+        ctx.fillStyle = e.color;
+        ctx.fillText(e.text, 0, csz * 0.03);
+        ctx.restore();
+      }
+    }
+  }
+
+  function draw() {
+    var pb = state;
+    ctx.clearRect(0, 0, fieldW(), fieldH());
+    ctx.save();
+
+    // 屏幕震动：整体平移一点，幅度很小但很有重量感
+    if (shakeMag > 0.05) {
+      ctx.translate((Math.random() - 0.5) * shakeMag * 2, (Math.random() - 0.5) * shakeMag * 2);
+    }
+
+    drawBg();
+
+    /* ★★ 「阴暗领域」：压在**所有东西下面、网格线上面**的一层。
+     *
+     *   为什么画在这个位置（而不是和别的特效一起画在最上层）：
+     *   它表达的是"这一片**地面**变黑了"，不是"天上飘了一个黑圈"。
+     *   压在棋子下面 → 站在里面的棋子看起来像站在阴影里；
+     *   画在上面的话，人就被一块半透明黑布盖住了，读不出谁是谁。
+     *   ★ 顺序：底图 → 领域 → 网格/中线/水印 → 棋子 → 特效。
+     */
+    drawFields();
+
+    // 攻势线（压在棋子下面）
+    ctx.lineCap = 'round';
+    for (var f = 0; f < pb.flashes.length; f++) {
+      var fl = pb.flashes[f];
+      var fa = 1 - fl.age / HIT_FLASH;
+      if (fa <= 0) continue;
+      ctx.globalAlpha = fa * 0.9;
+      ctx.strokeStyle = fl.kind === 'skl' ? '#7d6cc4' : (fl.kind === 'crit' ? '#d9962f' : '#5a6b60');
+      ctx.lineWidth = fl.kind === 'skl' ? 3.5 : (fl.kind === 'crit' ? 2.6 : 1.6);
+      ctx.beginPath();
+      ctx.moveTo(cellX(fl.from), cellY(fl.from));
+      ctx.lineTo(cellX(fl.to), cellY(fl.to));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // 先画阵亡的，再画活着的，活着的盖在上面
+    var uid;
+    for (uid in pb.units) if (!pb.units[uid].alive) drawCorpse(pb.units[uid]);
+    for (uid in pb.units) {
+      var u = pb.units[uid];
+      if (!u.alive) continue;
+      drawUnit(u, u.side === 'a' ? pb.reveal : 1);
+    }
+
+    drawFx();
+    ctx.restore();
+  }
+
+  /* ============================================================
+   * 「阴暗领域」的地面层
+   *
+   *   两件事叠在一起：**变黑** + **下雨**。
+   *
+   *   · 变黑：一圈径向渐变（中心最黑、边缘化开），再压一层冷色。
+   *     硬边圆会看起来像一个 UI 贴图，化开才像"这一片天暗了"。
+   *     ★ 透明度刻意压得比较低（中心 0.42）—— 这是**地面**，
+   *       里面的棋子还得看得清是谁。
+   *
+   *   · 下雨：一串从上方斜着落下的短线，位置由**时间**驱动
+   *     （不是随机的每帧重画）—— 随机的话雨滴会闪，看着像噪点。
+   *     每滴雨用一个固定种子算出来的相位，所以它是一条条往下走的。
+   *     ★ 雨滴只在圆的范围内画，用"到中心的距离"裁掉外面的。
+   *     ★ 3 星/2 星的区别不用画出来：领域本身长得一样，
+   *       差别在"里面的队友有没有被保护"（那是徽章和回血数字的事）。
+   * ============================================================ */
+  function drawFields() {
+    var pb = state;
+    if (!pb.fields || !pb.fields.length) return;
+    for (var i = 0; i < pb.fields.length; i++) {
+      var f = pb.fields[i];
+      if (f.until <= state.t) continue;
+      var cx = f.c * PITCH + CELL / 2, cy = f.r * PITCH + CELL / 2;
+      var rad = (f.radius + 0.5) * PITCH;
+      /* 出场淡入 / 退场淡出：领域是"撑起来"和"散掉"的，
+         一刀切地出现和消失会让画面上像有人开关了一下灯。 */
+      var age = state.t - f.born;
+      var left = f.until - state.t;
+      var fade = Math.min(1, age / 0.35) * Math.min(1, left / 0.5);
+
+      ctx.save();
+      /* ① 变黑：径向渐变，中心最暗、边缘化开 */
+      var g = ctx.createRadialGradient(cx, cy, rad * 0.15, cx, cy, rad);
+      g.addColorStop(0, 'rgba(14,18,30,' + (0.46 * fade).toFixed(3) + ')');
+      g.addColorStop(0.62, 'rgba(18,24,38,' + (0.34 * fade).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(20,26,40,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* ② 下雨：一串斜线，靠时间驱动往下走 */
+      ctx.strokeStyle = 'rgba(168,196,224,' + (0.34 * fade).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1, CELL * 0.018);
+      ctx.lineCap = 'round';
+      var drops = Math.round(f.radius * f.radius * 5);   // 半径越大雨越密
+      var len = CELL * 0.34, slope = CELL * 0.16;
+      for (var d = 0; d < drops; d++) {
+        /* ★ 位置由 d 决定（固定），纵向偏移由时间决定 ——
+           所以每一滴都是**匀速往下**，而且循环回来时不会跳变
+           （用 mod 把超出圆外的部分绕回上方）。 */
+        var seedA = (d * 0.6180339887) % 1;              // 黄金分割铺点，比 rand 均匀
+        var seedB = (d * 0.7548776662) % 1;
+        var ox = (seedA * 2 - 1) * rad * 0.92;
+        var span = rad * 2;
+        var oy = ((seedB * span + state.t * CELL * 2.6) % span) - rad;
+        if (ox * ox + oy * oy > rad * rad) continue;     // 圆的裁切
+        var dx2 = cx + ox, dy2 = cy + oy;
+        ctx.beginPath();
+        ctx.moveTo(dx2, dy2);
+        ctx.lineTo(dx2 - slope, dy2 + len);
+        ctx.stroke();
+      }
+
+      /* ③ 边界：一圈冷色细线，让"领域到哪里为止"有个明确的读数
+            —— 渐变边缘是化开的，光靠渐变玩家判不出到底覆盖几格。 */
+      ctx.globalAlpha = 0.5 * fade;
+      ctx.strokeStyle = 'rgba(120,146,186,.85)';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([CELL * 0.16, CELL * 0.12]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad * 0.97, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  }
+
+  function drawCorpse(u) {
+    var x = cellX(u), y = cellY(u);
+    var s = CELL * 0.30;
+    ctx.save();
+    ctx.globalAlpha = 0.26;
+    ctx.strokeStyle = C.corpse;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.55, y - s * 0.55); ctx.lineTo(x + s * 0.55, y + s * 0.55);
+    ctx.moveTo(x + s * 0.55, y - s * 0.55); ctx.lineTo(x - s * 0.55, y + s * 0.55);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * 战斗中的单位 = 一张「卡牌」：
+   * 立绘 / 阵营描边 / 费用徽章 / 星级 / 装备图标 / 名牌 / 血条(带滞后条) / 法力条
+   * 外加自动寻敌的可视化：出手突进、受击后仰、命中白闪。
+   *
+   * ★ 卡牌**不遵循格子**：它比格子宽、比格子高，会盖到隔壁格子上。
+   *   尺寸规则和准备阶段 CSS 里那套完全一致（宽 = 格子+8，高 = 格子+12），
+   *   所以「棋盘 → 战斗」切换时卡牌的观感是连续的。
+   */
+  function drawUnit(u, alpha) {
+    var cw = CELL + 6;            // 卡宽：比格子宽
+    var ch = CELL + 10;           // 卡高：比格子高
+    var halfW = cw / 2, halfH = ch / 2;
+
+    // 突进 / 后仰的位移
+    var ox = u.lungeDx * u.lunge * CELL * 0.10 - u.flinchDx * u.flinch * CELL * 0.07;
+    var oy = u.lungeDy * u.lunge * CELL * 0.10 - u.flinchDy * u.flinch * CELL * 0.07;
+    var x = cellX(u) + ox;
+    var y = cellY(u) + oy;
+    var dx = x - halfW, dy = y - halfH;
+
+    ctx.save();
+    ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+    /* ★★ 「遁入暗影」：整张卡片压成半透明。
+     *   这是最重要的一个信号 —— 卡片还在、血条还在，但整个人淡下去了，
+     *   读起来就是"它现在不在这里"。配合 🌑 徽章和"打不动"的格挡音效，
+     *   玩家能立刻明白为什么对面一群人愣着不动。 */
+    if (u.shadow) ctx.globalAlpha *= 0.42;
+
+    // 影子贴地（不跟着突进走）
+    ctx.beginPath();
+    ctx.ellipse(cellX(u), cellY(u) + halfH * 0.86, halfW * 0.74, 3.8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(38,51,43,.17)';
+    ctx.fill();
+
+    /* 星级被动「越打越快」的外发光：叠得越多、边框越亮越粗。
+       画在卡面**之前**，所以它是从卡片边上透出来的一圈，
+       不挡任何信息，但扫一眼就能看出「这张卡正在变强」。 */
+    if (u.frenzy > 0) {
+      var fp = u.frenzyCap > 0 ? Math.min(1, u.frenzy / u.frenzyCap) : 0;
+      roundRect(dx - 1.5, dy - 1.5, cw + 3, ch + 3, 11);
+      ctx.lineWidth = 2.5 + fp * 4;
+      ctx.strokeStyle = 'rgba(240,146,26,' + (0.20 + fp * 0.55).toFixed(3) + ')';
+      ctx.stroke();
+    }
+
+    /* ★ 奶龙「捧腹大笑」的金色外圈。
+       大笑是一个"我很硬但我动不了"的状态，玩家必须在乱战里
+       一眼扫到"这张卡现在打不动"。外圈跟着剩余时间呼吸，
+       最后半秒闪起来提示"快醒了"。 */
+    if (u.laughUntil >= 0 && state.t < u.laughUntil) {
+      var lLeft = Math.max(0, u.laughUntil - state.t);
+      var lPulse = lLeft < 0.5
+        ? (Math.sin(state.t * 26) * 0.5 + 0.5)          // 快醒了：快闪
+        : (Math.sin(state.t * 7) * 0.5 + 0.5);          // 平时：慢呼吸
+      roundRect(dx - 2, dy - 2, cw + 4, ch + 4, 12);
+      ctx.lineWidth = 3 + lPulse * 3;
+      ctx.strokeStyle = (u.laughFlash > 0 ? 'rgba(255,255,255,' : 'rgba(255,206,86,')
+        + (0.34 + lPulse * 0.5).toFixed(3) + ')';
+      ctx.stroke();
+    }
+
+    /* ★ 楚生疑犯「遁入暗影」的冷色外圈：半透明之外再补一圈描边，
+       否则在深色地面上"淡下去的卡片"和"快要阵亡的卡片"容易看混。 */
+    if (u.shadow) {
+      roundRect(dx - 2, dy - 2, cw + 4, ch + 4, 12);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(150,175,215,.85)';
+      ctx.stroke();
+    }
+
+    /* ★ Dank1ng 耍刀期间的金白色外圈：卡片本身没什么变化（它在原地转刀），
+       加一圈描边是为了让"它现在不攻击"这件事在混战里也扫得到。 */
+    if (u.knifeUntil >= 0 && state.t < u.knifeUntil) {
+      roundRect(dx - 1.5, dy - 1.5, cw + 3, ch + 3, 11);
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(226,240,255,' +
+        (0.35 + 0.35 * (Math.sin(state.t * 14) * 0.5 + 0.5)).toFixed(3) + ')';
+      ctx.stroke();
+    }
+
+    // 卡面底色（没有立绘时的兜底）
+    roundRect(dx, dy, cw, ch, 10);
+    ctx.fillStyle = u.color;
+    ctx.fill();
+
+    var art = window.ART ? window.ART.get(u.defId) : null;
+    if (art) {
+      ctx.save();
+      roundRect(dx, dy, cw, ch, 10);
+      ctx.clip();
+      drawCover(art, dx, dy, cw, ch);
+      var lg = ctx.createLinearGradient(0, dy + ch * 0.54, 0, dy + ch);
+      lg.addColorStop(0, 'rgba(20,28,22,0)');
+      lg.addColorStop(1, 'rgba(20,28,22,.76)');
+      ctx.fillStyle = lg;
+      ctx.fillRect(dx, dy, cw, ch);
+      ctx.restore();
+    } else {
+      ctx.font = Math.round(ch * 0.42) + 'px "Segoe UI Emoji", "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(u.emoji, x, y - ch * 0.09);
+    }
+
+    // 阵营描边
+    roundRect(dx, dy, cw, ch, 10);
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = u.side === 'a' ? C.enemyEdge : C.mineEdge;
+    ctx.stroke();
+
+    // 命中白闪
+    if (u.flash > 0) {
+      roundRect(dx, dy, cw, ch, 10);
+      ctx.fillStyle = 'rgba(255,255,255,' + (u.flash * 0.72).toFixed(3) + ')';
+      ctx.fill();
+    }
+
+    // 费用徽章（左上角）
+    var bR = Math.max(7, cw * 0.135);
+    var bcx = dx + bR + 2, bcy = dy + bR + 2;
+    ctx.beginPath();
+    ctx.arc(bcx, bcy, bR, 0, Math.PI * 2);
+    ctx.fillStyle = ST.costColor(u.cost);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.stroke();
+    // 4/5 费多一圈彩边，一眼看出是稀有卡
+    if (u.cost >= 4) {
+      ctx.beginPath();
+      ctx.arc(bcx, bcy, bR + 2.5, 0, Math.PI * 2);
+      ctx.strokeStyle = u.cost === 5 ? 'rgba(232,203,106,.95)' : 'rgba(164,149,224,.9)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+    ctx.font = '900 ' + Math.round(bR * 1.2) + 'px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(String(u.cost), bcx, bcy + 0.5);
+
+    // 星级（右上角）
+    if (u.star > 1) {
+      ctx.font = '900 ' + Math.round(cw * 0.155) + 'px "Segoe UI", sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      var sx = dx + cw - 3, sy = dy + 3;
+      ctx.lineWidth = 2.6;
+      ctx.strokeStyle = 'rgba(60,45,0,.85)';
+      ctx.strokeText(starText(u.star), sx, sy);
+      ctx.fillStyle = '#ffd24d';
+      ctx.fillText(starText(u.star), sx, sy);
+    }
+
+    // 装备图标（右下角，压在名牌上方）
+    if (u.items && u.items.length) {
+      /* 有图标图（art/items/<id>.png）就画图，没有才退回 emoji。
+         同一张卡上两种形态可能混着出现（有的装备有图、有的还没画），
+         所以两种都按同一个尺寸基准排，右边的往左依次排开。 */
+      var iy2 = dy + ch - Math.round(ch * 0.24);
+      var iSize = Math.round(cw * 0.19);
+      var iGap = 1;
+      var imgCount = 0, txt = '';
+      for (var ii = 0; ii < u.items.length; ii++) {
+        var iDef = ST.ITEM_BY_ID[u.items[ii]];
+        if (!iDef) continue;
+        if (window.ART && window.ART.itemGet(u.items[ii])) imgCount++;
+        else txt += iDef.emoji;
+      }
+      var cursor = dx + cw - 3;
+      // 先画图片（从右往左），再画 emoji 文字
+      for (var ij = u.items.length - 1; ij >= 0; ij--) {
+        var id2 = u.items[ij];
+        var iDef2 = ST.ITEM_BY_ID[id2];
+        if (!iDef2) continue;
+        var iImg = window.ART ? window.ART.itemGet(id2) : null;
+        if (!iImg) continue;
+        ctx.drawImage(iImg, cursor - iSize, iy2 - iSize, iSize, iSize);
+        ctx.strokeStyle = 'rgba(255,255,255,.9)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cursor - iSize + .5, iy2 - iSize + .5, iSize - 1, iSize - 1);
+        cursor -= (iSize + iGap);
+      }
+      if (txt) {
+        ctx.font = Math.round(cw * 0.17) + 'px "Segoe UI Emoji", "Segoe UI", sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.lineWidth = 2.8;
+        ctx.strokeStyle = 'rgba(20,28,22,.72)';
+        ctx.strokeText(txt, cursor, iy2);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(txt, cursor, iy2);
+      }
+    }
+
+    // 名牌
+    var nameH = Math.max(11, Math.round(ch * 0.20));
+    var nf = Math.max(7, Math.round(cw * 0.135));
+    ctx.font = '800 ' + nf + 'px "Microsoft YaHei", "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(2, nf * 0.42);
+    ctx.strokeStyle = 'rgba(20,28,22,.88)';
+    ctx.strokeText(u.name, x, dy + ch - nameH / 2 - 1);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(u.name, x, dy + ch - nameH / 2 - 1);
+
+    /* 星级被动的层数（左下角；右下角已经被装备图标占了）。
+       ★ 一定要有数字。这是个「只涨不跌」的成长，但不写出来的话，
+         玩家只会觉得「好像打得快了一点」，感受不到
+         「我把 1 费卡养到 3 星、它现在攻速已经是 3 倍」这件事。 */
+    if (u.frenzy > 0) {
+      var fTxt = '⚡+' + Math.round(u.frenzy * 100) + '%';
+      var fY = dy + ch - Math.round(ch * 0.24);
+      ctx.font = '900 ' + Math.round(cw * 0.15) + 'px "Microsoft YaHei", "Segoe UI", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 2.8;
+      ctx.strokeStyle = 'rgba(20,28,22,.74)';
+      ctx.strokeText(fTxt, dx + 3, fY);
+      // 刚叠一层时闪白，到上限后固定成亮橙
+      ctx.fillStyle = (u.frenzyFlash > 0)
+        ? 'rgba(255,255,255,' + (0.55 + 0.45 * u.frenzyFlash).toFixed(2) + ')'
+        : (u.frenzyCapped ? '#ffb037' : '#ffd98a');
+      ctx.fillText(fTxt, dx + 3, fY);
+    }
+
+    /* ---------- 费用徽章正下方的一串状态徽章 ----------
+     *
+     * ★ 为什么每一条都必须**常驻显示**（而不是只在触发时闪一下）：
+     *   这些都是「还剩多少」的资源，玩家要能随时读出来。
+     *     · 抓娃娃：还能挡几次敌人攻击（鸭子全部生存能力都在这儿）
+     *     · 幻觉 / 开智：这 4 秒里是被增伤还是被减伤
+     *   只做瞬时特效的话，玩家看到字飘走之后根本不知道谁身上还有状态。
+     *
+     * ★ 两条各自占一行、从上往下叠：目前没有棋子同时有这两种，
+     *   但写成叠加的就不用担心以后哪张卡两样都占。
+     */
+    var sbadgeY = dy + Math.round(bR * 2) + 5;
+    var sbadgeFont = '900 ' + Math.round(cw * 0.145) + 'px "Segoe UI", "Microsoft YaHei", sans-serif';
+    var sbadgeLine = Math.round(cw * 0.20);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.lineWidth = 2.8;
+    ctx.strokeStyle = 'rgba(20,28,22,.78)';
+    function stateBadge(txt, color, flash) {
+      ctx.font = sbadgeFont;
+      ctx.strokeText(txt, dx + 3, sbadgeY);
+      ctx.fillStyle = (flash > 0)
+        ? 'rgba(255,255,255,' + (0.5 + 0.5 * flash).toFixed(2) + ')'
+        : color;
+      ctx.fillText(txt, dx + 3, sbadgeY);
+      sbadgeY += sbadgeLine;
+    }
+
+    /* 「抓娃娃」还剩几次。★ 数字必须能看见 ——
+       它是一张 95 血的鸭子，全部生存能力都押在这串次数上，
+       玩家得能一眼看出"还挡得住"还是"快没了"。 */
+    if (u.guardLeft > 0) {
+      stateBadge('🛡' + u.guardLeft, u.guardFlash > 0 ? '#7ef0d8' : '#8fd8f0', u.guardFlash);
+    }
+
+    /* ★ 张雪峰的超频攻速。越过阈值之后变成红色 ——
+       那一瞬间开始他就在烧自己的血了，这个颜色是唯一的长期提示。 */
+    if (u.oc > 0) {
+      stateBadge((u.ocOver ? '🔥+' : '⚡+') + Math.round(u.oc * 100) + '%',
+        u.ocBurnFlash > 0 ? '#ff8a6a' : (u.ocOver ? '#ff6a4a' : '#ffd98a'),
+        Math.max(u.ocFlash, u.ocBurnFlash));
+    }
+
+    /* ★ 冰棍层数。10 层就冻住，所以玩家要能数得出来还差几层。 */
+    if (u.chill > 0) {
+      stateBadge('❄' + u.chill + (u.chillMax ? '/' + u.chillMax : ''),
+        u.chillFlash > 0 ? '#ffffff' : '#b6e6ff', u.chillFlash);
+    }
+
+    /* ★ 奶龙「捧腹大笑」：3 秒里挨打几乎不掉血，但还不了手。
+       徽章带上剩余秒数 —— 玩家要能看出"这货什么时候能醒"。 */
+    if (u.laughUntil >= 0 && state.t < u.laughUntil) {
+      stateBadge('😂' + Math.max(0, u.laughUntil - state.t).toFixed(1) + 's',
+        u.laughFlash > 0 ? '#ffffff' : '#ffce56', u.laughFlash);
+    }
+
+    /* ★ 羊帆「羊巅峰」的蓄势徽章。
+       ★★ 这一枚是**必须**有的：20 倍伤害是这个角色一整局唯一的高光，
+          而"蓄势"是一段看不见的状态（它身上没有任何别的表现）。
+          玩家看到伤害数字突然大 20 倍，如果事先不知道"这一发是大的"，
+          只会以为数值出错了。 */
+    if (u.peakReady) {
+      stateBadge('🐑×20', '#ffd24d', 0);
+    }
+
+    /* ★ 楚生疑犯「遁入暗影」的徽章。
+       ★★ 这个状态必须一眼看得出来：它**免疫一切伤害、也不会被索敌**，
+          画面上如果什么都不说，玩家只会看到"对面一群人站着不动、
+          我的这个棋子血条一直是满的" —— 那看起来像 bug。 */
+    if (u.shadow) {
+      stateBadge('🌑暗影', '#9fb6d4', 0);
+    }
+
+    /* ★ Dank1ng 的两枚徽章：
+       🔪 耍刀中（这 3 秒它不攻击 —— 不标的话玩家会以为它卡住了）
+       ♾️ 空悲切（法力永远满格，这是全队死光之后的绝境状态） */
+    if (u.knifeUntil >= 0 && state.t < u.knifeUntil) {
+      stateBadge('🔪耍刀', '#e2f0ff', u.knifeFlash);
+    }
+    if (u.endless) {
+      stateBadge('♾️空悲切', '#ff9a7a', 0);
+    }
+
+    /* 「幻觉 / 开智」挂的伤害改动 */
+    if (u.buffMul !== 1 && state.t < u.buffUntil) {
+      var gGood = u.buffMul > 1;
+      stateBadge((gGood ? '↑+' : '↓-') + Math.round(Math.abs(u.buffMul - 1) * 100) + '%',
+        gGood ? '#ffd66e' : '#d6b0f5', u.buffFlash);
+    }
+
+    // ---- 血条（含护盾 + 血色滞后条）----
+    if (u.maxHp > 1) {
+      var bw = cw, bh = Math.max(5, Math.round(ch * 0.085));
+      var bx = dx, by = dy - bh - 3;
+
+      ctx.fillStyle = C.barBg;
+      ctx.fillRect(bx, by, bw, bh);
+
+      var hpFrac = Math.max(0, Math.min(1, u.hp / u.maxHp));
+      var lagFrac = Math.max(0, Math.min(1, Math.max(u.hp, u.hpLag) / u.maxHp));
+      if (lagFrac > hpFrac + 0.003) {
+        ctx.fillStyle = C.hpLag;
+        ctx.fillRect(bx + bw * hpFrac, by, bw * (lagFrac - hpFrac), bh);
+      }
+      ctx.fillStyle = u.side === 'a' ? C.hpEnemy : C.hpMine;
+      ctx.fillRect(bx, by, bw * hpFrac, bh);
+      if (u.shield > 0) {
+        var shFrac = Math.min(1, u.shield / u.maxHp);
+        ctx.fillStyle = C.shield;
+        ctx.fillRect(bx + bw * hpFrac, by, Math.min(bw * (1 - hpFrac), bw * shFrac), bh);
+      }
+      ctx.strokeStyle = 'rgba(38,51,43,.22)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + .5, by + .5, bw - 1, bh - 1);
+
+      // 法力条
+      var mh = 3, my = dy + ch + 3;
+      ctx.fillStyle = C.barBg;
+      ctx.fillRect(bx, my, bw, mh);
+      ctx.fillStyle = C.mana;
+      ctx.fillRect(bx, my, bw * Math.min(1, u.mana / u.maxMana), mh);
+
+      if (debug) {
+        var dtxt = Math.round(u.hp) + (u.shield > 0 ? '+' + Math.round(u.shield) : '');
+        ctx.font = '900 10px Consolas, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(20,28,22,.8)';
+        ctx.strokeText(dtxt, x, by - 7);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(dtxt, x, by - 7);
+      }
+    }
+    ctx.restore();
+  }
+})();
