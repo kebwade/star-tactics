@@ -1,0 +1,16 @@
+{
+  "name": "科币战争 —— 巴巴博弈",
+  "short_name": "科币战争",
+  "description": "纯前端自走棋：凑羁绊、摆站位，让棋子自己打。24 关闯关 + 无尽模式。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef4ea",
+  "theme_color": "#eef4ea",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
