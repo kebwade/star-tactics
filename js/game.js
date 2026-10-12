@@ -600,10 +600,45 @@
   }
 
   /**
+   * 给一张立绘 `<img>` 接上「失败就重试」。
+   *
+   * ★★ 这是「手机上有概率加载不出图片」的第二半（第一半在 art.js 的重试里）。
+   *
+   *   这些卡片上的 `<img>` **不走 ART 的缓存**（它们是每次渲染新生成的元素，
+   *   靠浏览器自己的 HTTP 缓存）。原来的写法是 `onerror → 直接 removeChild`：
+   *   一次失败就把这张图从这张卡上彻底删掉，只能等下一次渲染重建元素时
+   *   碰运气再拉一次。手机上恰好最容易失败（切后台、锁屏、弱网），
+   *   于是玩家看到的就是"某几张卡没图"。
+   *
+   *   现在：失败先**退避重试两次**（换一个带 ?r=N 的 URL，绕开浏览器里
+   *   那条坏掉的缓存记录），两次都不行才退回 emoji。
+   *   ★ 重试是有延迟的：网络刚断时连续三次立刻失败没有意义。
+   */
+  function wireArtImg(img, baseUrl) {
+    var tries = 0;
+    img.onerror = function () {
+      if (tries < ART_RETRY_MS.length) {
+        var wait = ART_RETRY_MS[tries];
+        tries++;
+        setTimeout(function () {
+          if (!img.parentNode) return;          // 这张卡已经被重画掉了
+          img.src = baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + 'r=' + tries;
+        }, wait);
+        return;
+      }
+      /* ★ 真的拿不到（文件不存在 / 三次都失败）→ 露出下面的主色渐变 + emoji。
+         注意这里**只删自己**，不碰 fallback：素材可以一张一张慢慢补。 */
+      if (img.parentNode) img.parentNode.removeChild(img);
+    };
+  }
+  /** 卡片立绘的重试等待（比 ART 那套短一点：卡片是玩家正在盯着看的东西） */
+  var ART_RETRY_MS = [500, 1500];
+
+  /**
    * 画一个棋子方块（棋盘和备战池共用）。
    *
    * 结构上刻意留了 .u-art 插槽：把立绘丢进 art/ 就自动换上，
-   * 图片 404 时 onerror 把自己删掉，露出下面的 主色渐变 + emoji。
+   * 图片三次都拉不到时把自己删掉，露出下面的 主色渐变 + emoji。
    * 所以素材可以一张一张慢慢补，任何时候都不会出现破图。
    */
   function unitChip(u) {
@@ -621,6 +656,7 @@
 
     var art = UI.el('div', 'u-art');
     var img = document.createElement('img');
+    wireArtImg(img, window.ART.url(d.id));
     img.src = window.ART.url(d.id);
     img.alt = '';
     /* ★★ 这一行是「有立绘的棋子拖不动」的修复。
@@ -636,7 +672,9 @@
      *   两个都是必需的：draggable 管标准路径，-webkit-user-drag 管老 WebKit。
      *   另外在 document 上还兜了一层 dragstart 拦截，见 onDragStartGuard。 */
     img.draggable = false;
-    img.onerror = function () { if (img.parentNode) img.parentNode.removeChild(img); };
+    /* ★ 原来这里是 `img.onerror = removeChild`（一次失败就永久没了）——
+       改成 wireArtImg 的重试逻辑，见上面的注释。 */
+    wireArtImg(img, window.ART.url(d.id));
     art.appendChild(img);
     box.appendChild(art);
 
@@ -659,7 +697,10 @@
           bi.src = window.ART.itemUrl(x);
           bi.alt = '';
           bi.title = it.name;
-          bi.onerror = function () { if (bi.parentNode) bi.parentNode.removeChild(bi); };
+          /* ★ 这里能进来说明 itemGet 已经是 'ok'（图已经在缓存里了），
+             所以 onerror 基本只会在"缓存被清掉"这种极端情况下发生 ——
+             仍然接上同一套重试，免得它变成唯一一处"一次失败就没了"。 */
+          wireArtImg(bi, window.ART.itemUrl(x));
           badges.appendChild(bi);
         } else {
           badges.appendChild(UI.el('i', 'u-itembadge-emoji', it.emoji));
@@ -725,9 +766,9 @@
         art.appendChild(UI.el('div', emojiCls('sc-fallback', d.emoji), d.emoji));
         var img = document.createElement('img');
         img.className = 'sc-artimg';
+        wireArtImg(img, window.ART.url(d.id));
         img.src = window.ART.url(d.id);
         img.alt = '';
-        img.onerror = function () { if (img.parentNode) img.parentNode.removeChild(img); };
         art.appendChild(img);
         card.appendChild(art);
 
@@ -830,9 +871,9 @@
         var art = window.ART ? window.ART.itemGet(it.id) : null;
         if (art) {
           var img = UI.el('img', 'item-artimg');
+          wireArtImg(img, window.ART.itemUrl(it.id));
           img.src = window.ART.itemUrl(it.id);
           img.alt = '';
-          img.onerror = function () { if (img.parentNode) img.parentNode.removeChild(img); };
           chip.appendChild(img);
         } else {
           chip.appendChild(document.createTextNode(it.emoji));
@@ -1301,6 +1342,207 @@
       }
       return seg.join('　');
     }
+    if (kind === 'bedrock') {
+      /* ★ 钟离 2 星和 3 星是**两件不相干的事**（一件罩队友、一件砸敌人），
+         所以分开列。`passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+         真数字在 wardCut / meteorAdMul / meteorDur 里，别拿去 ×100。 */
+      var pbd = d.passive || {};
+      var pbdn = pbd.names || {};
+      var skd = d.skill || {};
+      var wNm = (pbdn[2] instanceof Array) ? pbdn[2][pbdn[2].length - 1] : (pbdn[2] || '玉璋护盾');
+      var mNm = (pbdn[3] instanceof Array) ? pbdn[3][pbdn[3].length - 1] : (pbdn[3] || '天星');
+      var segD = [];
+      if (pbd.wardAt && star >= pbd.wardAt) {
+        segD.push('💠 ' + wNm + '：技能「' + (skd.name || '不动如山') +
+          '」罩住的**队友**免疫控制（眩晕/冰冻/石化/捆住/击退）、少受 ' +
+          Math.round((pbd.wardCut || 0) * 100) + '% 伤害（护盾还在就一直有效）');
+      }
+      if (pbd.meteorAt && star >= pbd.meteorAt) {
+        var mdRad = (pbd.meteorRadius || 1) * 2 + 1;
+        segD.push('🪨 ' + mNm + '：每次放技能额外召来陨石，砸敌人最密的 ' +
+          mdRad + '×' + mdRad + '，造成 ' + (pbd.meteorAdMul || 5) +
+          ' 倍攻击力的伤害，活下来的石化 ' + (pbd.meteorDur || 3) +
+          ' 秒；放技能时喊「' + (pbd.meteorShout || '天动万象') + '」');
+      }
+      if (!segD.length) segD.push('💠 ' + name);
+      return segD.join('　');
+    }
+    if (kind === 'flight') {
+      /* ★ 祖国人 1 星就有被动（飞行），所以界面走的是 passiveLine ——
+         这一行必须把"已经有的"和"还差什么"都写出来
+         （张雪峰 / 牢大 / Dank1ng 也是 1 星有被动，处理方式一样）。
+         ★ `passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+           拿去 ×100 会写成「移速 +100%」—— 真正的数字在 flyMovePct 里。 */
+      var pfl = d.passive || {};
+      var pfln = pfl.names || {};
+      var segFl = ['🦸 ' + (pfln[1] || '飞行') + '：移速 +' +
+        Math.round((pfl.flyMovePct || 0) * 100) + '%，而且能**从单位上方飞过去**'];
+      if (pfl.burnAt && star >= pfl.burnAt) {
+        segFl.push('🔥 ' + wan(pfln[2], '灼烧') + '：激光命中后每秒失去 ' +
+          Math.round((pfl.burnPct || 0) * 100) + '% 当前生命、持续 ' +
+          (pfl.burnDur || 0) + ' 秒（被烧的人**免疫冰冻**）');
+      }
+      if (pfl.shotsAt && star >= pfl.shotsAt) {
+        segFl.push('🔺 ' + wan(pfln[3], '三连激光') + '：一道激光变成连射 ' +
+          (pfl.shots || 3) + ' 发，每发 ' + Math.round((pfl.shotMul || 1) * 100) + '% 伤害');
+      }
+      if (star < 3) {
+        segFl.push('☆ 还差：' + (star < 2
+          ? ('2 星「' + wan(pfln[2], '灼烧') + '」激光附带灼烧、')
+          : '') +
+          '3 星「' + wan(pfln[3], '三连激光') + '」连射 ' + (pfl.shots || 3) + ' 发');
+      }
+      return segFl.join('　');
+    }
+    if (kind === 'jett') {
+      /* ★ 陈兴裕 1 星就有被动（暴力点 / 收到！），所以界面走的是 passiveLine ——
+         这一行要把"已经有的"和"还差什么"都写出来。
+         ★ `passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+           拿去 ×100 会写成「攻速 +100%」—— 真数字在 asPct / dmgOutPct 里。 */
+      var pj = d.passive || {};
+      var pjn = pj.names || {};
+      var segJ = ['💥 ' + wan(pjn[1], '暴力点') + '：攻速 +' +
+        Math.round((pj.asPct || 0) * 100) + '%，造成与受到的伤害都 +' +
+        Math.round((pj.dmgOutPct || 0) * 100) + '%'];
+      if (pj.startFullAt && star >= pj.startFullAt) {
+        segJ.push('⚡ ' + wan(pjn[2], '开局满充能') + '：开局法力就是满的');
+      }
+      if (pj.tomeAt && star >= pj.tomeAt) {
+        segJ.push('📖 ' + wan(pjn[3], '感谢抗渗送的魔法书') +
+          '：友方被**远程攻击**打死时，立刻恢复所有弹药（法力回满）');
+      }
+      if (star < 3) {
+        segJ.push('☆ 还差：' + (star < 2
+          ? '2 星「' + wan(pjn[2], '开局满充能') + '」开局法力满格、'
+          : '') + '3 星「' + wan(pjn[3], '感谢抗渗送的魔法书') + '」队友被远程打死时回满弹药');
+      }
+      return segJ.join('　');
+    }
+    if (kind === 'dingzhen') {
+      /* ★ 丁真 2 星和 3 星是**两件不相干的事**（一件挂在敌人身上、一件给自己），
+         所以分开列。`passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+         真数字在 slowCut / ponyHpPct / ponyManaPct 里，别拿去 ×100。 */
+      var pdz = d.passive || {};
+      var pdzn = pdz.names || {};
+      var skdz = d.skill || {};
+      var segDz = [];
+      if (pdz.slowAt && star >= pdz.slowAt) {
+        segDz.push('🐆 ' + wan(pdzn[2], '芝士雪豹') + '：技能「' +
+          (skdz.name || '雪豹撕咬') + '」咬中的人**攻速和移速一起 -' +
+          Math.round((pdz.slowCut || 0) * 100) + '%**，持续 ' + (pdz.slowDur || 0) + ' 秒');
+      }
+      if (pdz.ponyAt && star >= pdz.ponyAt) {
+        segDz.push('🐴 ' + wan(pdzn[3], '小马珍珠') + '：骑着小马进场，获得一层等于' +
+          '自身生命上限 ' + Math.round((pdz.ponyHpPct || 0) * 100) +
+          '% 的护盾；小马被打死时大喊「' + (pdz.ponyShout || '珍珠死了') +
+          '」并狂暴（魔力获取 +' + Math.round((pdz.ponyManaPct || 0) * 100) + '%）');
+      }
+      if (!segDz.length) segDz.push('🐆 ' + name);
+      return segDz.join('　');
+    }
+    if (kind === 'amaterasu') {
+      /* ★ 鹰佐 2 星和 3 星是**两件不相干的事**（一件解控、一件点火），
+         所以分开列。`passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+         真数字在 batiCd / batiImmuneDur / amaterasuAdMul 里，别拿去 ×100。 */
+      var pam = d.passive || {};
+      var pamn = pam.names || {};
+      var segAm = [];
+      if (pam.batiAt && star >= pam.batiAt) {
+        segAm.push('🛡 ' + wan(pamn[2], '霸体') + '：受到控制时（金色特效）' +
+          '立刻解控并**免控 ' + (pam.batiImmuneDur || 5) + ' 秒**，冷却 ' +
+          (pam.batiCd || 25) + ' 秒');
+      }
+      if (pam.amaterasuAt && star >= pam.amaterasuAt) {
+        var amRad = (pam.amaterasuRadius || 1) * 2 + 1;
+        segAm.push('🖤 ' + wan(pamn[3], '天照') + '：放完技能在 ' + amRad + '×' + amRad +
+          ' 范围点起黑火，造成 ' + (pam.amaterasuAdMul || 2) + ' 倍攻击力的伤害，' +
+          '并让敌人被天照灼烧（每秒失去 ' + Math.round((pam.amaterasuPct || 0.05) * 100) +
+          '% 当前生命、无视冰冻、**无限时间**）');
+      }
+      if (!segAm.length) segAm.push('🌀 ' + name);
+      return segAm.join('　');
+    }
+    if (kind === 'eatrice') {
+      /* ★ 大肥鱼 2 星和 3 星是**两件不相干的事**（一件回血、一件回蓝），
+         所以分开列。技能本身（吃白饭）在它自己那一行里已经写过了。
+         ★ `passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+           真数字在 eatHealPct / tokenManaPct 里，别拿去 ×100。 */
+      var pe = d.passive || {};
+      var pen = pe.names || {};
+      var ske = d.skill || {};
+      var segE = [];
+      if (pe.eatHealAt && star >= pe.eatHealAt) {
+        segE.push('🍽 ' + wan(pen[2], '吃撑了') + '：吃掉敌人后恢复 ' +
+          Math.round((pe.eatHealPct || 0) * 100) + '% 最大生命');
+      }
+      if (pe.tokenManaAt && star >= pe.tokenManaAt) {
+        segE.push('🍚 ' + wan(pen[3], '蹭饭') + '：**队友每消耗一层 TOKEN**，' +
+          '自己获得 ' + Math.round((pe.tokenManaPct || 0) * 100) + '% 魔力');
+      }
+      if (!segE.length) segE.push('🐟 ' + name);
+      return segE.join('　');
+    }
+    if (kind === 'shiai') {
+      /* ★ ZMJJKK 是**1 星就有被动**的（世一决），所以界面走 passiveLine ——
+         这一行要把"已经有的"和"还差什么"都写出来
+         （张雪峰 / 牢大 / Dank1ng / 丁真也是 1 星有被动，处理方式一样）。
+         ★ `passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+           真数字在 dmgPerDeath / ballStun / kingMul 里，别拿去 ×100。 */
+      var ps = d.passive || {};
+      var psn = ps.names || {};
+      var sks = d.skill || {};
+      var segS = ['🏆 ' + (psn[1] || '世一决') + '：**开局满充能**；' +
+        '队内每阵亡一个角色，自己获得 +' +
+        Math.round((ps.dmgPerDeath || 0) * 100) + '% 增伤'];
+      if (ps.ballAt && star >= ps.ballAt) {
+        segS.push('⚡ ' + wan(psn[2], '闪电乒乓') + '：开技能的同时扔出闪电球，' +
+          '眩晕 ' + ((ps.ballRadius || 1) * 2 + 1) + '×' +
+          ((ps.ballRadius || 1) * 2 + 1) + ' 内的敌人 ' + (ps.ballStun || 0) + ' 秒');
+      }
+      if (ps.kingAt && star >= ps.kingAt) {
+        segS.push('👑 ' + wan(psn[3], '你们的王回来了！') + '：技能伤害 ×' +
+          (ps.kingMul || 2) + '（激光每发从 ' +
+          Math.round((sks.dmgPct || 0.5) * 100) + '% 攻击力变成 ' +
+          Math.round((sks.dmgPct || 0.5) * (ps.kingMul || 2) * 100) + '%），' +
+          '开大时喊出这句话');
+      }
+      if (star < 3) {
+        segS.push('☆ 还差：' + (star < 2
+          ? '2 星「' + wan(psn[2], '闪电乒乓') + '」闪电球群体眩晕、'
+          : '') + '3 星「' + wan(psn[3], '你们的王回来了！') + '」伤害 ×' +
+          (ps.kingMul || 2));
+      }
+      return segS.join('　');
+    }
+    if (kind === 'haowen') {
+      /* ★ 刘浩文 1 星就有被动（世界第一帅），所以界面走 passiveLine ——
+         这一行要把"已经有的"和"还差什么"都写出来。
+         ★ `passiveStep` 在这条上只是"这一星级有没有被动"的开关（0/1），
+           真数字在 drPerHpPct / stealPct / boomPct 里，别拿去 ×100
+           （drPerHpPct = 1.0 表示"少 1% 血少受 1% 伤"，写成 100% 就成假信息了）。 */
+      var ph2 = d.passive || {};
+      var phn = ph2.names || {};
+      var skh = d.skill || {};
+      var segH = ['😎 ' + (phn[1] || '世界第一帅') + '：**不受任何别的受伤减免影响**；' +
+        '血量每减少 1%，受到的伤害就 -' + Math.round((ph2.drPerHpPct || 1) * 100) + '%'];
+      if (ph2.stealAt && star >= ph2.stealAt) {
+        segH.push('🩸 ' + wan(phn[2], '流血流汗') + '：获得 ' +
+          Math.round((ph2.stealPct || 0) * 100) + '% 吸血');
+      }
+      if (ph2.boomAt && star >= ph2.boomAt) {
+        var bR = (skh.boomRadius || 1) * 2 + 1;
+        segH.push('💥 ' + wan(phn[3], '三星手机') + '：扔出的是三星手机 —— ' +
+          '每部命中后爆炸，对 ' + bR + '×' + bR + ' 内所有敌人再造成 ' +
+          Math.round((skh.boomPct || 0.25) * 100) + '% 攻击力的伤害');
+      }
+      if (star < 3) {
+        segH.push('☆ 还差：' + (star < 2
+          ? '2 星「' + wan(phn[2], '流血流汗') + '」' +
+            Math.round((ph2.stealPct || 0) * 100) + '% 吸血、'
+          : '') + '3 星「' + wan(phn[3], '三星手机') + '」手机命中后爆炸');
+      }
+      return segH.join('　');
+    }
     return '⚡ ' + name;
   }
 
@@ -1480,6 +1722,120 @@
       var pn3b = (pn2[3] instanceof Array) ? pn2[3][pn2[3].length - 1] : '曼巴精神';
       return '☆ 已解锁「' + (pn2[1] || '坠机') + '」；2 星「' + (pn2[2] || '复活') +
         '」坠毁后复活，3 星「' + pn3b + '」复活后技能所需法力减半';
+    }
+    if (kind === 'bedrock') {
+      /* ★ 钟离 1 星没有被动（就是原来那个"给全队套盾"的 5 费前排），
+         所以这里是**纯预告**：技能本身在干什么 + 升星各多拿到什么。
+         不写技能的话，玩家看到两行解锁项也不知道这个角色靠什么吃饭。 */
+      var pbt = d.passive || {};
+      var pbnt = pbt.names || {};
+      var skt = d.skill || {};
+      var bRad = (pbt.meteorRadius || 1) * 2 + 1;
+      return '☆ 被动预览：技能「' + (skt.name || '不动如山') + '」' +
+        (skt.desc || '给全队每个队友都套上一层护盾') + '；2 星「' +
+        wan(pbnt[2], '玉璋护盾') + '」被它罩住的队友免疫控制并少受 ' +
+        Math.round((pbt.wardCut || 0) * 100) + '% 伤害，3 星「' +
+        wan(pbnt[3], '天星') + '」每次放技能召来陨石，' + bRad + '×' + bRad +
+        ' 内的敌人吃 ' + (pbt.meteorAdMul || 5) + ' 倍攻击力的伤害并被石化 ' +
+        (pbt.meteorDur || 3) + ' 秒';
+    }
+    if (kind === 'flight') {
+      /* ★ 祖国人 1 星就有被动，所以这里的"预告"不能照抄
+         "2 星解锁什么"的写法 —— 1 星不是"什么都没有"，而是"已经会飞了"。
+         这里说清已经有的 + 还差什么。 */
+      var pft = d.passive || {};
+      var pftn = pft.names || {};
+      var skt2 = d.skill || {};
+      return '☆ 已解锁「' + (pftn[1] || '飞行') + '」：移速 +' +
+        Math.round((pft.flyMovePct || 0) * 100) + '%、能飞越单位；技能「' +
+        (skt2.name || '耀眼红光') + '」' + (skt2.desc || '') +
+        '2 星「' + wan(pftn[2], '灼烧') + '」激光命中后每秒失去 ' +
+        Math.round((pft.burnPct || 0) * 100) + '% 当前生命、持续 ' + (pft.burnDur || 0) +
+        ' 秒（免疫冰冻），3 星「' + wan(pftn[3], '三连激光') + '」连射 ' +
+        (pft.shots || 3) + ' 发、每发 ' + Math.round((pft.shotMul || 1) * 100) + '%';
+    }
+    if (kind === 'jett') {
+      /* ★ 陈兴裕 1 星就有被动，所以这里的"预告"不能照抄
+         "2 星解锁什么"的写法 —— 1 星不是"什么都没有"，而是"已经很暴力了"。 */
+      var pjt = d.passive || {};
+      var pjtn = pjt.names || {};
+      var skj = d.skill || {};
+      return '☆ 已解锁「' + wan(pjtn[1], '暴力点') + '」：攻速 +' +
+        Math.round((pjt.asPct || 0) * 100) + '%、造成与受到的伤害都 +' +
+        Math.round((pjt.dmgOutPct || 0) * 100) + '%；技能「' + (skj.name || '顶赋Jett') +
+        '」召唤 ' + (skj.knives || 5) + ' 把飞刀、每把 ' +
+        Math.round((skj.knifePct || 0) * 100) + '% 攻击力，' +
+        Math.round((skj.hitChance || 0.8) * 100) + '% 概率全部命中；' +
+        '2 星「' + wan(pjtn[2], '开局满充能') + '」开局法力满格，3 星「' +
+        wan(pjtn[3], '感谢抗渗送的魔法书') + '」友方被远程攻击打死时回满弹药';
+    }
+    if (kind === 'dingzhen') {
+      /* ★ 丁真 1 星没有被动（就是原来那个"咬一口"的远程），
+         所以这里是**纯预告**：技能本身在干什么 + 升星各多拿到什么。 */
+      var pdz2 = d.passive || {};
+      var pdzn2 = pdz2.names || {};
+      var skdz2 = d.skill || {};
+      return '☆ 被动预览：技能「' + (skdz2.name || '雪豹撕咬') + '」' +
+        (skdz2.desc || '让雪豹咬敌人一口') + '；2 星「' +
+        wan(pdzn2[2], '芝士雪豹') + '」咬中的人攻速移速 -' +
+        Math.round((pdz2.slowCut || 0) * 100) + '% 持续 ' + (pdz2.slowDur || 0) +
+        ' 秒，3 星「' + wan(pdzn2[3], '小马珍珠') + '」骑着小马进场（一层 ' +
+        Math.round((pdz2.ponyHpPct || 0) * 100) + '% 生命上限的护盾），小马死了就狂暴';
+    }
+    if (kind === 'amaterasu') {
+      /* ★ 鹰佐 1 星没有被动（就是原来那个"自己加速"的双刃舞者），
+         所以这里是**纯预告**：技能本身在干什么 + 升星各多拿到什么。 */
+      var pam2 = d.passive || {};
+      var pamn2 = pam2.names || {};
+      var skam2 = d.skill || {};
+      return '☆ 被动预览：技能「' + (skam2.name || '疾风连斩') + '」' +
+        (skam2.desc || '短时间内大幅提升自身攻速') + '；2 星「' +
+        wan(pamn2[2], '霸体') + '」受到控制时立刻解控并免控 ' +
+        (pam2.batiImmuneDur || 5) + ' 秒（冷却 ' + (pam2.batiCd || 25) +
+        ' 秒），3 星「' + wan(pamn2[3], '天照') + '」放完技能点起黑火：' +
+        (pam2.amaterasuAdMul || 2) + ' 倍攻击力伤害 + 无限时间的灼烧' +
+        '（每秒 ' + Math.round((pam2.amaterasuPct || 0.05) * 100) + '% 当前生命）';
+    }
+    if (kind === 'eatrice') {
+      /* ★ 大肥鱼 1 星没有被动（技能本身那一套"翻倍 + 吃掉 + TOKEN"已经全在了），
+         所以这里是**纯预告**：技能在干什么 + 升星各多拿到什么。 */
+      var pe2 = d.passive || {};
+      var pen2 = pe2.names || {};
+      var ske2 = d.skill || {};
+      return '☆ 被动预览：技能「' + (ske2.name || '吃白饭') + '」' +
+        (ske2.desc || '下一口伤害翻倍并吃掉残血敌人') + '2 星「' +
+        wan(pen2[2], '吃撑了') + '」吃掉敌人后恢复 ' +
+        Math.round((pe2.eatHealPct || 0) * 100) + '% 最大生命，3 星「' +
+        wan(pen2[3], '蹭饭') + '」队友每消耗一层 TOKEN 自己获得 ' +
+        Math.round((pe2.tokenManaPct || 0) * 100) + '% 魔力';
+    }
+    if (kind === 'shiai') {
+      /* ★ ZMJJKK 1 星就有被动，所以这里的"预告"不能照抄
+         "2 星解锁什么"的写法 —— 1 星不是"什么都没有"，而是"已经会开局开大了"。 */
+      var ps2 = d.passive || {};
+      var psn2 = ps2.names || {};
+      var sks2 = d.skill || {};
+      return '☆ 已解锁「' + (psn2[1] || '世一决') + '」：开局满充能，' +
+        '队内每阵亡一个角色自己 +' + Math.round((ps2.dmgPerDeath || 0) * 100) +
+        '% 增伤；技能「' + (sks2.name || '霓虹激光') + '」' +
+        (sks2.desc || '') + '2 星「' + wan(psn2[2], '闪电乒乓') + '」开技能顺带' +
+        '眩晕 ' + ((ps2.ballRadius || 1) * 2 + 1) + '×' +
+        ((ps2.ballRadius || 1) * 2 + 1) + ' 的敌人 ' + (ps2.ballStun || 0) +
+        ' 秒，3 星「' + wan(psn2[3], '你们的王回来了！') + '」伤害 ×' +
+        (ps2.kingMul || 2);
+    }
+    if (kind === 'haowen') {
+      /* ★ 刘浩文 1 星就有被动，所以这里的"预告"是"已经有的 + 还差什么"。 */
+      var ph3 = d.passive || {};
+      var phn3 = ph3.names || {};
+      var skh3 = d.skill || {};
+      var hR = (skh3.boomRadius || 1) * 2 + 1;
+      return '☆ 已解锁「' + (phn3[1] || '世界第一帅') + '」：不受任何别的受伤减免影响，' +
+        '血量每减少 1% 少受 1% 伤害；技能「' + (skh3.name || '手机大王') + '」' +
+        (skh3.desc || '') + '2 星「' + wan(phn3[2], '流血流汗') + '」' +
+        Math.round((ph3.stealPct || 0) * 100) + '% 吸血，3 星「' +
+        wan(phn3[3], '三星手机') + '」每部手机命中后爆炸（' + hR + '×' + hR + ' 内再吃 ' +
+        Math.round((skh3.boomPct || 0.25) * 100) + '% 攻击力）';
     }
     return '☆ 被动预览：2 星「' + n2 + '」，3 星「' + n3 + '」';
   }
@@ -1870,7 +2226,125 @@
         }
         return '♾️ ' + nm(e.who) + ' 的「空悲切」停了 —— 队友又站起来了';
       case 'refill':
+        /* ★ 两种"能量瞬间回满"要分开写：
+             锁头是**自己杀了人**，魔法书是**队友被远程打死了**（陈兴裕 3 星）。 */
+        if (e.reason === 'tome') {
+          return '📖【魔法书】队友 ' + nm(e.to) + ' 被远程打死，' +
+            nm(e.who) + ' 的弹药瞬间回满';
+        }
         return '🎯【锁头】' + nm(e.who) + ' 击杀 ' + nm(e.to) + '，能量瞬间回满';
+      /* ★ 陈兴裕「顶赋Jett」：五把飞刀 —— 中没中是这一条技能的全部信息，
+         所以两种结果各写一行，而且"全空"那条要把那句台词也带上。 */
+      case 'jett':
+        if (e.hit) {
+          return '🔪【顶赋Jett】' + nm(e.from) + ' 五把飞刀全部命中 ' + nm(e.to);
+        }
+        return '🔪【顶赋Jett】' + nm(e.from) + ' 五把飞刀全部落空' +
+          (e.shout ? ' —— 「' + e.shout + '」' : '');
+      /* ★ 「剧毒火龙果」的范围毒：每秒一跳，战报里全写会刷屏，
+         所以只在"这一跳里有人被打掉超过 10% 血"时才记一条。 */
+      case 'poison':
+        return '🐉 ' + nm(e.who) + ' 的火龙果毒雾散开（' +
+          ((e.radius || 1) * 2 + 1) + '×' + ((e.radius || 1) * 2 + 1) + ' 内 ' +
+          (e.targets ? e.targets.length : 0) + ' 个单位，每个 ' +
+          Math.round(e.dmg) + ' 点）';
+      /* ★ 刘浩文「手机大王」：40 段全写会刷屏（一次施法 40~80 行），
+         所以只在 summary 那一条上记一行 —— 单发伤害在飘字里看得见。 */
+      case 'phones':
+        return '📱【手机大王】' + nm(e.from) + ' 一口气扔出 ' + e.count +
+          ' 部手机' + (e.boom ? '（**三星手机**，每部都会爆炸）' : '');
+      case 'phoneBoom':
+        return '💥 ' + nm(e.from) + ' 的手机炸了 —— ' +
+          ((e.radius || 1) * 2 + 1) + '×' + ((e.radius || 1) * 2 + 1) + ' 内 ' +
+          (e.targets ? e.targets.length : 0) + ' 人再吃 ' + Math.round(e.dmg) + ' 点';
+      /* ★ ZMJJKK 的四条：开大 / 闪电球 / 击杀续命（带台词）/ 队友阵亡增伤。 */
+      case 'neon':
+        return '🔫【' + (e.shout || '霓虹激光') + '】' + nm(e.who) +
+          ' 进入激光状态：攻速 ×' + e.asMul + '、每发 ' +
+          Math.round(e.dmgPct * 100) + '% 攻击力、移速 +' +
+          Math.round(e.movePct * 100) + '%';
+      case 'pingpong':
+        return '⚡【闪电乒乓】' + nm(e.from) + ' 的闪电球砸在 ' + e.r + ',' + e.c +
+          '，' + (e.targets ? e.targets.length : 0) + ' 个敌人被眩晕 ' + e.dur + ' 秒';
+      case 'neonKill':
+        return '🔫 ' + nm(e.who) + ' 在激光期间击杀 ' + nm(e.to) +
+          '（' + e.victimStar + '★）—— 激光时间重置回 4 秒' +
+          (e.shout ? '　「' + e.shout + '」' : '');
+      case 'shiai':
+        return '🏆【世一决】队友 ' + nm(e.to) + ' 阵亡，' + nm(e.who) +
+          ' 增伤 +' + Math.round(e.bonus * 100) + '%';
+      /* ★ 蓝色大肥鱼「吃白饭 / TOKEN」四连：
+           起手翻倍 → 一口吞掉 → 全队发牌 → 谁花掉谁得利（大肥鱼还能回蓝）。 */
+      case 'chargeUp':
+        return '🍽【吃白饭】' + nm(e.who) + ' 下一口造成的伤害 ×' + e.mul;
+      case 'eat':
+        return '🐟 ' + nm(e.from) + ' 一口吞掉了 ' + nm(e.to) +
+          '（剩 ' + Math.round(e.hpBefore) + ' 血，' +
+          Math.round(e.pct * 100) + '% 上限）';
+      case 'token':
+        return '🍚 全队获得一层 TOKEN —— 下一次造成的伤害 ×' + e.mul;
+      case 'tokenUsed':
+        return '🍚 ' + nm(e.who) + ' 花掉一层 TOKEN，这一下 ×' + e.mul +
+          '（还剩 ' + e.left + ' 层）';
+      case 'tokenMana':
+        return '🐟【蹭饭】队友花掉 TOKEN，' + nm(e.who) + ' 获得 ' +
+          Math.round(e.mana) + ' 点魔力';
+      case 'consume':
+        /* 吃白饭那一下的兑现：和上面的 tokenUsed 是同一件事的两种来源，
+           只写一条就够（不然一次攻击会刷两行）。 */
+        if (e.what !== 'eat') return null;
+        return '🍽【吃白饭】这一口 ×' + e.mul + ' 打在 ' + nm(e.to) + ' 身上';
+      /* ★ 鹰佐的两条：霸体（解控）和天照（黑火落地）。 */
+      case 'bati':
+        /* `passive: true` 是"免控窗口里又挨了一下控制" —— 那是同一件事的重复，
+           战报里不写第二遍，免得一次团战刷出十几行"霸体"。 */
+        if (e.passive) return null;
+        return '🛡【霸体】' + nm(e.who) + ' 挨了控制立刻解控 —— 免控 ' +
+          e.dur + ' 秒（冷却 ' + e.cd + ' 秒）';
+      case 'amaterasu':
+        return '🖤【天照】' + nm(e.from) + ' 在 ' +
+          ((e.radius || 1) * 2 + 1) + '×' + ((e.radius || 1) * 2 + 1) +
+          ' 点起黑火，' + (e.targets ? e.targets.length : 0) + ' 人吃 ' +
+          Math.round(e.dmg) + ' 点伤害并被天照缠上';
+      /* ★ 丁真「雪豹撕咬」：那一口本身是技能伤害（skill 事件里已经有名字），
+         这里补的是"附带的减速"和"小马"这两件只属于他的事。 */
+      case 'bite':
+        return '🐆 ' + nm(e.from) + ' 的雪豹咬住了 ' + nm(e.to) +
+          ' —— 攻速移速 -' + Math.round(e.cut * 100) + '%，持续 ' + e.dur + ' 秒';
+      case 'pony':
+        return '🐴 ' + nm(e.who) + ' 骑着小马进场（护盾 ' + Math.round(e.shield) + '）';
+      case 'ponyDead':
+        /* ★ 这里不能用 U.round2 —— game.js 里没有 U 这个别名
+           （只有 util.js 的 ST.U），上一行那个教训就在 1935 行附近。 */
+        return '💔 ' + nm(e.who) + (e.shout ? ' 大喊「' + e.shout + '」' : '') +
+          '，小马倒下了 —— 他狂暴了（魔力获取 ×' +
+          (Math.round(e.manaMul * 100) / 100) + '）';
+      /* ★ 祖国人 2 星「灼烧」：起火写一条，之后每秒那一跳太密，只写第一条
+         （和大果的自燃同一条约定：跌破半血那一下才值得写进战报）。 */
+      case 'ignite':
+        return '🔥 ' + nm(e.to) + ' 被激光点着了 —— 每秒失去 ' +
+          Math.round(e.pct * 100) + '% 当前生命，持续 ' + e.dur + ' 秒';
+      case 'immune':
+        if (e.what === 'freeze') {
+          return '🔥 ' + nm(e.who) + ' 正在燃烧，冰冻对它无效';
+        }
+        return null;
+      /* ★ 钟离「天星」：一颗陨石砸下来 —— 这一发是 5 费的大场面，
+         必须单独写一行（范围、伤害、石化时长都在里面）。 */
+      case 'meteor':
+        return '🪨【天星】' + nm(e.from) + ' 召来陨石砸在 ' + e.r + ',' + e.c +
+          '，' + ((e.radius || 1) * 2 + 1) + '×' + ((e.radius || 1) * 2 + 1) +
+          ' 内 ' + (e.targets ? e.targets.length : 0) + ' 人吃 ' + Math.round(e.dmg) +
+          ' 伤害，活下来的石化 ' + e.dur + ' 秒';
+      /* ★ 钟离 2 星「玉璋护盾」：挂上守护 / 挡下一次控制。
+         `grant` 每次都写太吵（一次技能就是全队四行），所以只在**挡下**时写。 */
+      case 'ward':
+        if (e.what === 'grant') return null;
+        {
+          var wardWhat = { stun: '眩晕', freeze: '冰冻', petrify: '石化',
+                           root: '捆住', knockback: '击退' }[e.what] || '控制';
+          return '💠【玉璋护盾】' + nm(e.who) + ' 免疫了' + wardWhat;
+        }
       /* ★ 牢大的坠机三段。它们天然是低频事件（一局最多各一次），
          全部写进回放，而且写得足够"响"——这是这套被动唯一的表达机会。
          ★ 羊帆 3 星的「巅峰谢幕」共用同一条事件，靠 `boom` 分出两种写法：
