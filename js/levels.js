@@ -333,8 +333,19 @@
         { id: 'abyss', star: 3, items: ['spellbook', 'sapphire'] },
         { id: 'dagger', star: 3, items: ['swiftboots'] },
         { id: 'twinblade', star: 3 }, { id: 'falconer', star: 3 },
-        { id: 'butcher', star: 3, items: ['belt', 'giantblade'] }, { id: 'brute', star: 3 },
-        { id: 'bowman', star: 3, items: ['huntereye'] }
+        // ★ 2026-10：张雪峰被削（开局攻速 100%→60%、+100% 就进狂暴自毁）之后，
+        //   参考玩家阵容的**核心**正好也是张雪峰（L11~L24 一路都是他），
+        //   所以整条难度曲线被动收紧：这一关的余量从 +3% 掉到 +1%
+        //   —— 那已经等于掷硬币，不能算"能过"。
+        //   这里把三个 3 星小兵降到 2 星，把余量放回 +7%。
+        //   ★ 只动**敌人**，不把张雪峰的数值偷偷加回去：削弱的意图
+        //     不能靠改别的地方抵消掉。
+        //   ★ 试过更小的改动，留个记录免得下次重试：
+        //     只降弓手 → +2%；只降弓手 + 蛮牛 → +3%（屠夫才是这关的胜负手）。
+        //   ★ 这一关仍然是全程最紧的一关（21 关 +17%、23 关 +24%），
+        //     正式调平衡时它要连同整条曲线一起重配，见 README 的待办。
+        { id: 'butcher', star: 2, items: ['belt', 'giantblade'] }, { id: 'brute', star: 2 },
+        { id: 'bowman', star: 2, items: ['huntereye'] }
       ],
       clearGold: 26, drop: 'infinity'
     },
