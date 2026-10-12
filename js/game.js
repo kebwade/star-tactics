@@ -43,6 +43,13 @@
      而玩家真正想知道的是「这一口奶把她坑了」，也就是结果变了的那一下。
      lastGiftGood 用 null 表示「还没播报过」。 */
   var lastGiftGood = null;
+  /* 美团袋鼠 3 星「好评如潮」：普攻送外卖，一局能送出上百单
+     （0.7 次/秒 × 圈里好几个队友）。**一局只播报第一次** ——
+     后面每一次在画布上都有一串绿色数字 + 橙色环，文字再写一遍只是刷屏。
+     和讲话石那条是同一个道理。 */
+  var deliveryAnnounced = false;
+  /* 东北雨姐 3 星「雨姐的关照」：同上，一局只播报第一次。 */
+  var noodleAnnounced = false;
   var Game = (window.Game = {});
 
   function $(id) { return document.getElementById(id); }
@@ -576,6 +583,23 @@
   }
 
   /**
+   * emoji 图标的类名：**一个棋子可以挂多个 emoji**（冰冰冰 = 🧊🧊🧊），
+   * 三个图形横着排会冲出卡片，所以按图形个数加一个 `-xN` 的类，
+   * 由 CSS 缩一档。
+   *
+   * ★ 数的是"图形个数"（`ST.U.emojiCount`），不是 `.length` ——
+   *   `'❄️'.length` 是 2（雪花 + 变体选择符），照 length 判会把单个 emoji
+   *   也当成两个、白白缩小一档。
+   * ★ 超过 3 个就按 3 档处理（现在最多就是 3 个，写个上限免得以后出现
+   *   没人写样式的 `-x7` 类名）。
+   */
+  function emojiCls(base, emoji) {
+    var n = ST.U.emojiCount(emoji);
+    if (n <= 1) return base;
+    return base + ' ' + base + '-x' + Math.min(n, 3);
+  }
+
+  /**
    * 画一个棋子方块（棋盘和备战池共用）。
    *
    * 结构上刻意留了 .u-art 插槽：把立绘丢进 art/ 就自动换上，
@@ -591,7 +615,7 @@
     box.draggable = false;
 
     var fb = UI.el('div', 'u-fallback');
-    fb.appendChild(UI.el('span', 'u-emoji', d.emoji));
+    fb.appendChild(UI.el('span', emojiCls('u-emoji', d.emoji), d.emoji));
     fb.appendChild(UI.el('span', 'u-name', d.name));
     box.appendChild(fb);
 
@@ -698,7 +722,7 @@
         var card = UI.el('div', 'shop-card cost' + d.cost);
 
         var art = UI.el('div', 'sc-art');
-        art.appendChild(UI.el('div', 'sc-fallback', d.emoji));
+        art.appendChild(UI.el('div', emojiCls('sc-fallback', d.emoji), d.emoji));
         var img = document.createElement('img');
         img.className = 'sc-artimg';
         img.src = window.ART.url(d.id);
@@ -853,6 +877,31 @@
     return (v instanceof Array) ? (v[v.length - 1] || fb) : (v || fb);
   }
 
+  /**
+   * 按星级查一张「数字表」（比如电棍的 `maxAtOnce`：1/2 星 1 条、3 星 3 条）。
+   *
+   * ★★ 为什么要单独写一个：**4 星不在任何表里**。
+   *    直接 `map[star]` 取到 undefined 会掉进兜底值，文案就变成
+   *    「每个电棍同时只能挂 1 条」—— 而 4 星电棍在战斗里是 3 条。
+   *    规则要和战斗引擎**完全一致**：查不到就往**低**的档位取最大值
+   *    （4 星 = 3 星融合出来的，能力停在 3 星那一档）。
+   *    `battle.js` 里的 `starLookup` 就是这个规则，只是它是模块私有的，
+   *    文案层够不着，所以这里用同一套逻辑再写一遍。
+   */
+  function starNum(map, star, fb) {
+    var base = (fb === undefined) ? 0 : fb;
+    if (!map) return base;
+    if (typeof map[star] === 'number') return map[star];
+    var best = base;
+    for (var kk in map) {
+      var kn = parseInt(kk, 10);
+      if (!isNaN(kn) && kn <= star && typeof map[kk] === 'number' && map[kk] > best) {
+        best = map[kk];
+      }
+    }
+    return best;
+  }
+
   function passiveLine(d, star) {
     var name = ST.passiveName(d, star);
     if (!name) return null;
@@ -928,6 +977,168 @@
           Math.round((po.ocAdPct || 0) * 100) +
           '%，普攻升级成 ' + ((po.ocAoeRadius || 0) * 2 + 1) + '×' +
           ((po.ocAoeRadius || 0) * 2 + 1) + ' 范围');
+      }
+      return seg.join('　');
+    }
+    if (kind === 'current') {
+      /* ★ 电棍也是**1 星就有被动**的（导电），所以这一行要自带"还差什么"。
+         ★ 「同时存在几条」是按星级变的（1/2 星 1 条、3 星 3 条），
+           所以这句话里的数字必须**从数据取**。 */
+      var pc = d.passive || {};
+      var pcn = pc.names || {};
+      var r3 = (pc.radius || 0) * 2 + 1;
+      /* ★ 「同时几条」是按星级的表（1/2 星 1 条、3 星 3 条），
+         不能走 `wan()`（那是给"名字可能是数组"用的）。
+         ★ 4 星不在表里 —— 走 starNum 往低档取，和战斗引擎同一套规则。 */
+      var cmaxAt = starNum(pc.maxAtOnce, star, 1);
+      /* ★ "这一星级把同时存在数放宽了吗" —— 用它决定要不要列出「三相电」那一层。
+         比的是**1 星那一档**（基准），不是前一档：比前一档的话 4 星会算出
+         「3 > 3 = 假」，同一张卡在 3 星写着「三相电」、升到 4 星反而消失了。
+         比基准仍然是从数据里推出来的，改表时文案自动跟着走。 */
+      var cmaxBase = starNum(pc.maxAtOnce, 1, 1);
+      var seg = ['⚡ ' + wan(pcn[1], '导电') + '：普攻和技能会留下电流，' +
+                 (pc.delay || 0.5) + ' 秒后向 ' + r3 + '×' + r3 + ' 内的敌人弹射，' +
+                 '每次 ' + Math.round((pc.bouncePct || 0) * 100) + '% 攻击力，最多 ' +
+                 (pc.maxBounces || 0) + ' 次（每个电棍同时只能挂 ' + cmaxAt + ' 条）'];
+      if (pc.stunAt && star >= pc.stunAt) {
+        seg.push('💫 ' + wan(pcn[2], '麻痹') + '：每次弹射额外击晕 ' +
+          (pc.stunDur || 0) + ' 秒');
+      }
+      if (cmaxAt > cmaxBase) {
+        seg.push('🔌 ' + wan(pcn[3], '三相电') + '：同时能挂 ' + cmaxAt + ' 条电流');
+      }
+      if (star < 3) {
+        seg.push('☆ 还差：' + (star < 2
+          ? ('2 星「' + wan(pcn[2], '麻痹') + '」弹射带 ' + (pc.stunDur || 0) + ' 秒眩晕、')
+          : '') +
+          '3 星「' + wan(pcn[3], '三相电') + '」同时能挂 ' +
+          ((pc.maxAtOnce && pc.maxAtOnce[3]) || 3) + ' 条电流');
+      }
+      return seg.join('　');
+    }
+    if (kind === 'frost') {
+      /* ★★ 冰冰冰的两层改的都是**技能本身**（加冰冻 / 改成打全场），
+         所以这一行必须把技能名和数字一起报出来 —— 只写「冻手冻脚」的话，
+         玩家不知道"冻多久"，也不知道 3 星那句"千里冰封"到底改了什么。
+         ★ `passiveStep` 在这个 kind 上只是"这一星级有没有被动"的开关（1/1），
+           真数字在 freezeDur / freezeAt / allAt 里，**别拿 step 去 ×100**
+           （snipeSure / clawGuard / domain / field 都踩过这个坑）。
+         ★ 1 星没有被动 —— 界面走的是 passiveTeaser，
+           但引擎里 1 星确实没有任何加成（frostFreezeDur = 0、frostAll = false）。 */
+      var pfz = d.passive || {};
+      var pzn = pfz.names || {};
+      var skz = d.skill || {};
+      var rad = (skz.radius || 0) * 2 + 1;
+      var segZ = ['🧊 ' + (skz.name || '寒霜新星') + '：在目标格炸开，' +
+                  rad + '×' + rad + ' 范围内的敌人吃 ' + (skz.damage || 0) + ' 点法术伤害'];
+      if (pfz.freezeAt && star >= pfz.freezeAt) {
+        segZ.push('❄ ' + wan(pzn[2], '冻手冻脚') + '：被技能打中的敌人额外冰冻 ' +
+                  (pfz.freezeDur || 0) + ' 秒');
+      }
+      if (pfz.allAt && star >= pfz.allAt) {
+        segZ.push('🌨 ' + wan(pzn[3], '千里冰封') + '：技能改成攻击全体敌人' +
+                  '（不再只看目标格附近）');
+      }
+      if (star < 3) {
+        segZ.push('☆ 还差：' + (star < 2
+          ? ('2 星「' + wan(pzn[2], '冻手冻脚') + '」技能附带 ' +
+             (pfz.freezeDur || 0) + ' 秒冰冻、')
+          : '') +
+          '3 星「' + wan(pzn[3], '千里冰封') + '」技能打全体');
+      }
+      return segZ.join('　');
+    }
+    if (kind === 'delivery') {
+      /* ★★ 美团袋鼠的两层都是**围绕外卖**做的，所以这一行必须把
+         "外卖是什么"（技能本身）和"升星之后外卖多了什么"一起说清楚 ——
+         只写「准时送达」的话，玩家不知道是给谁加速、加多少、几秒。
+         ★ `passiveStep` 在这个 kind 上只是"这一星级有没有被动"的开关（1/1），
+           真数字在 asBuffPct / healPct / radius 里，**别拿 step 去 ×100**。
+         ★ 局部变量统一带 `dl` 后缀：这一整个函数里 `var` 是**函数级**的，
+           和上面 domain 分支的 pd / segD 撞名不会报错、但会让下一个人改错行。 */
+      var pdl = d.passive || {};
+      var pdnl = pdl.names || {};
+      var skdl = d.skill || {};
+      var dRadL = ((pdl.radius || 0) * 2 + 1);
+      var segDL = ['🛵 ' + (skdl.name || '治疗外卖') + '：投掷一个外卖，治疗血量百分比最低的队友'];
+      if (pdl.asBuffAt && star >= pdl.asBuffAt) {
+        segDL.push('⚡ ' + wan(pdnl[2], '准时送达') + '：收到外卖的队友攻速 +' +
+          Math.round((pdl.asBuffPct || 0) * 100) + '%，持续 ' +
+          (pdl.asBuffDur || 0) + ' 秒');
+      }
+      if (pdl.healAt && star >= pdl.healAt) {
+        segDL.push('🍱 ' + wan(pdnl[3], '好评如潮') + '：普通攻击会治疗被攻击敌人 ' +
+          dRadL + '×' + dRadL + ' 范围内的友方单位（每人 ' +
+          Math.round((pdl.healPct || 0) * 100) + '% 最大生命）');
+      }
+      if (star < 3) {
+        segDL.push('☆ 还差：' + (star < 2
+          ? ('2 星「' + wan(pdnl[2], '准时送达') + '」外卖顺带 +' +
+             Math.round((pdl.asBuffPct || 0) * 100) + '% 攻速、')
+          : '') +
+          '3 星「' + wan(pdnl[3], '好评如潮') + '」普攻治疗被攻击者周围 ' +
+          dRadL + '×' + dRadL + ' 内的队友');
+      }
+      return segDL.join('　');
+    }
+    if (kind === 'noodle') {
+      /* ★★ 东北雨姐的两层都挂在"技能那一下"和"打谁"上，所以这一行必须把
+         **技能本身在干什么**（套盾）一起说清楚 —— 只写「红薯粉丝」的话，
+         玩家不知道她放的是什么技能、也不知道"捆住"是哪来的。
+         ★ `passiveStep` 在这个 kind 上只是"这一星级有没有被动"的开关（1/1），
+           真数字在 bindDur / bindRadius / hitHealPct 里，**别拿 step 去 ×100**。
+         ★ 局部变量带 `nd` 后缀（函数级 var，和上面几个分支的重名不会报错，
+           但会让下一个人改错行）。 */
+      var pnd = d.passive || {};
+      var pndn = pnd.names || {};
+      var skn = d.skill || {};
+      var nRad = ((pnd.bindRadius || 0) * 2 + 1);
+      var segND = ['🛡 ' + (skn.name || '圣盾术') + '：给血量百分比最低的队友套 ' +
+        (skn.amount || 0) + ' 点护盾'];
+      if (pnd.bindAt && star >= pnd.bindAt) {
+        segND.push('🍜 ' + wan(pndn[2], '红薯粉丝') + '：放技能的同时把身边 ' +
+          nRad + '×' + nRad + ' 内的敌人捆住 ' + (pnd.bindDur || 0) +
+          ' 秒（钉在原地，但还能还手）');
+      }
+      if (pnd.healAt && star >= pnd.healAt) {
+        segND.push('🍠 ' + wan(pndn[3], '雨姐的关照') + '：攻击被捆住的敌人时，' +
+          '给血量百分比最低的队友回 ' + Math.round((pnd.hitHealPct || 0) * 100) +
+          '% 最大生命');
+      }
+      if (star < 3) {
+        segND.push('☆ 还差：' + (star < 2
+          ? ('2 星「' + wan(pndn[2], '红薯粉丝') + '」放技能捆住身边 ' + nRad + '×' +
+             nRad + ' 内的敌人 ' + (pnd.bindDur || 0) + ' 秒、')
+          : '') +
+          '3 星「' + wan(pndn[3], '雨姐的关照') + '」打被捆住的敌人给最低血队友回 ' +
+          Math.round((pnd.hitHealPct || 0) * 100) + '% 最大生命');
+      }
+      return segND.join('　');
+    }
+    if (kind === 'mikado') {
+      /* ★ 孙笑川是**1 星就有被动**的（天皇），所以这一行既要写清
+         "已经解锁了什么"，也要写"还差什么" —— 不能像豆包那样只给升星预告
+         （它 1 星没被动），也不能像张雪峰那样默认第一层就是起点就不提后续。 */
+      var pm = d.passive || {};
+      var pmn = pm.names || {};
+      var mir = (pm.auraRadius || 0) * 2 + 1;
+      var seg = ['👑 ' + wan(pmn[1], '天皇') + '：自身 ' + mir + '×' + mir +
+                 ' 内的队友 +' + Math.round((pm.auraLifesteal || 0) * 100) + '% 吸血'];
+      if (pm.skillHealAt && star >= pm.skillHealAt) {
+        seg.push('🩸 ' + wan(pmn[2], '儒雅随和') + '：技能造成的伤害 ' +
+          Math.round((pm.skillHealPct || 0) * 100) + '% 转化为自己的治疗');
+      }
+      if (pm.convertAt && star >= pm.convertAt) {
+        seg.push('🏳 ' + wan(pmn[3], '安排上了') + '：被自己击败的敌人以 ' +
+          Math.round((pm.convertHpPct || 0) * 100) +
+          '% 生命倒戈成我方单位（对有复活能力的无效）');
+      }
+      if (star < 3) {
+        seg.push('☆ 还差：' + (star < 2
+          ? ('2 星「' + wan(pmn[2], '儒雅随和') + '」技能伤害全额回血、')
+          : '') +
+          '3 星「' + wan(pmn[3], '安排上了') + '」击败的敌人以 ' +
+          Math.round((pm.convertHpPct || 0) * 100) + '% 生命倒戈');
       }
       return seg.join('　');
     }
@@ -1191,6 +1402,48 @@
         ' 秒，3 星「' + qNm3 + '」阵亡时自爆，3×3 范围吃攻击力 ×' +
         (pp2.boomAdMult || 20) + ' 的伤害';
     }
+    if (kind === 'frost') {
+      /* ★ 冰冰冰 1 星没有被动（技能就是原来的寒霜新星），
+         所以这里是**纯预告**：技能本身在干什么 + 升星各多拿到什么。
+         ★ 不说清"技能现在就打 3×3"的话，玩家看到 3 星的"打全体"
+           也不知道是从哪儿变到哪儿的。 */
+      var pf3 = d.passive || {};
+      var pfn3 = pf3.names || {};
+      var skf3 = d.skill || {};
+      var rad3 = (skf3.radius || 0) * 2 + 1;
+      return '☆ 被动预览：技能「' + (skf3.name || '寒霜新星') + '」在目标格炸开，' +
+        rad3 + '×' + rad3 + ' 范围内的敌人吃 ' + (skf3.damage || 0) +
+        ' 点法术伤害；2 星「' + wan(pfn3[2], '冻手冻脚') + '」被打中的敌人额外冰冻 ' +
+        (pf3.freezeDur || 0) + ' 秒，3 星「' + wan(pfn3[3], '千里冰封') + '」技能改成打全体敌人';
+    }
+    if (kind === 'delivery') {
+      /* ★ 美团袋鼠 1 星没有被动（就是原来那个"治疗血最少的队友"），
+         所以这里是**纯预告**：把外卖本身在干什么 + 升星各多拿什么说清楚。 */
+      var pdt = d.passive || {};
+      var pdnt = pdt.names || {};
+      var skdt = d.skill || {};
+      var dRadT = ((pdt.radius || 0) * 2 + 1);
+      return '☆ 被动预览：技能「' + (skdt.name || '治疗外卖') + '」' +
+        (skdt.desc || '治疗血量百分比最低的队友') + '；2 星「' +
+        wan(pdnt[2], '准时送达') + '」收到外卖的队友攻速 +' +
+        Math.round((pdt.asBuffPct || 0) * 100) + '% 持续 ' + (pdt.asBuffDur || 0) +
+        ' 秒，3 星「' + wan(pdnt[3], '好评如潮') + '」普通攻击会治疗被攻击敌人 ' +
+        dRadT + '×' + dRadT + ' 内的友方单位';
+    }
+    if (kind === 'noodle') {
+      /* ★ 东北雨姐 1 星没有被动（就是原来那个套盾的骑士），
+         所以这里是**纯预告**：技能本身 + 升星各多拿什么。 */
+      var pnd2 = d.passive || {};
+      var pndn2 = pnd2.names || {};
+      var skn2 = d.skill || {};
+      var nRad2 = ((pnd2.bindRadius || 0) * 2 + 1);
+      return '☆ 被动预览：技能「' + (skn2.name || '圣盾术') + '」' +
+        (skn2.desc || '给血量百分比最低的队友套护盾') + '；2 星「' +
+        wan(pndn2[2], '红薯粉丝') + '」放技能的同时捆住身边 ' + nRad2 + '×' + nRad2 +
+        ' 内的敌人 ' + (pnd2.bindDur || 0) + ' 秒，3 星「' +
+        wan(pndn2[3], '雨姐的关照') + '」攻击被捆住的敌人会给血量最低的队友回 ' +
+        Math.round((pnd2.hitHealPct || 0) * 100) + '% 最大生命';
+    }
     if (kind === 'field') {
       /* ★ 楚生疑犯 1 星没有被动，所以这里是**纯预告**：
          把"技能本身在干什么"和"还差什么"一起说清楚。 */
@@ -1346,6 +1599,8 @@
 
     thornAnnounced = false;   // 每场重新允许播报一次讲话石技能名
     lastGiftGood = null;      // 每场重新播报第一次「幻觉 / 开智」
+    deliveryAnnounced = false; // 每场重新播报第一次「好评如潮」
+    noodleAnnounced = false;   // 每场重新播报第一次「雨姐的关照」
     var seed = (Math.random() * 0xffffffff) >>> 0;
     // 无尽模式的难度旋钮：整队面板复利上浮（把对手那一方乘一个系数）
     var opts = L.statScale ? { statScale: { a: L.statScale } } : undefined;
@@ -1508,15 +1763,53 @@
       }
       /* ★ 冰棍。每条都写太碎，只在**攒满冰冻**那一刻由上面的 stun 写。
          这里只报「层数过半」这一个里程碑，让玩家知道快冻上了。 */
+      /* ★ 电棍「导电」：电流弹射的一跳。
+         ★ 只写"跳到谁身上"是不够的 —— 玩家要看出这是**连锁**：
+           所以带上"还剩几次"和后撤箭头。 */
+      case 'current':
+        if (e.born) return null;              // 出生不写（一跳一写会刷屏）
+        if (e.fizzle) return null;            // 消散也不写（同上）
+        return '⚡ ' + nm(e.from) + ' 的电流弹到 ' + nm(e.to) + '（-' +
+          Math.round(e.dmg) + '）' +
+          (e.stunned ? '　💫 眩晕' : '') +
+          (e.left > 0 ? '　还剩 ' + e.left + ' 跳' : '　最后一次');
+
       case 'chill':
         if (e.max > 0 && e.stacks === Math.ceil(e.max / 2)) {
           return '❄ ' + nm(e.to) + ' 身上的冰棍攒到 ' + e.stacks + ' 层了（攻速移速 -' +
             Math.round(e.asCut * 100) + '%）';
         }
         return null;
+
+      /* ★ 孙笑川 3 星「安排上了」：被打死的敌人倒戈成我方单位。
+         ★ 这一条**必须写**：它是全场唯一一个"阵营会变"的事件，
+           不写的话回放里就是"X 阵亡了"然后 X 又站起来打自己人 ——
+           看起来像 bug。 */
+      case 'convert':
+        return '🏳 ' + nm(e.from) + ' 把 ' + nm(e.who) + ' 安排上了 —— 它以 ' +
+          Math.round(e.hp) + '/' + Math.round(e.hpMax) +
+          ' 血倒戈成我方单位（卡面变灰）';
+      /* ★★ 东北雨姐 2 星「红薯粉丝」：被捆住的敌人**钉在原地但还能打** ——
+       *   这句话必须写出来。只说"捆住 3 秒"，玩家会以为是眩晕，
+       *   然后看到对面照样还手就以为出了 bug。
+       *   ★ 和 stun 是**两个事件类型**（不是同一个类型换 reason）：
+       *     机制不一样（只挡走位 vs 全挡），塞在一起迟早有人按眩晕去验。
+       *   ★ 一次施法可能捆到好几个人，所以每个人各写一行（和羊巅峰那条一样）——
+       *     它是低频的（一次施法最多一圈），而且"捆住了谁"正是这一下的价值。 */
+      case 'root':
+        return '🍜【红薯粉丝】' + nm(e.from) + ' 用粉丝捆住了 ' + nm(e.to) +
+          ' ' + e.dur + ' 秒（钉在原地，但还能还手）';
       case 'stun':
         if (e.reason === 'freeze') {
           return '🧊【巧乐兹】' + nm(e.to) + ' 被冻住了 ' + e.dur + ' 秒';
+        }
+        /* ★ 冰冰冰 2 星「冻手冻脚」：技能附带的冰冻。
+           ★★ 它**必须**排在下面嘉豪那条之前 —— 那条的兜底文案是
+              "拖进了领域"，reason='frost' 没有 `targets` 名单，
+              一路走下去会写成「【男人领域】把 X 拖进了领域：眩晕 1.5 秒」，
+              一件冰系的事被说成嘉豪的技能。这条坑和上面 current 那条一模一样。 */
+        if (e.reason === 'frost') {
+          return '🧊【寒霜新星】' + nm(e.to) + ' 被冻住了 ' + e.dur + ' 秒';
         }
         /* ★ 羊帆「羊巅峰」：巅峰一击 / 自爆 附带的眩晕。
            和嘉豪那边不一样，这里**每个受害者都单独写一行** ——
@@ -1527,6 +1820,11 @@
             (e.skill === '巅峰谢幕' ? '自爆震飞' : '巅峰一击震晕') + ' ' + e.dur +
             ' 秒 —— 笑得上气不接下气';
         }
+        /* ★ 电棍「导电」：弹射带的那 0.5 秒眩晕**已经在电流那一行里写了**
+           （"⚡ 电流弹到 X（-N）　💫 眩晕"），这里返回 null，免得同一件事写两遍。
+           ★★ 而且它**必须**在下面嘉豪那条之前返回 ——
+              否则会一路走到"拖进了领域"的文案，凭空冒出一个"导电领域"。 */
+        if (e.reason === 'current') return null;
         /* ★ 嘉豪「男人领域」。★ 实际发出的事件是**一条一个人**
            （每个受害者都要有自己的眩晕和特效），但回放只在名单里第一个人身上
            写一行摘要 —— 否则 3 星一次控三个人会在战报里刷三行一样的话。
@@ -1610,7 +1908,35 @@
            而且"回了多少"根本没法和伤害流对上 ——
            这些数字全部由上面那条 laugh 一行讲完。 */
         if (e.reason === 'laugh' || e.reason === 'laughAura') return null;
+        /* ★ 美团袋鼠 3 星「好评如潮」：外卖那一口只在**第一次**写一行，
+           之后都靠画布上的绿字和橙环（一局上百单，全写会把回放刷爆）。
+           ★ 但它必须排在下面那条通用分支**之前** —— 不然每单都会写成
+             "美团袋鼠 → 某某 +42"，一局几百行。 */
+        if (e.reason === 'delivery') {
+          if (deliveryAnnounced) return null;
+          deliveryAnnounced = true;
+          return '🍱【好评如潮】' + nm(e.from) +
+            ' 开始给前线送外卖：每一下普攻都治疗被攻击敌人周围的队友';
+        }
+        /* ★ 东北雨姐 3 星「雨姐的关照」：同样一局能触发几十上百次
+           （她 0.62 攻速，只要对面被捆着就每一下都触发），所以也只在**第一次**写一行。 */
+        if (e.reason === 'noodle') {
+          if (noodleAnnounced) return null;
+          noodleAnnounced = true;
+          return '🍠【雨姐的关照】' + nm(e.from) +
+            ' 开始照顾队友：每一下打在**被捆住**的敌人身上，就给最低血的队友回一大口';
+        }
         return (e.from === null ? '持续回血' : nm(e.from)) + ' → ' + nm(e.to) + ' +' + Math.round(e.amount);
+      /* ★★ 攻速增益：双刃舞者的「疾风连斩」（自己开）和
+       *   美团袋鼠 2 星「准时送达」（别人送来）。
+       *   频率很低（一次施法才一条），所以**每次都写**。
+       *   ★ 这个 case 以前根本不存在 —— 「疾风连斩」在战报里从来没出现过。 */
+      case 'buff':
+        return (e.reason === 'delivery' && e.from && e.from !== e.who)
+          ? ('🛵【准时送达】' + nm(e.from) + ' 的外卖送到了 ' + nm(e.who) +
+             '：攻速 +' + Math.round(e.amount * 100) + '%（' + e.dur + ' 秒）')
+          : ('💨 ' + nm(e.who) + ' 攻速 +' + Math.round(e.amount * 100) +
+             '%（' + e.dur + ' 秒）');
       /* ★ 奶龙的「捧腹大笑」。每次都要写 ——
          冷却 13 秒，一局也就放得出两三次，这几次是这张卡的全部存在感。
          减伤、回血、星级门槛全部塞进同一行，回放里读一句就够。 */
