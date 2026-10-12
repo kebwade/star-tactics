@@ -1859,18 +1859,23 @@
   async function testZhangVfx() {
     TH.section('张雪峰 · 超频表现');
 
-    /* ★ 场景和 simtest 里那套一样：**3 星**张雪峰 + 四个摊开的 3 星山岳 + 一个医师。
+    /* ★ 场景和 simtest 里那套一样：**3 星**张雪峰 + 四个摊开的 3 星陪练 + 一个医师。
        · 用 3 星是因为要验的台词/自毁都发生在「叠到 +200%」之后，
          而 3 星才有 3×3 普攻，出手次数才够（1/2 星是单体，砍得慢）。
-       · 一个山岳不够：他 18 秒就把它砍了，攻速只叠到 +164%，
-         走不到阈值（这是这一条最初报红的原因）。 */
+       · 一个陪练不够：他 18 秒就把它砍了，攻速只叠到 +164%，
+         走不到阈值（这是这一条最初报红的原因）。
+       ★★ 陪练**不能用 3 星钟离**（原来是 3 星山岳）：钟离 3 星「天星」每次
+          放技能都会把身边的人**石化 3 秒**，四个钟离轮流放 = 张雪峰全程僵着，
+          11 次普攻就结束了，"叠满 200%"永远到不了。
+          换成「大地守护」：无被动、血量相近（5538 vs 6672）、技能只是给队友
+          套盾（不控制、不伤害），拿来当沙包正合适。 */
     var result = W.ST.Battle.battle({
       a: [{ id: 'blademaster', star: 3, items: ['dragonscale', 'dragonscale', 'belt'], r: 4, c: 3 },
           { id: 'medic', star: 3, items: ['sapphire', 'sapphire', 'sapphire'], r: 6, c: 6 }],
-      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 3 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 0 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 7 }]
+      b: [{ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 3 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 0 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 7 }]
     }, 313131);
 
     var ocs = result.log.filter(function (e) { return e.type === 'ocas'; });
@@ -1882,14 +1887,17 @@
     W.Arena.play(result);
     var sawOverCallout = false, sawBurnNum = false;
     var ocRose = false, lastOc = 0, hpAtOver = null, minHpAfterOver = null;
+    var sawOldCallout = false;
     for (var i = 0; i < 2000; i++) {
       W.Arena.step(1 / 30);
       var fl = W.Arena.fxList();
       for (var k = 0; k < fl.length; k++) {
-        /* ★ 喊的是**状态名**「狂暴」，不是被动名 ——
-           进狂暴之后玩家要认的是"他现在在烧自己"，
-           而且「狂暴」是这一版新引入的说法，文案和画面必须一致。 */
-        if (fl[k].type === 'callout' && fl[k].text === '狂暴！') sawOverCallout = true;
+        /* ★★ 进入狂暴时喊的是**一句台词**「你跑不过我你信吗」（用户指定）。
+           ★ 和被动名「你快不过我你信吗」**故意差一个字** ——
+             一个是名字，一个是他真的喊出来的话，所以这条断言写成精确匹配
+             （差一个字就要红），免得哪天有人"顺手改正"成被动名。 */
+        if (fl[k].type === 'callout' && fl[k].text === '你跑不过我你信吗') sawOverCallout = true;
+        if (fl[k].type === 'callout' && fl[k].text === '狂暴！') sawOldCallout = true;
         // 自毁的飘字用独立的 kind，取色也独立 —— 和"挨打"的白/黄一眼分得开
         if (fl[k].type === 'num' && fl[k].kind === 'selfBurn') sawBurnNum = true;
       }
@@ -1905,7 +1913,9 @@
 
     TH.ok('★ 攻速加成会一路上涨（卡片上的 ⚡+N% 是活的）', ocRose,
       '最后 +' + Math.round(lastOc * 100) + '%');
-    TH.ok('★ 进入狂暴时会弹出「狂暴！」的台词', sawOverCallout);
+    TH.ok('★ 进入狂暴时会喊出「你跑不过我你信吗」', sawOverCallout);
+    TH.ok('★ 而且不再喊旧的「狂暴！」（那句话对玩家没有信息量，卡片上的 🔥 徽章已经在说了）',
+      !sawOldCallout);
     TH.ok('★ 自毁时有独立的红色伤害数字（kind=selfBurn，和挨打的白/黄区分开）', sawBurnNum);
     /* ★ 只断言"血量比刚超频时更低" —— 不断言它没死：
        超频本身就是自毁，它死掉才是正常的，写成 hp > 0 反而是错的。 */
@@ -2565,6 +2575,177 @@
   }
 
   /* ============================================================
+   * 五l、敌方卡面泛红 + Dank1ng 充能过半架起狙击枪
+   *
+   *   ★★ 这两条都是"一眼能不能看出来"的问题，所以判据落在**像素**上，
+   *     而且都用**前后 / 左右对比**，不依赖任何绝对阈值。
+   *   ★★ 泛红那一条的做法值得记一下：**同一个格子、同一张卡，只换阵营**。
+   *     跑两场：一场让 (4,0) 属于我方（side 'b'）、一场让它属于敌方（side 'a'），
+   *     其余全都一样 —— 那么两次量出来的差就**只可能**是那层红，
+   *     连"立绘本来偏红"这种干扰都被消掉了。
+   *     （第一版拿了两个**不同**棋子互相比，量出来"敌方更红"其实全靠运气；
+   *       又赶上一张卡正在闪白闪，方向直接反过来。）
+   * ============================================================ */
+  async function testSideTintAndRifle() {
+    TH.section('敌方泛红 · Dank1ng 架枪');
+
+    var CW = W.Arena.cell(), PW = W.Arena.pitch();
+    /* 采"这张卡有多红"：**卡面上半部分**的平均 (R − B)。
+       用差值而不是绝对红色 —— 立绘本身什么颜色都有，
+       绝对阈值在换一张立绘之后立刻失效。
+
+       ★★ 为什么只采上半部分（而不是整张卡）：
+         卡面正中有一条**又宽又扁的浅色高光带**（约 ±17px），
+         它把整卡均值从 40 拽到 5，量出来会得到一个完全反过来的结论。
+         上半部分是干净的：那里的读数正好等于"立绘 + 那层红"。
+       ★★ 为什么这个框是**左右对称**的（内缩 7px、去掉边框）：
+         敌方的立绘是**镜像**画的。镜像不会改变像素的多重集合，
+         前提是采样框在水平方向关于卡片中线对称 —— 否则比的就是两张不同的画。
+         内缩 7px 是为了避开那圈阵营描边（我绿 / 敌红），那是另一件事。
+       ★ 上半部分也正是那层红最明显的地方（上沿那道渐变就在这儿）。 */
+    function redness(uid) {
+      var u = W.Arena.units()[uid];
+      if (!u) return -999;
+      var cx = u.cc * PW + CW / 2, cy = u.rr * PW + CW / 2;
+      var cw = CW + 6, ch = CW + 10;            // 和 drawUnit 里的卡面尺寸一致
+      var dx = cx - cw / 2, dy = cy - ch / 2;
+      var x0 = Math.round(dx + 7), y0 = Math.round(dy + 8);
+      var w = Math.round(cw - 14), h = Math.round(ch * 0.42 - 8);
+      var d = $('arena').getContext('2d').getImageData(x0, y0, w, h).data;
+      var sum = 0, n = 0;
+      for (var q = 0; q < d.length; q += 4) { sum += (d[q] - d[q + 2]); n++; }
+      return n ? sum / n : -999;
+    }
+
+    /**
+     * 一场 2v2：两边**同一种棋子**（荣誉），都在对方射程外（距离 6 > 射程 4），
+     * 量颜色那一秒里没人挨打、没人闪白。
+     * ★★ 为什么不能"同一格换阵营"来做 A/B：**阵营是由行号决定的**
+     *   （`sideOfRow(r) = r < 4 ? 'a' : 'b'`），第 4 行永远是我方、
+     *   第 0 行永远是敌方，把 a 方摆到第 4 行会被 placeOnSide 静默挪走。
+     *   所以对照只能"同一场里的两张卡"：同样立绘、同样尺寸、同一帧，
+     *   唯一的差别就是那层红 —— 如果两边都染，差值是 0；
+     *   如果染反了，差值是负的（第一版就是负的）。
+     * ★ 每边两个棋子：孤零零一个会触发「空悲切」那条绝境被动
+     *   （队友全死光 → 能量无限 → 开局互秒），画面上全是白闪和死亡特效。
+     * ★ 循环条件按**时间**写、不按帧数：`Arena.step` 推的是自己的时间轴。
+     */
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 0, c: 6 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 0, c: 7 }],
+      b: [{ id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 0 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 1 }]
+    }, 8891);
+    var mineUid = null, foeUid = null;
+    result.initial.units.forEach(function (u) {
+      if (u.side === 'b' && !mineUid) mineUid = u.uid;
+      if (u.side === 'a' && !foeUid) foeUid = u.uid;
+    });
+    TH.ok('两边各有棋子，而且我方在下半场（否则下面全是空断言）',
+      !!mineUid && !!foeUid, '我 ' + mineUid + ' / 敌 ' + foeUid);
+    TH.eq('★ 量颜色那一秒里没有人挨打（距离 6、射程 4）',
+      result.log.filter(function (e) {
+        return (e.type === 'attack' || e.type === 'damage') && e.t < 1.0;
+      }).length, 0);
+    W.Arena.play(result);
+    var cleanT = -1;
+    for (var f = 0; f < 600 && W.Arena.time() < 1.2; f++) {
+      W.Arena.step(1 / 30);
+      var um = W.Arena.units()[mineUid], uf = W.Arena.units()[foeUid];
+      if (!um || !uf) continue;
+      if (W.Arena.time() < 0.7) continue;              // 入场渐显还没结束
+      if (um.flash > 0 || uf.flash > 0) continue;      // 有一张在闪白 → 换一帧
+      cleanT = W.Arena.time();
+      break;
+    }
+    TH.ok('★ 在"两张卡都没在闪"的一帧上取到了数（白闪会冲淡那层红）', cleanT > 0,
+      't=' + cleanT.toFixed(2) + 's');
+    var mine = redness(mineUid), foe = redness(foeUid);
+    TH.note('同一种棋子、同一帧、同一块卡面上半部分 (R−B)：我方 ' + mine.toFixed(1) +
+      '　敌方 ' + foe.toFixed(1));
+    TH.ok('★★ 敌方卡面比我方更红（两边是同一种棋子，差值只可能来自那层红）',
+      foe > mine + 6, foe.toFixed(1) + ' vs ' + mine.toFixed(1));
+    TH.ok('★ 而且只是"稍微泛红"：差值不能大到把立绘染成一片血',
+      foe - mine < 48, '差值 = ' + (foe - mine).toFixed(1));
+
+    /* ---------- Dank1ng：充能过半 → 架起狙击枪 ---------- */
+    /* ★ 单独开一场：我方 Dank1ng + 一个肉盾垫背（免得触发空悲切互秒），
+       敌方也放肉盾、而且放得**够不着**（射程 4、距离 7）——
+       这样"手动拨法力"的两次 step 里不会插进攻击事件把法力又改回去。 */
+    var rres = W.ST.Battle.battle({
+      a: [{ id: 'stoneguard', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 7 }],
+      b: [{ id: 'deadeye', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 0 },
+          { id: 'stoneguard', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, 5150);
+    var dUid = null;
+    rres.initial.units.forEach(function (u) {
+      if (u.defId === 'deadeye') dUid = u.uid;
+    });
+    W.Arena.play(rres);
+    for (var q2 = 0; q2 < 40; q2++) W.Arena.step(1 / 30);
+    TH.ok('★ 我方这个棋子就是 Dank1ng（带狙击技能，killSkull 标记）',
+      W.Arena.units()[dUid].killSkull === true);
+    /* ★ 只要求"Dank1ng 自己没挨打"：他是个狙击手，射程比对面那个肉盾长，
+       所以这一秒里很可能**他先开了枪**（那是他的事，不影响下面手动拨法力）。 */
+    TH.eq('★ 这一秒里没人打到 Dank1ng 身上（法力是我们手动拨的）',
+      rres.log.filter(function (e) {
+        return (e.type === 'attack' || e.type === 'skill') && e.to === dUid && e.t < 1.5;
+      }).length, 0);
+
+    /* 直接在**画布**上看：给他一份满法力的快照，看卡面中下部多不多出一把枪。
+       ★ 判据用"深色枪身像素的占比"：枪是冷灰/深色剪影，
+         压在花花绿绿的立绘上会让那一块的**低亮度 + 低饱和**像素变多。 */
+    function darkPixels(uid, box) {
+      var u = W.Arena.units()[uid];
+      if (!u) return -1;
+      var cx = Math.round(u.cc * PW + CW / 2), cy = Math.round(u.rr * PW + CW / 2);
+      var w = box, h = box;
+      var d = $('arena').getContext('2d')
+        .getImageData(cx - (w >> 1), cy + Math.round(CW * 0.06), w, h).data;
+      var n = 0, dark = 0;
+      for (var q = 0; q < d.length; q += 4) {
+        var mx = Math.max(d[q], d[q + 1], d[q + 2]), mn = Math.min(d[q], d[q + 1], d[q + 2]);
+        n++;
+        /* 枪身：暗（亮度低）而且**接近中性灰**（max-min 小） */
+        if (mx < 120 && (mx - mn) < 46) dark++;
+      }
+      return n ? dark / n : -1;
+    }
+    function drawWithMana(mana) {
+      var u = W.Arena.units()[dUid];
+      u.mana = mana;                       // 直接改渲染层的法力值（它只用来画条/架枪）
+      /* ★★ 这里要量的是"枪画出来了没有"，所以**故意跳过架枪那一瞬的白闪**：
+         直接把 rifleUp 预置成"这一帧该不该架着"，渲染层就不会判定成
+         一次"从空手到架枪"的状态变化、也就不会整卡闪一下白。
+         白闪会把深色枪身冲淡一半 —— 上一版量到的差值在 2.6%~4.3% 之间飘，
+         阈值 3% 时红时绿，那量的是闪光不是枪。 */
+      u.rifleUp = mana > u.maxMana * 0.5;
+      W.Arena.step(1 / 30);
+    }
+    drawWithMana(0);
+    var lowDark = darkPixels(dUid, Math.round(CW * 0.7));
+    var lowRifle = W.Arena.units()[dUid].rifleUp;
+    drawWithMana(999);                     // 满法力 = 充能过半
+    var highDark = darkPixels(dUid, Math.round(CW * 0.7));
+    var highRifle = W.Arena.units()[dUid].rifleUp;
+    TH.note('卡面下部"枪身色"像素占比：空手 ' + (lowDark * 100).toFixed(1) +
+      '% → 架枪 ' + (highDark * 100).toFixed(1) + '%');
+    TH.ok('★ 充能没过半时：渲染层认为"没架枪"', lowRifle === false);
+    TH.ok('★★ 充能过半之后：渲染层认为"架起来了"', highRifle === true);
+    TH.ok('★★ 而且卡面上真的多出了一把枪（深色剪影像素明显变多）',
+      highDark > lowDark + 0.03,
+      (lowDark * 100).toFixed(1) + '% → ' + (highDark * 100).toFixed(1) + '%');
+    /* ★ 判据挂在**棋子数据**（技能里的 killSkull）上，不是"只有我方才有"：
+       把法力收回去之后枪要消失（说明它是个**跟着充能走的状态**，
+       不是"画一次就永远留着"）。 */
+    drawWithMana(10);
+    TH.ok('★ 充能掉回一半以下之后枪收起来了（状态是跟着充能走的）',
+      W.Arena.units()[dUid].rifleUp === false &&
+      darkPixels(dUid, Math.round(CW * 0.7)) < highDark - 0.02,
+      'rifleUp=' + W.Arena.units()[dUid].rifleUp);
+  }
+
+  /* ============================================================
    * 五g、奶龙的「捧腹大笑」在画面上看得见
    *
    *   规则和数值在 simtest 里验过了。这里只问两件事：
@@ -3067,6 +3248,197 @@
     TH.ok('★ 进入空悲切时弹出台词', sawCallout);
     TH.ok('★ 「空悲切」状态在画面上持续可见（一帧的信号不够）', endlessFrames >= 30,
       endlessFrames + ' 帧');
+  }
+
+  /* ============================================================
+   * 立绘加载失败要**重试**，预加载要**限流**
+   *
+   *   ★★ 这是「手机上有概率加载不出图片」那一版的核心回归防线。
+   *      老逻辑是"失败一次就永久缺失"：`onerror` 把状态钉成 missing，
+   *      之后这个 id 再也不请求了 —— 手机上切个后台、锁个屏，
+   *      在飞的图片请求会被浏览器掐掉，那一张脸就一局都回不来。
+   *
+   *   做法：用一个**假的 Image** 精确控制"第几次失败、第几次成功"，
+   *   再用假的 `setTimeout` 把退避等待变成零成本（否则要真等 6 秒）。
+   *   两样都在测完立刻还原。
+   * ============================================================ */
+  async function testArtRetry() {
+    TH.section('立绘 · 失败重试与限流');
+
+    var realImage = W.Image;
+    var realSetTimeout = W.setTimeout;
+    var realClearTimeout = W.clearTimeout;
+    var timers = [];
+    function drain() {            // 把排队的定时器全部立刻执行（含它们新排的）
+      var guard = 0;
+      while (timers.length && guard++ < 80) timers.shift()();
+    }
+    /** 造一个假 Image：plan(第几次请求) 返回 'ok' / 'fail'
+     *  ★ 回调**同步**触发：`img.src = …` 是 attempt() 的最后一句，
+     *    那时 onload/onerror 早就挂好了，所以同步回调是安全的
+     *    （异步反而要等真实事件循环，和"排队的定时器"搅在一起很难测）。
+     *  ★★ 计数要按**全局第几次请求**数，不能用每个 Image 自己的计数：
+     *    每次重试都会 `new Image()`，所以"每个对象的第 1 次"永远是第 1 次 ——
+     *    第一版按对象计数，于是"第 3 次成功"永远等不到，测出来全是失败。 */
+    function fakeImage(plan) {
+      var made = [], calls = 0;
+      function Fake() {
+        var self = this;
+        made.push(self);
+        Object.defineProperty(self, 'src', {
+          get: function () { return self.__src || ''; },
+          set: function (v) {
+            self.__src = v;
+            calls++;
+            if (plan(calls) === 'ok') { if (self.onload) self.onload(); }
+            else if (self.onerror) self.onerror();
+          }
+        });
+      }
+      return { Ctor: Fake, made: made, calls: function () { return calls; } };
+    }
+
+    try {
+      W.setTimeout = function (fn) { timers.push(fn); return 0; };
+      W.clearTimeout = function () { };
+
+      /* ---------- ① 前两次失败、第三次成功 → 必须自己救回来 ---------- */
+      var fi = fakeImage(function (n) { return n >= 3 ? 'ok' : 'fail'; });
+      W.Image = fi.Ctor;
+      var got = 'pending';
+      W.ART.load('__retry_probe__', function (img) { got = img; });
+      drain();
+      TH.ok('★ 第一次失败之后会重新请求（不是一次失败就认命）',
+        fi.made.length >= 3, '一共发了 ' + fi.made.length + ' 次请求');
+      TH.ok('★ 前两次失败、第三次成功 → 最终拿到了图',
+        got && got !== 'pending', got ? got.src : String(got));
+      TH.eq('★ 状态是 ok（不是 missing）', W.ART.status('__retry_probe__'), 'ok');
+      TH.ok('★ 重试的 URL 带了 ?r=N（绕开浏览器里那条坏掉的缓存记录）',
+        fi.made[fi.made.length - 1].src.indexOf('r=') > 0,
+        fi.made[fi.made.length - 1].src);
+      TH.ok('★ 第一次请求用的是**原样**的 URL（网络正常时一个字节都没变）',
+        fi.made[0].src === W.ART.url('__retry_probe__'), fi.made[0].src);
+
+      /* ---------- ② 一直失败 → 认定缺失，但还能被重新捞起来 ---------- */
+      var fi2 = fakeImage(function () { return 'fail'; });
+      W.Image = fi2.Ctor;
+      var got2 = 'pending';
+      W.ART.load('__fail_probe__', function (img) { got2 = img; });
+      drain();
+      TH.eq('★ 一直失败才认定缺失（退回 emoji）',
+        W.ART.status('__fail_probe__'), 'missing');
+      TH.eq('★ 回调收到的是 null（调用方据此画 emoji）', got2, null);
+      TH.ok('★ 重试次数是有限的（不是死循环）', fi2.made.length <= 6,
+        '一共 ' + fi2.made.length + ' 次（1 次首发 + 最多 3 次重试）');
+
+      /* ★★ 「回到前台 / 网络恢复再捞一次」——手机切后台回来就靠这一步把图找回来 */
+      var fi3 = fakeImage(function (n) { return n >= 2 ? 'ok' : 'fail'; });
+      W.Image = fi3.Ctor;
+      var picked = W.ART.retryFailed();
+      TH.ok('★ retryFailed() 把缺失的那些重新排队了', picked >= 1, picked + ' 个');
+      drain();
+      TH.eq('★★ 重拉之后就恢复成 ok（切后台回来那几张图会自己回来）',
+        W.ART.status('__fail_probe__'), 'ok');
+      TH.eq('★ 已经 ok 的不会被 retryFailed 动到',
+        W.ART.status('__retry_probe__'), 'ok');
+    } finally {
+      W.Image = realImage;
+      W.setTimeout = realSetTimeout;
+      W.clearTimeout = realClearTimeout;
+      /* ★★ 必须收尾：这一组用的是**假的 Image**，而上面 retryFailed() 会把
+         真实的那些"缺失"记录（6 个没立绘的棋子 + 10 个没图标的装备）
+         用假对象填成 'ok' —— 不清掉的话，后面战斗画布
+         `drawImage(假对象)` 会当场抛 TypeError（第一版就是这么红的）。
+         reset() 清空两个缓存并**用真的 Image 重新预加载**。 */
+      W.ART.reset();
+    }
+
+    /* ---------- ③ 预加载限流：不能一口气把 36 张全发出去 ----------
+     * ★★ 先等开局那次预加载**结清**：只要还有真实立绘挂在 'loading'，
+     *    它们就占着并发名额（`load` 对"正在飞"的请求只会把回调排进 waiters，
+     *    不会同步回调）—— 这时候再挂探针，一个请求都发不出去，
+     *    量出来的并发数就是 0，看着像"限流坏了"，其实是"名额被占着"。
+     *    第一版就是这么假红的。 */
+    var settle = 0;
+    while (W.ART.report().pending.length > 0 && settle++ < 100) await wait(60);
+    var stillPending = W.ART.report().pending.length;
+    TH.eq('★ 开局的预加载已经结清（否则下面的并发数会被在飞的那几个占住）',
+      stillPending, 0);
+    (function () {
+      var realImg2 = W.Image;
+      var opened = 0;
+      function Slow() {
+        var self = this;
+        opened++;
+        Object.defineProperty(self, 'src', {
+          set: function (v) { self.__src = v; },   // 永远不回调 = 一直在飞
+          get: function () { return self.__src || ''; }
+        });
+      }
+      /* 借 10 个"还没加载过"的 id 当探针：临时挂到 ST.UNITS 上，
+         preloadAll 就会把它们当成待加载的棋子（测完摘掉）。 */
+      var fakes = [];
+      for (var i = 0; i < 10; i++) fakes.push({ id: '__pl' + i + '__' });
+      Array.prototype.push.apply(W.ST.UNITS, fakes);
+      try {
+        W.Image = Slow;
+        opened = 0;
+        W.ART.preloadAll();
+        TH.eq('★ 10 个待加载的棋子只同时发出 ' + W.ART.maxParallel() +
+          ' 个请求（并发受限，不是一次全发）', opened, W.ART.maxParallel());
+        TH.ok('★ 并发上限是个小数字（手机浏览器每域名只有约 6 条连接）',
+          W.ART.maxParallel() <= 6, 'MAX_PARALLEL = ' + W.ART.maxParallel());
+      } finally {
+        W.Image = realImg2;
+        W.ST.UNITS.length -= fakes.length;        // 把探针摘掉
+      }
+      TH.note('预加载并发上限 ' + W.ART.maxParallel() +
+        '（原来是 24 张棋子 + 12 个装备图标一次性全发出去）');
+    })();
+
+    /* ---------- ④ 卡片上的 <img> 也不能"一次失败就没了" ----------
+     * ★ 卡片上的立绘**不走 ART 缓存**（每次渲染新生成元素），
+     *   所以它需要自己那一套重试 —— 这条就是验那个的。
+     *   做法：在一个真实的卡片 img 上派发 error 事件，
+     *   看它是不是"先重试、三次都失败才退回 emoji"。 */
+    (function () {
+      var st = G();
+      st.board = { '4,2': { uid: 'artp', defId: 'bowman', star: 1, items: [] } };
+      W.Game.refresh();
+    })();
+    await wait(120);
+    var cardImg = q('#player-half .u-art img');
+    TH.ok('备战/棋盘卡上确实有一张立绘 <img>（否则下面全是空断言）', !!cardImg,
+      cardImg ? cardImg.getAttribute('src') : '没找到');
+    if (cardImg) {
+      var beforeSrc = cardImg.getAttribute('src');
+      cardImg.dispatchEvent(new W.Event('error'));
+      TH.ok('★ 第一次失败时**没有**把图删掉（先留着等重试）',
+        !!q('#player-half .u-art img'), 'img 还在');
+      await wait(700);                       // 第一次重试的等待是 500ms
+      var after = q('#player-half .u-art img');
+      TH.ok('★ 等一会儿之后它换了个带 ?r=1 的地址重发了请求',
+        !!after && /\?r=1/.test(after.getAttribute('src') || ''),
+        after ? after.getAttribute('src') : '（img 已经不在了）');
+      TH.ok('★ 原地址没有被改掉（只加查询参数，不动文件名）',
+        (after ? after.getAttribute('src') : '').indexOf(beforeSrc) === 0);
+      /* 再失败两次（第一次重试 + 第二次重试都失败）→ 才退回 emoji */
+      for (var k = 0; k < 2; k++) {
+        var im = q('#player-half .u-art img');
+        if (!im) break;
+        im.dispatchEvent(new W.Event('error'));
+        await wait(k === 0 ? 1700 : 200);    // 第二次重试的等待是 1500ms
+      }
+      await wait(200);
+      TH.ok('★★ 三次都失败才把 <img> 摘掉（露出下面的 emoji 兜底）',
+        !q('#player-half .u-art img'),
+        q('#player-half .u-art img') ? '还在（重试次数可能没写对）' : '已摘掉');
+      /* 收尾：重画一次，把卡片的图恢复回来（后面的用例还要用它） */
+      W.Game.refresh();
+      await wait(120);
+      TH.ok('★ 重画之后立绘回来了（摘掉的是那一个元素，不是缓存）',
+        !!q('#player-half .u-art img'));
+    }
   }
 
   /* ============================================================
@@ -3916,6 +4288,7 @@
         await testFrostVfx();
         await testDeliveryVfx();
         await testNoodleVfx();
+        await testSideTintAndRifle();
         await testLaughVfx();
         await testDomainVfx();
         await testYangVfx();
@@ -3923,6 +4296,7 @@
         await testShadowVfx();
         await testDankVfx();
         await testEndlessVfx();
+        await testArtRetry();
         await testDamagePanel();
         await testShopAndBoard();
         await testCombineAndItems();
