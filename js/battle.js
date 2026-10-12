@@ -489,6 +489,15 @@
            side 是**施法者**的阵营：领域对"非 side"的单位减益、对 side 增益。 */
       fields: [],
       nextFieldId: 1,
+      /* ★ 「电流」（电棍的被动）。和领域一样是**不属于任何单位**的持续状态，
+         但有两点不同：
+           · 它有**归属**（owner）："每个电棍同时只能存在 N 条"是按人算的；
+           · 它自己会**动**（每 0.5 秒跳到下一个敌人身上），而领域是死的。
+         ★ 每条：{ id, owner, side, r, c, until, left, hit:[uid…] }
+           side 是**施法者**阵营：只弹射这个阵营的敌人。
+           hit 记"这道电流打过谁" —— 弹过的不会重复命中（连锁闪电的经典规则）。 */
+      currents: [],
+      nextCurrentId: 1,
       finished: false
     };
     for (var i = 0; i < st.occ.length; i++) st.occ[i] = null;
@@ -731,6 +740,27 @@
           ritesAdPct: (pv && pv.kind === 'lastRites' && pv.adBuffAt && p.star >= pv.adBuffAt)
             ? (pv.adBuffPct || 0) : 0,
           ritesUntil: -1, ritesBy: null, ritesCarryHp: 0, ritesCarryAd: 0,
+          /* ---------- 孙笑川「天皇」 ---------- */
+          mikadoAura: 0, mikadoLifesteal: 0,
+          skillHealPct: 0, convertOnKill: false, convertHpPct: 0,
+          converted: false,        // 它是"招安"过来的 → 卡面变灰
+          everRevived: false,      // 复活过一次 → 不能再被招安
+          /* ---------- 电棍「导电」 ---------- */
+          currentOn: false, currentDelay: 0, currentRadius: 0,
+          currentPct: 0, currentMaxBounces: 0, currentStunDur: 0,
+          currentMaxAt: 0,
+          /* ---------- 美团袋鼠「准时送达 / 好评如潮」 ---------- */
+          deliveryAsPct: 0, deliveryAsDur: 0, deliveryHealPct: 0, deliveryRadius: 0,
+          /* ---------- 东北雨姐「红薯粉丝 / 雨姐的关照」 ----------
+             ★★ `rootUntil` 是**独立于 stunUntil 的第三种封锁**：
+                · stunUntil  —— 不能动、不能打、攻速计时器也停（真晕）
+                · laughUntil —— 很硬但动不了也打不了（自己给自己上的）
+                · rootUntil  —— **只是钉在原地，照样能还手**（被粉丝捆住）
+               塞进 stunUntil 就表达不出"被捆住但还能打"这件事
+               （奶龙的"能走不能打"当初也是因为这个才另开字段）。 */
+          rootUntil: -1, rooted: 0,
+          bindOn: false, bindDur: 0, bindRadius: 0,
+          bindHealPct: 0, bindHeals: 0,
           /* ---------- 「巧乐兹」的冰棍 ----------
              层数记在**被冻的人身上**，因为减速要作用在它身上。
              chillPerStack 也一起带过去：同一个减速效果可能来自不同星级的张雪峰，
@@ -779,6 +809,65 @@
            burnAcc 是独立的计时器：带上两颗果子也只烧一次。 */
         unit.burnMaxPct = itemGrants.burnMaxPct || 0;
         unit.burnAcc = 0;
+        /* ---------- 孙笑川「天皇」 ----------
+           mikadoAura / mikadoLifesteal 是**给别人的**光环参数；
+           skillHealPct 是技能伤害转自己治疗的比例（2 星）；
+           convertOnKill / convertHpPct 是击杀倒戈（3 星）。
+           everRevived：**已经被复活过一次**（老牧师救回来的 / 之前被招安过的）——
+           3 星的招安对它无效，这正是需求里那句「对有复活技能的单位无效」。 */
+        if (pv && pv.kind === 'mikado') {
+          unit.mikadoAura = pv.auraRadius || 0;
+          unit.mikadoLifesteal = pv.auraLifesteal || 0;
+          unit.skillHealPct = (pv.skillHealAt && p.star >= pv.skillHealAt)
+            ? (pv.skillHealPct || 0) : 0;
+          unit.convertOnKill = !!(pv.convertAt && p.star >= pv.convertAt);
+          unit.convertHpPct = pv.convertHpPct || 0;
+        }
+        /* ---------- 电棍「导电」 ----------
+           ★ maxAtOnce 是**按星级**的一张表（1/2 星 1 条、3 星 3 条）——
+             所以这里用 starLookup 取值，而不是一个固定的数字。 */
+        if (pv && pv.kind === 'current') {
+          var cStar = starLookup(pv.maxAtOnce, p.star);
+          unit.currentOn = true;
+          unit.currentDelay = pv.delay || 0.5;
+          unit.currentRadius = (pv.radius > 0) ? pv.radius : 1;
+          unit.currentPct = pv.bouncePct || 0;
+          unit.currentMaxBounces = pv.maxBounces || 0;
+          unit.currentStunDur = (pv.stunAt && p.star >= pv.stunAt) ? (pv.stunDur || 0) : 0;
+          unit.currentMaxAt = (typeof cStar === 'number' && cStar > 0) ? cStar : 1;
+        }
+        /* ---------- 冰冰冰「冻手冻脚 / 千里冰封」 ----------
+           两层都是"让技能变强"，所以这里只算两个开关/数字，
+           真正的效果在技能结算（aoe 分支）里用：
+             frostFreezeDur > 0 → 技能命中者额外冻这么久
+             frostAll           → 技能改成打全场（跳过 3×3 判定） */
+        if (pv && pv.kind === 'frost') {
+          unit.frostFreezeDur = (pv.freezeAt && p.star >= pv.freezeAt)
+            ? (pv.freezeDur || 0) : 0;
+          unit.frostAll = !!(pv.allAt && p.star >= pv.allAt);
+        }
+        /* ---------- 美团袋鼠「准时送达 / 好评如潮」 ----------
+           两层都挂在"一次送餐"上：
+             deliveryAsPct / deliveryAsDur > 0 → 技能奶到的人顺带 +20% 攻速 5 秒（2 星）
+             deliveryHealPct > 0               → **普攻**给被攻击敌人 3×3 内的友方各送一单（3 星） */
+        if (pv && pv.kind === 'delivery') {
+          unit.deliveryAsPct = (pv.asBuffAt && p.star >= pv.asBuffAt)
+            ? (pv.asBuffPct || 0) : 0;
+          unit.deliveryAsDur = pv.asBuffDur || 0;
+          unit.deliveryHealPct = (pv.healAt && p.star >= pv.healAt)
+            ? (pv.healPct || 0) : 0;
+          unit.deliveryRadius = (pv.radius > 0) ? pv.radius : 1;
+        }
+        /* ---------- 东北雨姐「红薯粉丝 / 雨姐的关照」 ----------
+           2 星：放技能的同时捆住身边的敌人（bindOn）
+           3 星：普攻打到被捆住的敌人时给最低血队友回血（bindHealPct） */
+        if (pv && pv.kind === 'noodle') {
+          unit.bindOn = !!(pv.bindAt && p.star >= pv.bindAt);
+          unit.bindDur = pv.bindDur || 0;
+          unit.bindRadius = (pv.bindRadius > 0) ? pv.bindRadius : 1;
+          unit.bindHealPct = (pv.healAt && p.star >= pv.healAt)
+            ? (pv.hitHealPct || 0) : 0;
+        }
         /* 「捧腹大笑」：技能本身（时长/减伤/回血）来自 skill，星级只开两个开关。
            数据来源分两处是刻意的 —— 前半段是"这个技能干什么"（技能表），
            后半段是"星级让它多干什么"（被动表）。 */
@@ -1104,6 +1193,37 @@
      *
      * 推论：日志里任何一次治疗，amount 都必然 > 0 —— 校验程序可以放心断言这一点。
      */
+    /**
+     * 「天皇」的随身光环：孙笑川 3×3 内的**队友**（不含他自己）+20% 吸血率。
+     *
+     * ★ 按需计算，不每 tick 写进别人身上：走位随时改变谁在圈里，
+     *   写字段就得每 tick 维护"谁进谁出"，还要处理两个孙笑川的光环重叠。
+     *   按需算 = 永远不会不一致（moveMul / slowMul 也是这个套路）。
+     * ★ 取**最大值**不叠加：圈里站两个孙笑川也只给 +20%。
+     * ★ 不含自己：和奶龙 3 星的「笑传四方」同一个约定（`a === u` 跳过），
+     *   因为文案写的是"队友"。
+     */
+    function mikadoBonus(dst) {
+      var mates = alliesOf(dst);
+      for (var i = 0; i < mates.length; i++) {
+        var m = mates[i];
+        if (!m.alive || m === dst || !(m.mikadoLifesteal > 0)) continue;
+        if (U.cheb(m.r, m.c, dst.r, dst.c) > m.mikadoAura) continue;
+        return m.mikadoLifesteal;
+      }
+      return 0;
+    }
+
+    /**
+     * 这个单位实际吃到的吸血率（装备 + 天皇光环）。
+     * ★ 封顶 100%：不然"吸血 ≥ 伤害"会让一个单位变成永动机
+     *   （血饮剑 20% + 光环 20% 只有 40%，远没到，但把盖子写在这儿最省心）。
+     */
+    function lifestealOf(u) {
+      var v = u.lifesteal + mikadoBonus(u);
+      return v > 1 ? 1 : v;
+    }
+
     function healUnit(src, dst, amount, reason) {
       if (!dst.alive || !(amount > 0)) return 0;
       var room = dst.maxHp - dst.hp;
@@ -1218,7 +1338,77 @@
       /* ★ 老牧师「临终祷告」：这是不是**第一个**倒下的队友？
          放在坠机那一段之后 —— 两者不冲突：牢大既可能自己站起来，
          也可能被老牧师拉回来，各走各的事件。 */
+      /* ★ 孙笑川「安排上了」：被他击败的敌人**倒戈**过来。
+       *
+       * ★★ 必须排在 lastRitesOnDeath **之前**，这是一个真实的冲突：
+       *   招安是**立刻**把人变成我方单位，而临终祷告是 1 秒后才结算。
+       *   先让牧师开始祷告、再招安的话，1 秒后那次祷告会把一个
+       *   **已经活着、而且已经在我方阵营**的单位再"救"一次 ——
+       *   复活到一个已经不是它阵营的半场，aliveCount 也会被 +1 两次。
+       *   所以顺序是：能招安就招安，招安了就不再有"临终"这回事。 */
+      if (mikadoConvert(u)) return true;
       lastRitesOnDeath(u);
+      return true;
+    }
+
+    /**
+     * 孙笑川 3 星「安排上了」：把刚被自己打死的敌人变成我方单位。
+     *
+     * 三个排除条件（需求里的"对有复活技能的单位无效"），缺一个都会出怪事：
+     *   ① `canRevive`：它自己还有复活次数（牢大 / 羊帆）——
+     *      招安它等于把它从"自己的复活"里抢走，而且事件流上两边会打架；
+     *   ② `downUntil >= 0`：已经倒在地上等结算（正在走坠机 / 自爆）——
+     *      同上，它 1 秒后还有自己的事要做；
+     *   ③ `everRevived`：**已经复活过一次的**（老牧师救回来的、或之前被招安过的）——
+     *      没有这一条，一个被牧师救活的人可以被无限招安，变成永动机。
+     *
+     * ★ 另外两层"能不能"：击杀者必须是**孙笑川本人**（`_lastHitBy`），
+     *   而且我方半场要**有空位**（招安是"把它拉到我这边站好"，
+     *   没地方站就只能作罢 —— 和牢大复活、临终祷告用的是同一个 freeCellNear）。
+     */
+    function mikadoConvert(dying) {
+      var killer = dying._lastHitBy;
+      if (!killer || !killer.alive || !killer.convertOnKill) return false;
+      if (dying.everRevived) return false;
+      if (dying.downUntil >= 0) return false;
+      if (canRevive(dying)) return false;
+      if (killer.side === dying.side) return false;      // 理论上不可能，防一手
+      var cell = freeCellNear(dying.r, dying.c, killer.side);
+      if (!cell) return false;
+
+      var fromSide = dying.side;
+      /* ★★ 换阵营不只是改一个字段：`alliesOf` / `enemiesOf` / `buildOrder`
+       *   读的都是 `st.side[side]` 这两个**数组**。
+       *   只改 u.side 不挪数组的话，这个单位的"队友"会变成它原来的队友，
+       *   下个 tick 的行动顺序也会错位 —— 而且不会有任何报错。 */
+      var arr = st.side[fromSide];
+      var at = arr.indexOf(dying);
+      if (at >= 0) arr.splice(at, 1);
+      st.side[killer.side].push(dying);
+
+      dying.side = killer.side;
+      dying.alive = true;
+      dying.hp = U.round2(dying.maxHp * (killer.convertHpPct || 0.2));
+      dying.shield = 0;
+      dying.mana = 0; dying.manaFromDmg = 0; dying.healPool = 0;
+      dying.atkTimer = 0; dying.moveTimer = 0;
+      dying.stunUntil = -1; dying.asBuffPct = 0; dying.asBuffUntil = -1;
+      dying.rootUntil = -1;
+      dying.buffMul = 1; dying.buffUntil = -1;
+      dying.chillStacks = 0;
+      dying.ritesUntil = -1; dying.ritesBy = null;
+      dying.target = null;
+      dying._lastHitBy = null;
+      dying.converted = true;      // 卡面变灰（渲染层靠这个）
+      dying.everRevived = true;    // 招安过的不能再被招安
+      dying.r = cell.r; dying.c = cell.c;
+      st.occ[cell.r * CFG.COLS + cell.c] = dying;
+      st.aliveCount[killer.side]++;   // 另一方在 checkDeath 里已经 -1 过了
+
+      ev({ type: 'convert', from: killer.uid, who: dying.uid,
+           fromSide: fromSide, toSide: killer.side,
+           r: dying.r, c: dying.c, hp: dying.hp, hpMax: dying.maxHp,
+           defId: dying.defId, name: dying.name });
       return true;
     }
 
@@ -1285,7 +1475,11 @@
         u.mana = 0; u.manaFromDmg = 0; u.healPool = 0;
         u.atkTimer = 0; u.moveTimer = 0;
         u.stunUntil = -1; u.asBuffPct = 0; u.asBuffUntil = -1;
+        u.rootUntil = -1;      // 重新站起来的人不该还捆着粉丝
         u.buffMul = 1; u.buffUntil = -1;
+        /* ★ 记下"它被复活过"—— 孙笑川 3 星的招安对**已经复活过**的单位无效
+           （需求里那句"老牧师复活的人"就是这么落地的）。 */
+        u.everRevived = true;
         u.r = cell.r; u.c = cell.c;
         st.occ[cell.r * CFG.COLS + cell.c] = u;
         st.aliveCount[u.side]++;
@@ -1514,6 +1708,7 @@
         u.mana = 0; u.manaFromDmg = 0; u.healPool = 0;
         u.atkTimer = 0; u.moveTimer = 0;
         u.stunUntil = -1; u.asBuffPct = 0; u.asBuffUntil = -1;
+        u.rootUntil = -1;      // 同上：被牧师救活的人不该继续被粉丝捆着
         u.buffMul = 1; u.buffUntil = -1;
         u.r = cell.r; u.c = cell.c;
         st.occ[cell.r * CFG.COLS + cell.c] = u;
@@ -1545,8 +1740,14 @@
       if (attackerGetsMana && src && src.alive) gainMana(src, CFG.MANA_PER_ATTACK);
 
       // 吸血（只对普攻生效，避免技能吸血滚雪球）
-      if (src && src.alive && src.lifesteal > 0 && kind === 'phys' && res.dmg > 0) {
-        healUnit(src, src, res.dmg * src.lifesteal, 'lifesteal');
+      /* ★ 走 lifestealOf 而不是直接读 src.lifesteal ——
+         孙笑川「天皇」的光环是按位置**实时**算的，不能等到这里才去写字段。
+         ★ 仍然只对普攻（kind === 'phys'）生效：技能吸血是孙笑川 2 星的
+           专属效果，走的是另一条路（skillDamage 里的 'skillHeal'），
+           不能让所有法师都跟着吸。 */
+      var lsPct = src ? lifestealOf(src) : 0;
+      if (src && src.alive && lsPct > 0 && kind === 'phys' && res.dmg > 0) {
+        healUnit(src, src, res.dmg * lsPct, 'lifesteal');
       }
       /* ---------- 讲话石（原荆棘之甲）：范围反弹 ----------
        *
@@ -1663,6 +1864,29 @@
              : Math.min(u.maxMana, u.mana + CFG.MANA_PER_ATTACK)) });
       afterDamage(u, target, res, 'phys', true);
       applyChill(u, target);
+      /* ★ 电棍「导电」：普攻命中也留一道电流（技能那条在 skillDamage 里）。
+         ★ 放在 afterDamage **之后**：那里才判完死亡，
+           往一个刚被打死的目标身上挂电流是没意义的。 */
+      spawnCurrent(u, target);
+
+      /* ★★ 美团袋鼠 3 星「好评如潮」：**每一次普攻**都往"被打中的那个敌人
+       *   周围 3×3"送一单，给自己人各回 4% 最大生命。
+       *   ★ 放在 afterDamage **之后**：那里才判完死亡，也才走完反伤 ——
+       *     圆心用的是出手那一刻记下的 cR/cC，所以目标死了也照样送。
+       *   ★ 只挂在 attackOnce（**普攻**）上，不挂 skillDamage：
+       *     需求写的是"普通攻击会治疗"，技能那条线上不该白送一次治疗。
+       *     （电棍的电流是"普攻和技能都留"，所以它挂在 skillDamage 里 ——
+       *      两条需求不一样，别照抄。） */
+      if (u.deliveryHealPct > 0) deliveryHeal(u, cR, cC);
+      /* ★★ 东北雨姐 3 星「雨姐的关照」：这一下打的是不是**被捆住的**人？
+       *   是的话，顺手给血量最低的队友灌一大口。
+       *   ★ 放在 deliveryHeal 之后、和它并列 —— 两条被动都是"普攻附带一件事"，
+       *     谁先谁后不影响结果（回血对象不同、也不共享任何状态）。
+       *   ★ 用 `target`（不是 cR/cC）：这条判据是"打的是谁"，
+       *     而 target 就是这个对象；它的 rootUntil 是打之前的状态。
+       *     注意这里要判 target.alive —— 这一下可能已经把它打死了，
+       *     打死了就不算"打到了被捆住的人"（尸体的 rootUntil 没人读）。 */
+      noodleHeal(u, target);
 
       /* ★★ 「笑上巅峰」（2 星起）：巅峰一击把目标打晕 3 秒。
        *
@@ -1705,6 +1929,131 @@
     }
 
     /**
+     * 冰冻一个人：`stunUntil` 往后推 + 发一条 stun 事件。
+     *
+     * ★★ 这是**所有冰冻的唯一出口**（巧乐兹攒满层 / 冰冰冰的技能）。
+     *   两个来源都写一遍的话，"取 max 而不是覆盖""until 落在未来"
+     *   这类细节迟早对不上 —— 而且冰冻这条路上踩过一次同类的坑
+     *   （见 README 第 106 行：两条独立规则共用一个事件类型时，计时器不能共用）。
+     *
+     * ★ `reason` 必须分开（'freeze' / 'frost'）：校验器判"满层才冻"靠的是
+     *   reason === 'freeze'，拿它去套技能冰冻就会报"还没攒满层就冰冻了"。
+     *   事件类型仍然是同一个 —— 玩家看到的都是"被冻住"。
+     */
+    function freezeUnit(src, dst, dur, reason) {
+      if (!dst || !dst.alive || !(dur > 0)) return false;
+      /* ★ 取 max 不是覆盖：一个已经冻到第 3 秒的人，再吃一发 1.5 秒的
+         不应该**缩短**他的冰冻时间。 */
+      dst.stunUntil = Math.max(dst.stunUntil, st.t + dur);
+      ev({ type: 'stun', from: src.uid, to: dst.uid, dur: dur,
+           until: round3(dst.stunUntil), reason: reason });
+      return true;
+    }
+
+    /**
+     * 给一个单位挂一段**攻速加成**（到期自动失效，靠时间戳，不需要结束事件）。
+     *
+     * ★★ 这是所有攻速增益的唯一出口：双刃舞者的「疾风连斩」和
+     *   美团袋鼠 2 星的「准时送达」都走它。
+     *   ★ 百分比和到期时刻**各自取 max**，不是整体覆盖 —— 一个还剩 1 秒的
+     *     +90% 不该被一个 +20% 顶掉，也不该把它的剩余时间清零。
+     *     （和 `stunUntil` / `asBuffUntil` 那一套是同一个约定。）
+     *   `srcUid` / `reason` 只进事件：回放和校验器要能分清
+     *   "这是他自己开的技能"还是"这是别人送来的外卖"。
+     */
+    function grantAsBuff(dst, pct, dur, srcUid, reason) {
+      if (!dst || !dst.alive || !(pct > 0) || !(dur > 0)) return false;
+      dst.asBuffPct = Math.max(dst.asBuffPct, pct);
+      dst.asBuffUntil = Math.max(dst.asBuffUntil, st.t + dur);
+      ev({ type: 'buff', who: dst.uid, stat: 'asPct', amount: pct, dur: dur,
+           until: round3(dst.asBuffUntil),
+           from: srcUid || null, reason: reason || 'skill' });
+      return true;
+    }
+
+    /**
+     * 美团袋鼠 3 星「好评如潮」：普攻打中一个敌人 = 往那儿送一单外卖。
+     *
+     * ★★ 治的是**友方单位**（自己人），圆心是**被打中的那个敌人**的格子。
+     *   所以这是一个"往前线投喂"的机制：越往敌人堆里打，
+     *   越多的自己人吃得到；站得远的后排一口都分不到。
+     *
+     * ★ 圆心由调用方传进来（`attackOnce` 里出手那一刻就记下的 cR/cC），
+     *   而不是现场读 `target.r/target.c` —— 目标可能已经被这一下打死了，
+     *   甚至这条线以后会被击退改位置。**用出手瞬间的坐标**才和玩家的观感一致。
+     * ★ 每个吃到的人各按**自己的生命上限**算 4%：一口固定值对坦克是毛毛雨、
+     *   对脆皮是回满，按百分比才"送到谁身上都合适"。
+     * ★ 走 `healUnit` 这条漏斗：截断、healPool、"不足 1 点不写日志"全都一致。
+     *   reason 用 'delivery'：回放里要能看出这一口是外卖送的，不是奶妈奶的。
+     */
+    function deliveryHeal(src, r, c) {
+      var mates = alliesOf(src);
+      for (var i = 0; i < mates.length; i++) {
+        var m = mates[i];
+        if (!m.alive) continue;
+        if (U.cheb(m.r, m.c, r, c) > src.deliveryRadius) continue;
+        healUnit(src, m, m.maxHp * src.deliveryHealPct, 'delivery');
+      }
+    }
+
+    /**
+     * 东北雨姐 2 星「红薯粉丝」：放技能的同时，把**身边 3×3 的敌人**捆住 3 秒。
+     *
+     * ★★ 「捆住」和「眩晕」是两件事，所以是两套字段：
+     *   `rootUntil` 只挡**走位**，被捆住的人照样出手、照样放技能。
+     *   玩家看到的是"它钉在原地挨打"，而不是"它晕了" ——
+     *   如果直接复用 stunUntil，这个角色就变成了"每 10 秒白拿 3 秒无敌控制"，
+     *   和嘉豪/冰冰冰那几条控场也没了区别。
+     *
+     * ★ 圆心是**她自己**（不是目标格）：技能的目标是队友，
+     *   而"捆住"发生在雨姐身边 —— 她是个近战前排，站位本身就决定了
+     *   这一下能捆到谁，这就是这个角色的操作点：**站得越靠前捆得越多**。
+     * ★ 取 max 而不是覆盖（和 stunUntil / asBuffUntil 同一套约定）：
+     *   刚放过技能又被另一个雨姐捆一下，不该把剩余时间清零。
+     */
+    function bindEnemies(src) {
+      var list = enemiesOf(src).slice();
+      var n = 0;
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e.alive) continue;
+        if (U.cheb(e.r, e.c, src.r, src.c) > src.bindRadius) continue;
+        e.rootUntil = Math.max(e.rootUntil, st.t + src.bindDur);
+        e.rooted++;
+        ev({ type: 'root', from: src.uid, to: e.uid, dur: src.bindDur,
+             until: round3(e.rootUntil), skill: src.def.skill.name });
+        n++;
+      }
+      return n;
+    }
+
+    /**
+     * 东北雨姐 3 星「雨姐的关照」：普攻打到**被捆住的**敌人时，
+     * 给血量百分比最低的队友大量回血。
+     *
+     * ★ 收件人走 `lowestAlly()`（和奶技能同一个选择函数），
+     *   回血量按**收件人自己的生命上限 × 8%** —— 和外卖那条一样，
+     *   按百分比才"送给谁都合适"。
+     * ★ 只认**被打中的那个目标**是不是被捆住的（不是"场上有没有人被捆"）：
+     *   需求写的是"攻击被捆住的敌人会…"，所以是一次"打谁"的判定。
+     *   ★ 这一下**把人打死了也算数**：判据是"这一刀砍的是被捆住的人"，
+     *     而不是"受害者还活着"。收件人本来就是自己的队友，
+     *     和"给尸体挂眩晕"那种脏数据不是一回事。
+     * ★ reason 用 'noodle'：回放里要能看出这一口是雨姐的关照，
+     *   不是奶妈奶的、也不是外卖送的。
+     */
+    function noodleHeal(src, target) {
+      if (!(src.bindHealPct > 0)) return 0;
+      if (!target) return 0;
+      if (!(st.t < target.rootUntil)) return 0;      // 打的是没被捆住的人 → 不触发
+      var dst = lowestAlly(src);
+      if (!dst) return 0;
+      var real = healUnit(src, dst, dst.maxHp * src.bindHealPct, 'noodle');
+      if (real > 0) src.bindHeals++;
+      return real;
+    }
+
+    /**
      * 星级被动「巧乐兹」：每次普攻打到的敌人各 +1 层冰棍。
      *
      * 满 chillMax 层 → 冰冻 freezeDur 秒 + **清空层数**。
@@ -1722,9 +2071,7 @@
            asCut: round3(dst.chillStacks * src.chillPerStack) });
       if (dst.chillStacks >= src.chillMax) {
         dst.chillStacks = 0;
-        dst.stunUntil = Math.max(dst.stunUntil, st.t + src.freezeDur);
-        ev({ type: 'stun', from: src.uid, to: dst.uid, dur: src.freezeDur,
-             until: round3(dst.stunUntil), reason: 'freeze' });
+        freezeUnit(src, dst, src.freezeDur, 'freeze');
       }
     }
 
@@ -1841,6 +2188,130 @@
     }
 
     /**
+     * 电棍「导电」：在刚被打中的敌人身上留下一道电流。
+     *
+     * ★★ 「每个电棍制造的电流只能存在一个」是**按人算**的 ——
+     *   所以先数一下这个 owner 现在有几条活着，够了就不再生成。
+     *   1/2 星上限 1 条、3 星 3 条（`maxAtOnce` 是一张按星级的表）。
+     *   ★ 这条限制同时解决了一个手感问题：电棍攻速是翻倍的（1.28），
+     *     不限制的话他会瞬间铺满一屏幕电流，技能那一条也白设计了。
+     *
+     * ★ 普攻和技能**共用**这一个入口（调用点在 attackOnce 和 skillDamage）——
+     *   两处各写一遍的话，"上限/延迟/伤害比例"迟早对不上。
+     */
+    function spawnCurrent(src, dst) {
+      if (!src || !src.currentOn || !dst || !dst.alive) return;
+      if (!(src.currentPct > 0) || !(src.currentMaxBounces > 0)) return;
+      // 这个 owner 已经挂着几条了？
+      var mine = 0;
+      for (var i = 0; i < st.currents.length; i++) {
+        if (st.currents[i].owner === src.uid) mine++;
+      }
+      if (mine >= src.currentMaxAt) return;
+      var cur = {
+        id: st.nextCurrentId++,
+        owner: src.uid, side: src.side,
+        r: dst.r, c: dst.c,
+        until: st.t + src.currentDelay,
+        left: src.currentMaxBounces,
+        hit: [dst.uid]
+      };
+      st.currents.push(cur);
+      ev({ type: 'current', born: true, id: cur.id, from: src.uid, side: src.side,
+           r: cur.r, c: cur.c, to: dst.uid, left: cur.left,
+           delay: src.currentDelay, until: round3(cur.until),
+           pct: src.currentPct, stunDur: src.currentStunDur });
+    }
+
+    /**
+     * 电流结算：到点了就往 3×3 内**还没被这道电流打过**的敌人身上弹一下。
+     *
+     * ★ 目标选法沿用全项目那一套（切比雪夫 → 曼哈顿 → 镜像定序，见 domainPick）：
+     *   随便挑一个的话，A/B 镜像局面会挑到不同的敌人，先手公平性就破了。
+     * ★ 找不到新目标（附近都打过了、或者死光了）→ 这道电流就地消失。
+     *   这是**必须的终止条件**：不然它会在原地每 0.5 秒空转，
+     *   而"最多四次"就变成了"永远在跳"。
+     * ★ 伤害走 dealDamage + afterDamage，和别的伤害同一条管线 ——
+     *   所以护盾、反伤、死亡、受击回蓝全都照常生效。
+     *   `attackerGetsMana = false`：一道四连跳不该给电棍回四次法力。
+     */
+    function currentTick() {
+      for (var i = st.currents.length - 1; i >= 0; i--) {
+        var cur = st.currents[i];
+        if (st.t < cur.until) continue;
+        var owner = st.byUid[cur.owner];
+        /* ★ 电棍死了，他挂出去的电流也跟着散掉。
+           两种做法都说得通（"已经出手了" vs "源头没了"），这里选后者是因为
+           它**更好读**：电流的伤害是用施法者**当前**攻击力算的，
+           一个死掉的施法者没有"当前攻击力"，硬算就得去翻快照。
+           而且写进事件里（ownerGone）之后，回放能清楚地说"他没打完就倒了"。 */
+        if (!owner || !owner.alive) {
+          st.currents.splice(i, 1);
+          ev({ type: 'current', id: cur.id, from: cur.owner, side: cur.side,
+               fizzle: true, ownerGone: true, r: cur.r, c: cur.c, left: cur.left });
+          continue;
+        }
+        // 候选：敌方、活着、在 3×3 内、这道电流还没打过
+        var pool = [];
+        var list = st.side[cur.side === 'a' ? 'b' : 'a'];
+        for (var j = 0; j < list.length; j++) {
+          var e = list[j];
+          if (!e.alive || !e.uid) continue;
+          if (cur.hit.indexOf(e.uid) >= 0) continue;
+          if (U.cheb(e.r, e.c, cur.r, cur.c) > owner.currentRadius) continue;
+          pool.push(e);
+        }
+        if (!pool.length) {
+          st.currents.splice(i, 1);
+          ev({ type: 'current', id: cur.id, from: cur.owner, side: cur.side,
+               fizzle: true, r: cur.r, c: cur.c, left: cur.left });
+          continue;
+        }
+        pool.sort(function (x, y) {
+          var xc = U.cheb(x.r, x.c, cur.r, cur.c), yc = U.cheb(y.r, y.c, cur.r, cur.c);
+          if (xc !== yc) return xc - yc;
+          var xm = U.manhattan(x.r, x.c, cur.r, cur.c), ym = U.manhattan(y.r, y.c, cur.r, cur.c);
+          if (xm !== ym) return xm - ym;
+          return mirrorTie(x.side, x.r, x.c) - mirrorTie(y.side, y.r, y.c);
+        });
+        var tgt = pool[0];
+        var fromR = cur.r, fromC = cur.c;
+        cur.left--;
+        cur.hit.push(tgt.uid);
+
+        /* 伤害 = 施法者**当前**攻击力 × 25%。
+           ★ 用当前攻击力而不是开局快照：电棍的攻击力会被装备/羁绊改变，
+             而"25% 攻击力"是玩家按面板理解的那一个数。
+           ★ 事件里同时带上 raw（本该打出多少）—— 校验器要能独立对账
+             "这一下就是 25% 攻击力"，只看 dmg 是不够的（dmg 被减伤削过）。 */
+        var raw = owner.ad * owner.currentPct;
+        var res = dealDamage(owner, tgt, raw, 'magic');
+        ev({ type: 'damage', from: cur.owner, to: tgt.uid, dmg: res.dmg, kind: 'magic',
+             crit: false, shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
+             hpAfter: tgt.hp, hpMax: tgt.maxHp, reason: 'current' });
+        afterDamage(owner, tgt, res, 'magic', false);
+        var stunned = false;
+        if (owner.currentStunDur > 0 && tgt.alive) {
+          tgt.stunUntil = Math.max(tgt.stunUntil, st.t + owner.currentStunDur);
+          stunned = true;
+          ev({ type: 'stun', from: cur.owner, to: tgt.uid, dur: owner.currentStunDur,
+               until: round3(tgt.stunUntil), reason: 'current',
+               targets: [tgt.uid], count: 1, durMul: 1, skill: '导电' });
+        }
+        cur.r = tgt.r; cur.c = tgt.c;
+        cur.until = st.t + owner.currentDelay;
+        ev({ type: 'current', id: cur.id, from: cur.owner, side: cur.side,
+             to: tgt.uid, fromR: fromR, fromC: fromC, r: cur.r, c: cur.c,
+             left: cur.left, dmg: res.dmg, raw: round3(raw), stunned: stunned,
+             /* ★ ramp 必须带出去：加时赛的伤害递增会让 dmg **高于** raw，
+                校验器没有这一列就只能瞎猜"是不是多打了"（第一版就是这么假红的）。 */
+             ramp: U.round2(res.ramp), pct: owner.currentPct, delay: owner.currentDelay });
+        // 次数用完了 —— 这一跳是最后一次
+        if (cur.left <= 0) st.currents.splice(i, 1);
+      }
+    }
+
+    /**
      * 星级被动：打完一次普攻，本局内攻速永久 +step（上限 cap）。
      *
      * ★ 三个刻意的设计选择：
@@ -1869,6 +2340,26 @@
            shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
            hpAfter: dst.hp, hpMax: dst.maxHp });
       afterDamage(src, dst, res, 'magic', false);
+      /* ★★ 孙笑川 2 星「儒雅随和」：技能造成的**所有**伤害 100% 转化为自己的治疗。
+       *
+       *   ★ 挂在这里是因为 `skillDamage` 是**全部技能伤害的唯一出口** ——
+       *     写在每个技能分支里（aoe / nuke / whirl / line…）迟早漏掉一个，
+       *     而且以后加新技能也不会有人记得补。这一条和张雪峰的「狂暴」、
+       *     鸭子的「抓娃娃」是同一个思路：**找那个所有路径都必经的函数**。
+       *   ★ reason 用 'skillHeal' 而不是 'lifesteal'：回放里要能一眼分出
+       *     "这是技能回的血"还是"这是装备/光环吸血"。
+       *   ★ 放在 afterDamage **之后**：那里才判完死亡、扣完血，
+       *     而且 res.dmg 已经定下来了（吸血用的也是它）。
+       *   ★ 打几个敌人就回几次血 —— 血月斩是范围技能，这是刻意的联动。 */
+      if (src.alive && src.skillHealPct > 0 && res.dmg > 0) {
+        healUnit(src, src, res.dmg * src.skillHealPct, 'skillHeal');
+      }
+      /* ★ 电棍「导电」：**技能**命中也留一道电流。
+         ★ 挂在这里的理由和上面那条一样：skillDamage 是全部技能伤害的唯一出口。
+         ★ 一次技能打中三个人只会留下一道 —— 不是漏了，是"每个电棍同时只能
+           存在 N 条"这条上限在 spawnCurrent 里拦住了（这也正是那条上限的意义：
+           不然一个直线技能瞬间就能铺出三道电流）。 */
+      spawnCurrent(src, dst);
       return res;
     }
 
@@ -2072,13 +2563,30 @@
           break;
         }
 
+        /**
+         * 范围技能：在**目标格**炸开，波及切比雪夫距离 <= radius 的敌人。
+         *
+         * ★★ 冰冰冰 3 星「千里冰封」把这条技能改成**打全场**：
+         *   跳过半径判定，直接打所有活着的敌人（`frostAll` 来自被动 allAt）。
+         *   写在**同一个分支**里而不是新开一个 kind，是因为除了"选谁"之外
+         *   其余一切（伤害、后续的冰冻、事件的形状）都完全一样 ——
+         *   分成两个 kind 就等于把同一条技能抄了两遍，以后改一处必漏一处。
+         */
         case 'aoe': {
           var center = target ? { r: target.r, c: target.c } : { r: u.r, c: u.c };
+          var hitAll = !!u.frostAll;
           list = enemiesOf(u).slice();
           for (i = 0; i < list.length; i++) {
             e = list[i];
             if (!e.alive) continue;
-            if (U.cheb(e.r, e.c, center.r, center.c) <= sk.radius) skillDamage(u, e, sk.damage);
+            if (!hitAll && U.cheb(e.r, e.c, center.r, center.c) > sk.radius) continue;
+            skillDamage(u, e, sk.damage);
+            /* ★ 2 星「冻手冻脚」：被打中的人额外冻 1.5 秒。
+               ★ 判 `e.alive`：伤害可能已经把它打死了 —— 给尸体挂眩晕
+                 会多出一条指向死人的 stun 事件，校验器一读就假红。
+               ★ 放在 skillDamage **之后**：先扣血再冻（顺序在日志里看得出，
+                 反过来会让"最后一次伤害"排在自己的眩晕后面）。 */
+            if (u.frostFreezeDur > 0) freezeUnit(u, e, u.frostFreezeDur, 'frost');
           }
           break;
         }
@@ -2158,6 +2666,15 @@
         case 'heal': {
           var htarget = sk.target === 'self' ? u : lowestAlly(u);
           healUnit(u, htarget, sk.amount * u.ap * u.shieldPct, 'skill');
+          /* ★★ 美团袋鼠 2 星「准时送达」：外卖送到的人**趁热吃** —— 攻速 +20% 5 秒。
+           *   ★ 挂在**被治疗的那个人**身上（外卖是投给他的），所以用的是
+           *     `htarget` 而不是 `u` —— 写成 u 就变成"奶妈给自己加速"了，
+           *     而这一步在画面上完全看不出来（两个都是绿色数字）。
+           *   ★ 不看有没有真的奶到血：满血的队友照样收得到外卖。
+           *     "送没送到"和"吃没吃饱"是两件事。 */
+          if (htarget && u.deliveryAsPct > 0) {
+            grantAsBuff(htarget, u.deliveryAsPct, u.deliveryAsDur, u.uid, 'delivery');
+          }
           break;
         }
 
@@ -2229,16 +2746,26 @@
         }
 
         case 'buff': {
-          u.asBuffPct = Math.max(u.asBuffPct, sk.amount);
-          u.asBuffUntil = Math.max(u.asBuffUntil, st.t + sk.dur);
-          ev({ type: 'buff', who: u.uid, stat: sk.stat, amount: sk.amount,
-               dur: sk.dur, until: round3(u.asBuffUntil) });
+          /* ★ 改成走 grantAsBuff（唯一出口）—— 行为和原来逐字一致，
+             只是多带了 from / reason 两列，渲染层和校验器才分得清是谁给的。 */
+          grantAsBuff(u, sk.amount, sk.dur, u.uid, 'self');
           break;
         }
 
         default:
           break;
       }
+
+      /* ★★ 东北雨姐「红薯粉丝」：**放技能的同时**捆住身边的敌人。
+       *
+       *   写在 switch **外面**是有意的 —— 需求说的是"使用技能的同时"，
+       *   和"她放的是哪个技能"无关。挂在 `shield` 分支里的话，
+       *   以后她的技能一换（或者被别的机制改掉），这条被动会**静默失效**：
+       *   不报错、不为 0、只是再也不捆人了。
+       *   这和孙笑川把回血挂在 `skillDamage`（全部技能伤害的唯一出口）、
+       *   电棍把电流挂在同一个出口，是同一个思路：**找必经之地**。
+       */
+      if (u.bindOn) bindEnemies(u);
     }
 
     /* ---------- 移动 ---------- */
@@ -2727,6 +3254,13 @@
       // 开局定格：先让玩家看清阵型，这段时间只打不跑
       if (st.t < CFG.OPENING_HOLD) return;
 
+      /* ★★ 被红薯粉丝捆住：**钉在原地**，但上面那一整套"射程内就地打"
+       *   已经跑过了 —— 也就是说捆住只挡走位，不挡出手。
+       *   （和 stunUntil 那条 `return` 的区别就在这里：那个连攻击一起挡。）
+       *   ★ 位置放在 moveTimer 累加**之前**：不然被捆住的 3 秒里走位进度
+       *     还在偷偷攒，一解绑就立刻窜一格 —— 看起来像"粉丝一松它就弹出去"。 */
+      if (st.t < u.rootUntil) return;
+
       u.moveTimer += CFG.DT * moveMul(u);
       if (u.moveTimer >= CFG.MOVE_INTERVAL) {
         u.moveTimer = Math.min(u.moveTimer - CFG.MOVE_INTERVAL, CFG.MOVE_INTERVAL);
@@ -2750,7 +3284,14 @@
       var arr = [];
       for (var i = 0; i < st.units.length; i++) {
         var u = st.units[i];
-        arr.push([u.uid, U.round1(u.hp), U.round1(u.shield), U.round1(u.mana), u.r, u.c, u.alive ? 1 : 0]);
+        /* ★★ 第 8/9 位是后加的，为了"拖动进度条跳着看"时不丢状态：
+         *   · converted —— 不带上它的话，往后拖一下灰色卡面就没了；
+         *   · side —— 招安会换阵营。不带上它的话，往后拖过招安那一刻，
+         *     单位还算在原来那一方（影响的是开场 0.45 秒的渐显和灰卡判断）。
+         *   ★ 加在**末尾**是有意的：前 7 位不动，旧代码读 row[0..6] 照样能跑。 */
+        arr.push([u.uid, U.round1(u.hp), U.round1(u.shield), U.round1(u.mana),
+                  u.r, u.c, u.alive ? 1 : 0,
+                  u.converted ? 1 : 0, u.side === 'a' ? 1 : 0]);
       }
       ev({ type: 'snap', t: round3(st.t), u: arr });
     }
@@ -2878,6 +3419,26 @@
           adBonusPct: u.adBonusPct,
           /* 装备的自燃：校验器要按"上限的 6%"独立对账，所以得从快照里读到它 */
           burnMaxPct: u.burnMaxPct,
+          /* 孙笑川「天皇」：校验器要判"光环只给 3×3 内的队友"和"招安的条件" */
+          mikadoAura: u.mikadoAura, mikadoLifesteal: u.mikadoLifesteal,
+          skillHealPct: u.skillHealPct, convertOnKill: u.convertOnKill,
+          convertHpPct: u.convertHpPct,
+          /* 电棍「导电」：校验器要判"每次弹射 25% 攻击力""最多四次""上限按星级" */
+          currentOn: u.currentOn, currentPct: u.currentPct,
+          currentMaxBounces: u.currentMaxBounces, currentStunDur: u.currentStunDur,
+          currentMaxAt: u.currentMaxAt, currentRadius: u.currentRadius,
+          currentDelay: u.currentDelay,
+          /* 冰冰冰「冻手冻脚 / 千里冰封」：校验器要判
+             "技能冰冻的时长就是数据里那个""3 星才打全场" */
+          frostFreezeDur: u.frostFreezeDur, frostAll: u.frostAll,
+          /* 美团袋鼠「准时送达 / 好评如潮」：校验器要判
+             "外卖的攻速加成是 20%/5 秒""普攻治疗只落在 3×3 内的自己人身上" */
+          deliveryAsPct: u.deliveryAsPct, deliveryAsDur: u.deliveryAsDur,
+          deliveryHealPct: u.deliveryHealPct, deliveryRadius: u.deliveryRadius,
+          /* 东北雨姐「红薯粉丝 / 雨姐的关照」：校验器要判
+             "捆住的是 3×3 内的敌人""只有打被捆住的人才会回血" */
+          bindOn: u.bindOn, bindDur: u.bindDur, bindRadius: u.bindRadius,
+          bindHealPct: u.bindHealPct,
           chillMax: u.chillMax, chillPerStack: u.chillPerStack,
           passiveName: passiveName(u.def, u.star),
           passiveKind: passiveOf(u.def) ? passiveOf(u.def).kind : null
@@ -2910,6 +3471,9 @@
            放在超频之后：同一 tick 里两个都烧的话，顺序只影响先扣谁的，
            而这两个计时器是独立的、各扣各的。 */
         itemBurnTick();
+        /* ★ 电棍的电流也要按 tick 走（0.5 秒一跳）。
+           放在胜负判定之前：最后一跳可能正好打死对面最后一个人。 */
+        currentTick();
         /* ★ 奶龙大笑期间的回血（含 3 星的队友光环）同样按 tick 走。 */
         laughTick();
         /* ★ 纯 CD 技能的冷却也按 tick 走（被控住也照常倒数）。 */
