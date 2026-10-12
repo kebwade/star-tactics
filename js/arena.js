@@ -283,6 +283,9 @@
              · noDr       —— 不吃任何别的减伤（只用于说明性徽章/调试）
            ★ 这一条必须透传：漏了它徽章永远不显示（arena 建状态是逐字段抄的）。 */
         drPerHpPct: u.drPerHpPct || 0, noDr: !!u.noDr,
+        /* 刘浩文「连扔」的进度 + ZMJJKK 闪电球的冷却（卡面都要挂徽章） */
+        phoneUntil: -1, phonesLeft: 0, phoneTotal: 0, phoneFlash: 0,
+        ballCd: 0, ballCdUntil: -1,
         /* 「和成天下5000精品大果」的自燃：卡片上要一直挂一个 🌰 徽章 ——
            带上它的人每秒都在掉血，不标出来的话玩家只会觉得"这张卡莫名其妙在死"。 */
         burnMaxPct: u.burnMaxPct || 0, burnFlash: 0,
@@ -657,7 +660,36 @@
   }
 
   /**
-   * 刘浩文「手机大王」的手机雨。
+   * **一部**手机飞出去（2026-10 "连扔 5 秒"改版之后的常规路径：
+   * 每一部手机都有自己的事件，所以走这一条）。
+   *
+   * ★ 和下面 `addPhones` 共用同一套随机：出手点绕身随机、
+   *   弧高 / 横摆 / 自转 / 大小 / 飞行时间各自随机 ——
+   *   于是"连扔"的每一下都是独立的一扔，40 部不会长得像 40 个复制品。
+   */
+  function addOnePhone(x, y, tx, ty, boom) {
+    if (fx.length > FX_MAX) return;
+    var ang = Math.random() * Math.PI * 2;
+    var off = CELL * (0.08 + Math.random() * 0.36);
+    fx.push({
+      type: 'phoneFly',
+      x1: x + Math.cos(ang) * off,
+      y1: y + Math.sin(ang) * off * 0.62,
+      x2: tx + (Math.random() - 0.5) * CELL * 0.34,
+      y2: ty + (Math.random() - 0.5) * CELL * 0.34,
+      boom: !!boom,
+      arc: CELL * (0.28 + Math.random() * 0.78),
+      wob: (Math.random() - 0.5) * CELL * 0.62,
+      spin: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 13),
+      scale: 0.7 + Math.random() * 0.75,
+      age: 0,
+      life: 0.16 + Math.random() * 0.20,
+      vx: 0, vy: 0
+    });
+  }
+
+  /**
+   * 刘浩文「手机大王」的手机雨（一次撒一把，开场那一波用）。
    *
    * ★★ 要演的是"**胡乱**扔"这四个字，所以每一部手机都是**独立的一扔**：
    *     · 出手点在自己身上随机一个角度、随机远近（不是从同一个点排队飞出去）
@@ -1156,6 +1188,66 @@
         break;
       }
 
+      /* ★★ 刘浩文「手机大王」2026-10 改版：**5 秒连扔 40 部**。
+       *   技能只给一条开场事件（`phoneStart`），之后每一部手机都有自己的
+       *   `phoneThrow` —— 所以这里是"立起连扔状态 + 开场那一下乱甩"。
+       *   ★ 开场先撒 3 部（不是 40 部）：观众第一眼要看到"已经开始扔了"，
+       *     但真正的节奏交给接下来 5 秒，一帧 40 部只会糊成一团。 */
+      case 'phoneStart': {
+        var psu = pb.units[e.from];
+        if (psu) {
+          psu.phoneUntil = state.t + (e.dur || 5);
+          psu.phonesLeft = e.count;
+          psu.phoneTotal = e.count;
+          psu.phonePerSec = e.perSec || (e.count / (e.dur || 5));
+          var psx = cellX(psu), psy = cellY(psu);
+          addFlash(psx, psy, CELL * 0.85, 0.18);
+          addRing(psx, psy, 'rgba(216,162,74,.9)', CELL * 1.25, 0.55);
+          addRing(psx, psy, 'rgba(255,232,170,.85)', CELL * 0.8, 0.4);
+          addSparks(psx, psy, 14, '#ffe0a0', 200);
+          for (var pf = 0; pf < 8; pf++) {
+            var fa = Math.random() * Math.PI * 2;
+            var fd = CELL * (0.2 + Math.random() * 0.6);
+            addSparks(psx + Math.cos(fa) * fd, psy + Math.sin(fa) * fd * 0.7,
+                      4, '#ffd98a', 150);
+          }
+          /* 开场随手甩 3 部出去 —— 落点**不指向具体目标**，而是在自己周围
+             随机撒：这 3 部是"起手那一下"的演出，真正的投掷在接下来 5 秒里
+             （每部都有自己的 phoneThrow 事件）。 */
+          var startPts = [];
+          for (var si = 0; si < 3 && si < e.count; si++) {
+            var sAng = Math.random() * Math.PI * 2;
+            var sDis = CELL * (1.2 + Math.random() * 1.8);
+            startPts.push({ x: psx + Math.cos(sAng) * sDis,
+                            y: psy + Math.sin(sAng) * sDis * 0.7 });
+          }
+          addPhones(psx, psy - CELL * 0.10, startPts, !!e.boom);
+          addCallout(psx, psy - (CELL + 10) / 2 - CELL * 0.34,
+                     '手机大王 ×' + e.count, '#d8a24a');
+          addShake(7);
+        }
+        break;
+      }
+
+      /* ★ 连扔期间的**每一部手机**：各自一条事件、各自一扔。
+       *   ★ 左手的手机还剩几部写在徽章上（见 stateBadges），
+       *     这里的落点从画面状态里查 —— 事件只带 uid。 */
+      case 'phoneThrow': {
+        var ptu = pb.units[e.from], ptt = pb.units[e.to];
+        if (ptu) {
+          ptu.phonesLeft = e.left;
+          if (ptt) {
+            addOnePhone(cellX(ptu), cellY(ptu) - CELL * 0.10,
+                        cellX(ptt), cellY(ptt), !!e.boom);
+          }
+          /* 每 8 部补一次"起手气浪"：不补的话连扔中段会显得越来越安静 */
+          if (e.left % 8 === 0) {
+            addRing(cellX(ptu), cellY(ptu), 'rgba(216,162,74,.5)', CELL * 0.9, 0.35);
+          }
+        }
+        break;
+      }
+
       /* ★★ 3 星「三星手机」：每部手机命中后的那一下爆炸。
        *
        *   ★★ "爆炸感"是**四层叠出来的**，少一层都会塌成"一堆粒子"：
@@ -1217,8 +1309,11 @@
 
       /* ★★ ZMJJKK 2 星「闪电乒乓」：一个电球砸下来，3×3 里的敌人一起麻 3.5 秒。 */
       case 'pingpong': {
+        var ppu2 = pb.units[e.from];
+        if (ppu2) { ppu2.ballCdUntil = e.cdUntil; ppu2.ballCd = e.cd; }
         var px2 = e.c * PITCH + CELL / 2, py2 = e.r * PITCH + CELL / 2;
         var pRad = CELL * ((e.radius || 1) * 2 + 1);
+        addFlash(px2, py2, pRad * 0.30, 0.16);
         addRing(px2, py2, 'rgba(255,240,140,.95)', pRad * 0.6, 0.6);
         addRing(px2, py2, 'rgba(140,220,255,.95)', pRad * 0.38, 0.45);
         addSparks(px2, py2, 22, '#ffe98a', 300);
@@ -2354,6 +2449,7 @@
       if (u.flashToken > 0) u.flashToken = Math.max(0, u.flashToken - dt * 3.2);
       if (u.neonFlash > 0) u.neonFlash = Math.max(0, u.neonFlash - dt * 3.2);
       if (u.deathFlash > 0) u.deathFlash = Math.max(0, u.deathFlash - dt * 3.2);
+      if (u.phoneFlash > 0) u.phoneFlash = Math.max(0, u.phoneFlash - dt * 3.2);
       if (u.ocBurnFlash > 0) u.ocBurnFlash = Math.max(0, u.ocBurnFlash - dt * 3.2);
       if (u.ocOverFlash > 0) u.ocOverFlash = Math.max(0, u.ocOverFlash - dt * 3.2);
       if (u.burnFlash > 0) u.burnFlash = Math.max(0, u.burnFlash - dt * 3.2);
@@ -3968,6 +4064,22 @@
     if (u.burnMaxPct > 0) {
       stateBadge('🌰-' + Math.round(u.burnMaxPct * 100) + '%/s',
         u.burnFlash > 0 ? '#ffe0b8' : '#e0a86a', u.burnFlash);
+    }
+
+    /* ★★ ZMJJKK 2 星「闪电乒乓」的内置冷却（2026-10 加的 20 秒）：
+     *   冷却期间挂一枚倒计时徽章 —— 不显示的话玩家只会以为
+     *   "这球怎么有时候扔有时候不扔"，那是纯黑盒。 */
+    if (u.ballCd > 0 && u.ballCdUntil >= 0 && state.t < u.ballCdUntil) {
+      stateBadge('⚡球' + Math.max(0, u.ballCdUntil - state.t).toFixed(1) + 's',
+        '#8fd8ff', 0);
+    }
+
+    /* ★★ 刘浩文「手机大王」：连扔期间卡面挂一枚 📱剩余N 的徽章。
+     *   5 秒里到底还剩几部，是这个技能"打到哪儿了"的唯一进度提示 ——
+     *   没有它，玩家只看到一堆手机在飞，不知道还要飞多久。 */
+    if (u.phoneUntil >= 0 && state.t < u.phoneUntil && u.phonesLeft > 0) {
+      stateBadge('📱' + u.phonesLeft, u.phoneFlash > 0 ? '#fff6d8' : '#d8a24a',
+        u.phoneFlash);
     }
 
     /* ★★ 刘浩文「世界第一帅」：血量每少 1% 就少受 1% 伤害 ——
