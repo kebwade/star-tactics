@@ -863,6 +863,18 @@
           neonResetDur: 0, neonMul: 1, neonShots: 0, neonResets: 0,
           neonShout: '', neonShoutFlash: 0,
           ballOn: false, ballRadius: 1, ballStun: 0,
+          /* ★ 闪电球的内置冷却（2026-10 加的 20 秒）：
+             ballCd       冷却多长
+             ballCdUntil  下次能扔球的时刻（-1 = 还没扔过，随时可扔）
+             ballsThrown  这一局扔了几个（校验器和卡面徽章都读它） */
+          ballCd: 20, ballCdUntil: -1, ballsThrown: 0,
+          /* 刘浩文「手机大王」改成**5 秒连扔**之后的字段（2026-10）：
+             phoneUntil  连扔到什么时候（>st.t 就是"正在扔"）
+             phonesLeft  这一轮还剩几部没扔
+             phonePerSec 每秒扔几部（40 部 ÷ 5 秒 = 8）
+             phoneAcc    攒够 1 就扔一部（和走位/攻速计时器同一套做法） */
+          phoneUntil: -1, phonesLeft: 0, phonePerSec: 0, phoneAcc: 0,
+          phoneTotal: 0, phoneBooms: 0,
           /* ---------- 刘浩文「世界第一帅」 ----------
              noDr       不吃任何**别的**受伤减免（引擎里跳过那三层）
              drPerHpPct 每少 1% 血 → 少受多少伤害（1.0 = 一比一）
@@ -1054,6 +1066,7 @@
           unit.ballOn = !!(pv.ballAt && p.star >= pv.ballAt);
           unit.ballRadius = (pv.ballRadius > 0) ? pv.ballRadius : 1;
           unit.ballStun = pv.ballStun || 0;
+          unit.ballCd = pv.ballCd || 20;
           unit.neonMul = (pv.kingAt && p.star >= pv.kingAt) ? (pv.kingMul || 1) : 1;
           unit.kingShout = (pv.kingAt && p.star >= pv.kingAt)
             ? (pv.kingShout || '') : '';
@@ -1074,6 +1087,9 @@
           unit.phoneBoom = !!(pv.boomAt && p.star >= pv.boomAt);
           unit.phoneBoomPct = (def.skill && def.skill.boomPct) || 0.25;
           unit.phoneBoomRadius = (def.skill && def.skill.boomRadius) || 1;
+          /* ★ 连扔用的数字（每部手机的伤害比例）也在这里定死：
+             技能数据是常量，散在 castSkill 里读两遍迟早对不上。 */
+          unit.phonePct = (def.skill && def.skill.phonePct) || 0.25;
         }
         /* ---------- 美团袋鼠「准时送达 / 好评如潮」 ----------
            两层都挂在"一次送餐"上：
@@ -2794,7 +2810,8 @@
         hit.push(e.uid);
       }
       ev({ type: 'pingpong', from: u.uid, r: cr, c: cc, radius: u.ballRadius,
-           dur: u.ballStun, targets: hit });
+           dur: u.ballStun, cd: u.ballCd, cdUntil: round3(u.ballCdUntil),
+           thrown: u.ballsThrown, targets: hit });
       for (i = 0; i < hit.length; i++) {
         var se = st.byUid[hit[i]];
         if (!se || !se.alive) continue;
@@ -3192,6 +3209,62 @@
       if (u.eatHealPct > 0) {
         healUnit(u, u, u.maxHp * u.eatHealPct, 'eat');
       }
+    }
+
+    /**
+     * ★★ 刘浩文「手机大王」的**连扔**（2026-10 改版，参照陈兴裕的飞刀）。
+     *
+     *   技能只立起一个 5 秒的窗口，真正的投掷在这里按 tick 推进：
+     *     每 `1 / phonePerSec` 秒扔一部（40 部 ÷ 5 秒 = 8 部/秒），
+     *     每一部都挑一个随机的"前方敌人"、各自结算、各自写事件。
+     *
+     *   ★ 和走位/攻速计时器**同一套做法**（累加 acc、够 1 就减 1），
+     *     所以哪怕帧率变了、顿帧了，5 秒里扔出来的总数还是 40 部。
+     *   ★ 场上一个敌人都没有了就提前收工（phonesLeft 清零）——
+     *     不然它会对着空气扔完剩下的手机，画面上是一串打空的方块。
+     *   ★ 3 星每部手机命中后爆炸：爆炸也算在"这一部"的结算里，
+     *     所以事件顺序永远是 手机 → 爆炸 → 下一部。
+     */
+    function phoneBarrageTick(u, dt) {
+      if (!(u.phoneUntil >= 0) || st.t >= u.phoneUntil) return;
+      if (u.phonesLeft <= 0) return;
+      u.phoneAcc += dt * u.phonePerSec;
+      while (u.phoneAcc >= 1 && u.phonesLeft > 0) {
+        u.phoneAcc -= 1;
+        var pool = phoneTargets(u);
+        if (!pool.length) { u.phonesLeft = 0; return; }
+        var pt = pool[Math.floor(rng.next() * pool.length) % pool.length];
+        if (!pt) { u.phonesLeft = 0; return; }
+        u.phoneHits++;
+        phoneDamage(u, pt, u.ad * u.phonePct);
+        ev({ type: 'phoneThrow', from: u.uid, to: pt.uid,
+             left: u.phonesLeft, boom: !!u.phoneBoom });
+        if (u.phoneBoom) {
+          var boomList = [];
+          var all = enemiesOf(u);
+          for (var bj = 0; bj < all.length; bj++) {
+            var be = all[bj];
+            if (!be.alive) continue;
+            if (U.cheb(be.r, be.c, pt.r, pt.c) > u.phoneBoomRadius) continue;
+            boomList.push(be);
+          }
+          if (boomList.length) {
+            u.phoneBooms++;
+            ev({ type: 'phoneBoom', from: u.uid, r: pt.r, c: pt.c, seq: u.phoneBooms,
+                 left: u.phonesLeft,
+                 radius: u.phoneBoomRadius, dmg: Math.round(u.ad * u.phoneBoomPct),
+                 targets: boomList.map(function (x) { return x.uid; }) });
+            for (bj = 0; bj < boomList.length; bj++) {
+              var be2 = boomList[bj];
+              if (!be2.alive) continue;
+              phoneDamage(u, be2, u.ad * u.phoneBoomPct);
+            }
+          }
+        }
+      }
+      /* 扔完了就收工（窗口自然过期也一样，两边都写：一个是"扔光了"，
+         一个是"时间到了还剩几部"—— 后一种情况可能是因为中间被控住了）。 */
+      if (u.phonesLeft <= 0) u.phoneUntil = -1;
     }
 
     /**
@@ -3612,7 +3685,11 @@
             u.neonShout = u.kingShout;
             u.neonShoutFlash = 1;
           }
-          if (u.ballOn) pingpongBall(u);
+          if (u.ballOn && st.t >= u.ballCdUntil) {
+            u.ballCdUntil = st.t + u.ballCd;
+            u.ballsThrown++;
+            pingpongBall(u);
+          }
           break;
         }
 
@@ -3629,50 +3706,27 @@
          *     对范围内所有敌人再吃一次 25% 攻击力（含主目标）。
          */
         case 'phone': {
-          var kPhones = sk.phones || 40;
-          var kPct = (sk.phonePct > 0) ? sk.phonePct : 0.25;
-          var thrown = [];
-          var boomSeq = 0;
-          for (var pi = 0; pi < kPhones; pi++) {
-            var pool = phoneTargets(u);
-            if (!pool.length) break;
-            var pt = pool[Math.floor(rng.next() * pool.length) % pool.length];
-            if (!pt) break;
-            thrown.push(pt.uid);
-            u.phonesThrown++;
-            u.phoneHits++;
-            phoneDamage(u, pt, u.ad * kPct);
-            /* ★ 爆炸：命中点 3×3 里的**所有人**（含主目标）再吃一发。
-               排在单发伤害之后 —— 先挨手机、再挨爆炸，读起来才是"手机炸了"。
-               ★ 事件里带 `seq`（这是第几次爆炸）：渲染层用它把震屏
-                 一级一级往上推 —— 40 部手机连着炸，不递增就"炸不出分量"，
-                 不封顶又会一直抖到看不清画面。 */
-            if (u.phoneBoom) {
-              var boomList = [];
-              var all = enemiesOf(u);
-              for (var bj = 0; bj < all.length; bj++) {
-                var be = all[bj];
-                if (!be.alive) continue;
-                if (U.cheb(be.r, be.c, pt.r, pt.c) > u.phoneBoomRadius) continue;
-                boomList.push(be);
-              }
-              if (boomList.length) {
-                boomSeq++;
-                ev({ type: 'phoneBoom', from: u.uid, r: pt.r, c: pt.c, seq: boomSeq,
-                     radius: u.phoneBoomRadius, dmg: Math.round(u.ad * u.phoneBoomPct),
-                     targets: boomList.map(function (x) { return x.uid; }) });
-                for (bj = 0; bj < boomList.length; bj++) {
-                  var be2 = boomList[bj];
-                  if (!be2.alive) continue;
-                  phoneDamage(u, be2, u.ad * u.phoneBoomPct);
-                }
-              }
-            }
-          }
-          /* ★ 一条总事件给渲染层画"手机雨"：40 个 uid 按扔出的顺序排好，
-             渲染层按顺序错开出发时间，就成了一串飞出去的手机。 */
-          ev({ type: 'phones', from: u.uid, count: thrown.length,
-               targets: thrown, pct: kPct, boom: !!u.phoneBoom });
+          /* ★★ 2026-10 改版：**不再一次性把 40 部全砸下去**，而是像陈兴裕的
+             飞刀那样"一部一部扔"，只不过拉长到 **5 秒**（每秒 8 部）。
+           *
+           *   技能这一刻只做三件事：立起连扔窗口、记下还剩几部、写一条开场事件。
+           *   真正的投掷在 `phoneBarrageTick` 里按 tick 推进 ——
+           *   于是画面上是"连着扔 5 秒手机雨"，而不是"一瞬间 40 个数字"。
+           *
+           *   ★ 为什么不做成"一次事件 + 40 个伤害"：那样 40 部手机在**同一帧**
+           *     结算，事件流里读不出节奏，渲染层也只能把 40 部手机挤在一帧里飞
+           *     （看起来像一团方块炸开）。分散到 5 秒之后，每一部都有自己的
+           *     事件、自己的轨迹、自己的爆炸 —— 这才是"连扔"。
+           */
+          var kDur = (sk.dur > 0) ? sk.dur : 5;
+          u.phoneTotal = sk.phones || 40;
+          u.phonesLeft = u.phoneTotal;
+          u.phonePerSec = u.phoneTotal / kDur;
+          u.phoneUntil = st.t + kDur;
+          u.phoneAcc = 0;
+          ev({ type: 'phoneStart', from: u.uid, count: u.phoneTotal, dur: kDur,
+               perSec: U.round2(u.phonePerSec), boom: !!u.phoneBoom,
+               pct: (sk.phonePct > 0) ? sk.phonePct : 0.25 });
           break;
         }
 
@@ -4485,9 +4539,22 @@
          混进去的话徽章、走位减速、暗影减半全都会被这 10 倍污染。 */
       if (u.neonAsMul > 1 && st.t < u.neonUntil) as *= u.neonAsMul;
 
+      /* ★★ 刘浩文「手机大王」的**连扔**（2026-10 改版）：
+       *   在这 5 秒里他一直在往外扔手机 —— **走位照旧、但不普攻**。
+       *
+       *   ★ 为什么"能走不能打"：需求要的是"5 秒连扔 40 部"，
+       *     如果这 5 秒里普攻照旧，那 40 部手机就成了"额外白送"，
+       *     整体输出直接翻倍；而"一边走一边扔"正好是那个画面 ——
+       *     他在场上乱窜、手机从身上各处飞出去。
+       *   ★ 和「捧腹大笑」（能走不能打）是同一类封锁，所以位置也一样：
+       *     放在攻击分支**之前**，让流程走到下面的走位逻辑去。
+       */
+      var phoneBarrage = (u.phoneUntil >= 0 && st.t < u.phoneUntil && u.phonesLeft > 0);
+      if (phoneBarrage) phoneBarrageTick(u, CFG.DT);
+
       // ① 射程内有敌人 → 站住打，谁近打谁
       var near = nearestEnemyInRange(u);
-      if (near) {
+      if (near && !phoneBarrage) {
         u.target = near;
         u.moveTimer = 0;                 // 站定了，走位计时清零
         if (laughing) return;            // 笑着打不了，就地站着
@@ -4758,6 +4825,13 @@
           phoneBoom: u.phoneBoom, phoneBoomPct: u.phoneBoomPct,
           phoneBoomRadius: u.phoneBoomRadius,
           phonesThrown: u.phonesThrown, phoneHits: u.phoneHits,
+          /* ★ 连扔（2026-10 改版）和闪电球的 20 秒内置 CD：
+             校验器要能独立判"5 秒里扔了几部、还剩几部"、
+             "每部多少伤害"，以及"两次闪电球之间是不是真的隔了 20 秒"。 */
+          phoneUntil: u.phoneUntil, phonesLeft: u.phonesLeft,
+          phonePerSec: u.phonePerSec, phoneTotal: u.phoneTotal,
+          phonePct: u.phonePct, phoneBooms: u.phoneBooms,
+          ballCd: u.ballCd, ballCdUntil: u.ballCdUntil, ballsThrown: u.ballsThrown,
           /* 孙笑川「天皇」：校验器要判"光环只给 3×3 内的队友"和"招安的条件" */
           mikadoAura: u.mikadoAura, mikadoLifesteal: u.mikadoLifesteal,
           skillHealPct: u.skillHealPct, convertOnKill: u.convertOnKill,
