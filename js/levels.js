@@ -143,8 +143,8 @@
       clearGold: 15, drop: 'bloodthirst'
     },
     {
-      name: '山岳之主', title: '第十关 · 最终试炼', emoji: '🗿', color: '#d8b45f',
-      arch: 'BOSS · 铁卫 / 巨兽', hint: '山岳亲自坐镇。前面所有的准备都是为了这一关。',
+      name: '钟离之主', title: '第十关 · 最终试炼', emoji: '🗿', color: '#d8b45f',
+      arch: 'BOSS · 铁卫 / 巨兽', hint: '钟离亲自坐镇。前面所有的准备都是为了这一关。',
       threat: 4,
       // 注意：山岳现在是 5 费、1 星就有 1800 血。
       // 这里刻意只给 2 星、而且不带装备 —— 3 星是 5832 血 + 115 护甲，
@@ -285,8 +285,8 @@
       clearGold: 22, drop: 'voidcloak'
     },
     {
-      name: '钢铁洪流', title: '第十九关 · 山岳坐镇', emoji: '⛰️', color: '#7a8794',
-      arch: '铁卫 4 / 巨兽 3', hint: '五费山岳带满护甲魔抗，后面还跟着两个奶。',
+      name: '钢铁洪流', title: '第十九关 · 钟离坐镇', emoji: '⛰️', color: '#7a8794',
+      arch: '铁卫 4 / 巨兽 3', hint: '五费钟离带满护甲魔抗，后面还跟着两个奶。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
@@ -317,8 +317,8 @@
       clearGold: 24, drop: 'swiftboots'
     },
     {
-      name: '山岳近卫', title: '第二十一关 · 不动如山', emoji: '🗿', color: '#6e7b88',
-      arch: '铁卫 4 / 医者 3', hint: '山岳配三个奶。伤害不够的阵容会在这里被活活耗死。',
+      name: '钟离近卫', title: '第二十一关 · 不动如山', emoji: '🗿', color: '#6e7b88',
+      arch: '铁卫 4 / 医者 3', hint: '钟离配三个奶。伤害不够的阵容会在这里被活活耗死。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
@@ -358,7 +358,7 @@
     },
     {
       name: '无冕之王', title: '第二十三关 · 双五费', emoji: '👑', color: '#d8b45f',
-      arch: '全体系混编', hint: '山岳和张雪峰同时在对面。这是无尽模式之前的最后一道筛子。',
+      arch: '全体系混编', hint: '钟离和张雪峰同时在对面。这是无尽模式之前的最后一道筛子。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak'] },
