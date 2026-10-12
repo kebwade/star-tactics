@@ -454,6 +454,24 @@
         { id: 'falconer', star: 2, items: ['swiftboots'] },
         { id: 'bowman', star: 2 }, { id: 'crossbow', star: 2 },
         { id: 'stoneguard', star: 2 }, { id: 'earthwarden', star: 1 }
+      ],
+      /* ★ 2026-10 新增：**王决** —— ZMJJKK 单核。
+       *
+       *   设计思路（5 费单核阵容的标准形状）：
+       *     · ZMJJKK 是唯一的输出点，开局满充能直接开大 → 全队都为它服务
+       *     · 游侠 3（+35% 攻击力）给激光加基数（激光每下是"攻击力 × 50%"）
+       *     · 秘术 2（+35% 法术强度）不管用（激光是物理），所以第二羁绊选
+       *       **影袭 2（+15% 暴击）**：10 倍攻速下暴击触发得最密，
+       *       这是这套阵容里最划算的一件小事
+       *     · 前排只留一个石卫 + 一个奶：ZMJJKK 自己站后排，
+       *       50% 移速加成让它自己会找角度
+       *   ★ 1 星就够打：被动「世一决」是"开局满充能"，不需要养到 2 星才成型。 */
+      '王决': [
+        { id: 'zmjjkk', star: 1, items: ['giantblade', 'huntereye', 'swiftboots'] },
+        { id: 'falconer', star: 2 }, { id: 'bowman', star: 2 },
+        { id: 'dagger', star: 2, items: ['huntereye'] },
+        { id: 'stoneguard', star: 2, items: ['dragonscale', 'belt'] },
+        { id: 'medic', star: 1, items: ['holygrail'] }
       ]
     };
   }
@@ -711,6 +729,10 @@
           /* ocMaxAs: 攻速加成的硬上限。0 = 不封顶（旧版的行为）。 */
           ocMaxAs: (pv && pv.kind === 'overclock' && pv.ocMaxAs > 0) ? pv.ocMaxAs : 0,
           ocBerserkName: (pv && pv.ocBerserkName) ? pv.ocBerserkName : '',
+          /* 进入狂暴时**喊出来的那句话**（渲染层弹字幕用）。
+             ★ 和 ocBerserkName 分开：名字是「狂暴」，喊的是
+               「你跑不过我你信吗」—— 一个是状态名，一个是台词。 */
+          ocBerserkShout: (pv && pv.ocBerserkShout) ? pv.ocBerserkShout : '',
           ocThreshold: (pv && pv.kind === 'overclock') ? (pv.ocThreshold || 99) : 0,
           ocBurnPct: (pv && pv.kind === 'overclock') ? (pv.ocBurnPct || 0) : 0,
           ocAoeRadius: (pv && pv.kind === 'overclock' && pv.ocAoeAt && p.star >= pv.ocAoeAt)
@@ -761,6 +783,97 @@
           rootUntil: -1, rooted: 0,
           bindOn: false, bindDur: 0, bindRadius: 0,
           bindHealPct: 0, bindHeals: 0,
+          /* ---------- 钟离「玉璋护盾 / 天星」 ----------
+             `wardBy` / `wardCut` 记在**被罩住的那个人**身上（盾是他的）：
+               · wardBy  —— 谁给的守护（钟离的 uid），没被罩过就是 null
+               · wardCut —— 少受多少伤害（0.20）
+             ★ 没有 `wardUntil`：守护的寿命就是**护盾本身** ——
+               `shield > 0` 才生效，盾被打光自动失效，
+               和 buffUntil 一样"不需要任何人来清理"。 */
+          wardBy: null, wardCut: 0,
+          /* 陨石：参数全部来自被动表（按星级开关），这里只放默认值 */
+          meteorOn: false, meteorAdMul: 0, meteorRadius: 1,
+          meteorDur: 0, meteorShout: '',
+          /* ---------- 祖国人「飞行 / 灼烧 / 三连激光」 ----------
+             `flyOn` / `flyMovePct` / `flyOver` 是**走位**用的：
+               flyOn      —— 这个棋子会飞（卡面会抬起来画、影子分开）
+               flyMovePct —— 天生的移速加成（+60%）
+               flyOver    —— 能不能从单位上方飞过去
+             `burnCur*` 是**挂在被激光打中的人身上**的灼烧：
+               和装备自燃（burnMaxPct / burnAcc）是两套字段，别混用 ——
+               一个是"生命上限的固定比例"，一个是"当前生命的比例"（会递减）。 */
+          flyOn: false, flyMovePct: 0, flyOver: false,
+          burnCurPct: 0, burnCurUntil: -1, burnCurAcc: 0, burnCurBy: null,
+          burnCurFlash: 0,
+          /* 激光的连射参数：1 = 单发（1/2 星），3 星才是三连 */
+          beamShots: 1, beamShotMul: 1,
+          /* ---------- 陈兴裕「暴力点 / 满充能 / 魔法书」 ----------
+             `jettAsPct` / `jettOutPct` / `jettInPct` 是**永久面板**：
+               asPct    攻速加成（并进 effectiveAs）
+               outPct   造成伤害 +40%（乘在出手那一刻的输出上）
+               inPct    受到伤害 +40%（乘在挨打那一刻的结算上）
+             `tomeOn` 是 3 星那本书：友方**被远程普攻打死**时自己回满法力。 */
+          jettAsPct: 0, jettOutPct: 0, jettInPct: 0, tomeOn: false,
+          /* ---------- 丁真「芝士雪豹 / 小马珍珠」 ----------
+             `biteOn` + `biteCut` + `biteDur` 是 2 星那口撕咬自带的减速参数
+             （挂在**被咬的人**身上：biteUntil / biteCut）；
+             `pony*` 是 3 星那匹小马：
+               ponyOn      这一局有没有小马（3 星）
+               ponyHpPct   小马护盾 = 丁真生命上限的多少（0.5）
+               ponyMax / ponyLeft  这层护盾的总额和剩余（掉到 0 = 小马死了）
+               ponyDead    已经死过一次（不能再触发第二次狂暴）
+               ponyManaPct 小马死后魔力获取 +70%
+               ponyShout   那一刻喊的那句话（「珍珠死了」） */
+          biteOn: false, biteCut: 0, biteDur: 0, biteUntil: -1,
+          /* ---------- 鹰佐「霸体 / 天照」 ----------
+             `bati*` 是 2 星的解控反击：
+               batiOn       有没有这个被动（2 星）
+               batiCd / batiCdUntil   冷却 25 秒
+               batiImmuneDur / immuneUntil   解控之后免控 5 秒
+               batiFlash    那一瞬间的金色闪光
+             `amaterasuOn` 是 3 星的黑火：放完技能在 3×3 里点一把**永不熄灭**的火。
+             `burnFreezeImmune` 挂在**被点着的人**身上，用来区分两种火：
+               祖国人的火 -> true（烧起来就冻不住）
+               鹰佐的天照 -> false（无视冰冻：冻住也照烧，也不给冰冻免疫） */
+          batiOn: false, batiCd: 0, batiCdUntil: -1,
+          batiImmuneDur: 0, immuneUntil: -1, batiFlash: 0,
+          amaterasuOn: false, amaterasuAdMul: 0, amaterasuRadius: 1,
+          burnFreezeImmune: false,
+          /* ---------- 蓝色大肥鱼「吃白饭 / TOKEN」 ----------
+             `nextDmgMul` 是"下一次造成的伤害翻几倍"（>1 才有效，用完即清）：
+               吃白饭给它 2，TOKEN 给它 tokenMul(1.5) —— 两个都在 dealDamage 里兑现。
+             `tokenStacks` 是身上还有几层 TOKEN（每层换一次 ×1.5 的伤害）。
+             `tokenMul` 是每层 TOKEN 的倍率（1.5）。
+             `eatHealPct`（2 星）吃掉之后回多少血；
+             `tokenManaPct`（3 星）队友每消耗一层 TOKEN，自己回多少魔力。 */
+          nextDmgMul: 1, tokenStacks: 0, tokenMul: 1.5,
+          eatOn: false, eatPct: 0, eatHealPct: 0,
+          tokenManaPct: 0, eats: 0, tokensGiven: 0, tokensUsed: 0,
+          flashEat: 0, flashToken: 0,
+          /* ---------- ZMJJKK「世一决 / 闪电乒乓 / 你们的王回来了！」 ----------
+             deathBonus  队内每阵亡一人 +20% 增伤（累加，直接进伤害倍率）
+             neonUntil   霓虹激光打到什么时候（>st.t 就是激光状态）
+             neonAsMul / neonDmgPct / neonMovePct / neonResetDur  激光的四个数
+             neonMul     3 星把它变成 2（伤害 ×2）
+             neonShots / neonKills   统计：这 4 秒里打了几发、续了几次
+             ballOn / ballRadius / ballStun  2 星的闪电球
+             shouts      三句击杀喊话（按星级比较选一句） */
+          deathBonus: 0, deathsSeen: 0,
+          neonUntil: -1, neonAsMul: 1, neonDmgPct: 0, neonMovePct: 0,
+          neonResetDur: 0, neonMul: 1, neonShots: 0, neonResets: 0,
+          neonShout: '', neonShoutFlash: 0,
+          ballOn: false, ballRadius: 1, ballStun: 0,
+          /* ---------- 刘浩文「世界第一帅」 ----------
+             noDr       不吃任何**别的**受伤减免（引擎里跳过那三层）
+             drPerHpPct 每少 1% 血 → 少受多少伤害（1.0 = 一比一）
+             drFloor    减伤下限（保留 1% 的伤害，避免"残血无敌"）
+             drShown    当前实际减伤（算出来给渲染层挂徽章用）
+             phoneBoom  3 星：手机命中后爆炸 */
+          noDr: false, drPerHpPct: 0, drFloor: 0.01, drShown: 0,
+          phoneBoom: false, phoneBoomPct: 0, phoneBoomRadius: 1,
+          phonesThrown: 0, phoneHits: 0,
+          ponyOn: false, ponyHpPct: 0, ponyMax: 0, ponyLeft: 0,
+          ponyDead: false, ponyManaPct: 0, ponyShout: '',
           /* ---------- 「巧乐兹」的冰棍 ----------
              层数记在**被冻的人身上**，因为减速要作用在它身上。
              chillPerStack 也一起带过去：同一个减速效果可能来自不同星级的张雪峰，
@@ -809,6 +922,14 @@
            burnAcc 是独立的计时器：带上两颗果子也只烧一次。 */
         unit.burnMaxPct = itemGrants.burnMaxPct || 0;
         unit.burnAcc = 0;
+        /* ---------- 「剧毒火龙果」的范围毒 ----------
+           参数来自装备（grants.poisonAura），acc 是自己的计时器：
+           带两颗果子也只跳一次（resolveItemGrants 里已经取强了）。 */
+        var pg = itemGrants.poison;
+        unit.poisonRadius = pg ? pg.radius : 0;
+        unit.poisonAdPct = pg ? pg.adPct : 0;
+        unit.poisonInterval = pg ? pg.interval : 1;
+        unit.poisonAcc = 0;
         /* ---------- 孙笑川「天皇」 ----------
            mikadoAura / mikadoLifesteal 是**给别人的**光环参数；
            skillHealPct 是技能伤害转自己治疗的比例（2 星）；
@@ -845,6 +966,114 @@
           unit.frostFreezeDur = (pv.freezeAt && p.star >= pv.freezeAt)
             ? (pv.freezeDur || 0) : 0;
           unit.frostAll = !!(pv.allAt && p.star >= pv.allAt);
+        }
+        /* ---------- 钟离「玉璋护盾 / 天星」 ----------
+           2 星：wardCut > 0 → 给（**别的**）队友套盾时顺带挂上守护
+           3 星：meteorOn    → 每次放技能额外召一颗陨石 */
+        if (pv && pv.kind === 'bedrock') {
+          unit.wardCut = (pv.wardAt && p.star >= pv.wardAt) ? (pv.wardCut || 0) : 0;
+          unit.meteorOn = !!(pv.meteorAt && p.star >= pv.meteorAt);
+          unit.meteorAdMul = pv.meteorAdMul || 0;
+          unit.meteorRadius = (pv.meteorRadius > 0) ? pv.meteorRadius : 1;
+          unit.meteorDur = pv.meteorDur || 0;
+          unit.meteorShout = pv.meteorShout || '';
+        }
+        /* ---------- 祖国人「飞行 / 灼烧 / 三连激光」 ----------
+           三层都是"让这个棋子不一样"，所以这里只算开关和数字：
+             flyOn / flyMovePct   → 走位更快、能飞越单位（1 星就有）
+             burnCurPct / Dur     → 激光命中后附加的灼烧（2 星）
+             beamShots / ShotMul  → 连射几发、每发多少（3 星） */
+        if (pv && pv.kind === 'flight') {
+          unit.flyOn = true;
+          unit.flyMovePct = pv.flyMovePct || 0;
+          unit.flyOver = !!(pv.flyOverAt && p.star >= pv.flyOverAt);
+          unit.burnCurPct = (pv.burnAt && p.star >= pv.burnAt) ? (pv.burnPct || 0) : 0;
+          unit.burnCurDur = pv.burnDur || 0;
+          unit.beamShots = (pv.shotsAt && p.star >= pv.shotsAt) ? (pv.shots || 1) : 1;
+          unit.beamShotMul = (pv.shotsAt && p.star >= pv.shotsAt)
+            ? (pv.shotMul || 1) : 1;
+        }
+        /* ---------- 陈兴裕「暴力点 / 满充能 / 魔法书」 ----------
+           1 星就有被动（三条数字都是永久面板），所以这里只有"有没有"和数字；
+           2 星的满充能走 startFullMana（和老男孩同一条路，buildSide 末尾统一结算）；
+           3 星那本书只开一个开关，真正生效在 checkDeath 里。 */
+        if (pv && pv.kind === 'jett') {
+          unit.jettAsPct = pv.asPct || 0;
+          unit.jettOutPct = pv.dmgOutPct || 0;
+          unit.jettInPct = pv.dmgInPct || 0;
+          unit.startFullMana = !!(pv.startFullAt && p.star >= pv.startFullAt);
+          unit.tomeOn = !!(pv.tomeAt && p.star >= pv.tomeAt);
+        }
+        /* ---------- 丁真「芝士雪豹 / 小马珍珠」 ----------
+           2 星：那口撕咬给被咬的人挂减速（参数先记在自己身上，
+                出手时由 applyBiteSlow 搬到受害者身上）
+           3 星：小马（ponyOn）—— 护盾在 buildSide 末尾统一发，
+                因为它的数额要按**生命上限**算，而那时 maxHp 已经算完了。 */
+        if (pv && pv.kind === 'dingzhen') {
+          unit.biteOn = !!(pv.slowAt && p.star >= pv.slowAt);
+          unit.biteCut = pv.slowCut || 0;
+          unit.biteDur = pv.slowDur || 0;
+          unit.ponyOn = !!(pv.ponyAt && p.star >= pv.ponyAt);
+          unit.ponyHpPct = pv.ponyHpPct || 0;
+          unit.ponyManaPct = pv.ponyManaPct || 0;
+          unit.ponyShout = pv.ponyShout || '';
+        }
+        /* ---------- 鹰佐「霸体 / 天照」 ----------
+           2 星：霸体只开几个开关和数字，真正的判定在 controlBlocked 里
+                 （所有控制的必经之路）。
+           3 星：黑火参数留给 castSkill 末尾那一钩。 */
+        if (pv && pv.kind === 'amaterasu') {
+          unit.batiOn = !!(pv.batiAt && p.star >= pv.batiAt);
+          unit.batiCd = pv.batiCd || 25;
+          unit.batiImmuneDur = pv.batiImmuneDur || 5;
+          unit.amaterasuOn = !!(pv.amaterasuAt && p.star >= pv.amaterasuAt);
+          unit.amaterasuAdMul = pv.amaterasuAdMul || 2;
+          unit.amaterasuRadius = (pv.amaterasuRadius > 0) ? pv.amaterasuRadius : 1;
+        }
+        /* ---------- 蓝色大肥鱼「吃白饭 / TOKEN」 ----------
+           技能本身（吃白饭）的三个数字来自 skill，星级只开两个开关：
+             2 星：吃掉之后回 50% 最大生命
+             3 星：队友每消耗一层 TOKEN，自己回 20% 魔力 */
+        if (pv && pv.kind === 'eatrice') {
+          unit.eatOn = true;
+          unit.eatPct = (def.skill && def.skill.eatPct) || 0;
+          unit.tokenMul = (def.skill && def.skill.tokenMul) || 1.5;
+          unit.eatHealPct = (pv.eatHealAt && p.star >= pv.eatHealAt)
+            ? (pv.eatHealPct || 0) : 0;
+          unit.tokenManaPct = (pv.tokenManaAt && p.star >= pv.tokenManaAt)
+            ? (pv.tokenManaPct || 0) : 0;
+        }
+        /* ---------- ZMJJKK「世一决 / 闪电乒乓 / 你们的王回来了！」 ----------
+           ★ 三层是**叠加**的（3 星 = 1 星 + 2 星 + 王），所以这里把三个开关
+             和它们的数字一起算好；真正的判定分别在 checkDeath（阵亡增伤）、
+             castSkill（开大 + 闪电球）、attackOnce（激光的攻速与单发伤害）里。 */
+        if (pv && pv.kind === 'shiai') {
+          unit.shiaiOn = true;
+          unit.dmgPerDeath = pv.dmgPerDeath || 0;
+          unit.startFullMana = !!(pv.startFullAt && p.star >= pv.startFullAt);
+          unit.ballOn = !!(pv.ballAt && p.star >= pv.ballAt);
+          unit.ballRadius = (pv.ballRadius > 0) ? pv.ballRadius : 1;
+          unit.ballStun = pv.ballStun || 0;
+          unit.neonMul = (pv.kingAt && p.star >= pv.kingAt) ? (pv.kingMul || 1) : 1;
+          unit.kingShout = (pv.kingAt && p.star >= pv.kingAt)
+            ? (pv.kingShout || '') : '';
+          unit.shouts = pv.shouts || null;
+        }
+        /* ---------- 刘浩文「世界第一帅 / 流血流汗 / 三星手机」 ----------
+           1 星就有被动（世界第一帅），所以这里放的是"那一条的开关和参数"，
+           2/3 星只是往同一组上叠。 */
+        if (pv && pv.kind === 'haowen') {
+          unit.noDr = !!pv.noDr;
+          unit.drPerHpPct = pv.drPerHpPct || 0;
+          unit.drFloor = (pv.drFloor > 0) ? pv.drFloor : 0.01;
+          /* ★ 2 星吸血：并进真·吸血那条面板（lifestealOf 会和天皇光环取和），
+             所以它和「血饮剑」是**相加**的，不是两个独立的血包。 */
+          if (pv.stealAt && p.star >= pv.stealAt) {
+            unit.lifesteal = U.round2(unit.lifesteal + (pv.stealPct || 0));
+          }
+          unit.phoneBoom = !!(pv.boomAt && p.star >= pv.boomAt);
+          unit.phoneBoomPct = (def.skill && def.skill.boomPct) || 0.25;
+          unit.phoneBoomRadius = (def.skill && def.skill.boomRadius) || 1;
         }
         /* ---------- 美团袋鼠「准时送达 / 好评如潮」 ----------
            两层都挂在"一次送餐"上：
@@ -893,6 +1122,25 @@
       for (var s = 0; s < out.length; s++) {
         out[s].shield += startShield;
         out[s].shielding += startShield;
+      }
+      /* ★★ 丁真 3 星「小马珍珠」：开局多一层**按生命上限算**的护盾。
+       *
+       *   放在这里（而不是上面那张字段表里）的理由和守护羁绊一样：
+       *   小马的数额 = 生命上限 × 50%，而 maxHp 要等装备/羁绊全部结算完才算得准。
+       *   ★ 写两条事件：
+       *     · `shield` —— 让血条旁边那截白条长出来（和羁绊护盾走同一类事件）
+       *     · `pony`   —— 让渲染层知道"这层盾是一匹马"，卡面上要画出来。
+       *       少了它，玩家只会看到"它怎么多了一截盾"，而看不出那是小马。 */
+      for (var s2 = 0; s2 < out.length; s2++) {
+        var pu = out[s2];
+        if (!pu.ponyOn || !(pu.ponyHpPct > 0)) continue;
+        pu.ponyMax = U.round2(pu.maxHp * pu.ponyHpPct);
+        pu.ponyLeft = pu.ponyMax;
+        pu.shield = U.round2(pu.shield + pu.ponyMax);
+        pu.shielding += pu.ponyMax;
+        ev({ type: 'shield', from: pu.uid, to: pu.uid, amount: pu.ponyMax,
+             shieldAfter: pu.shield, reason: 'pony' });
+        ev({ type: 'pony', who: pu.uid, shield: pu.ponyMax });
       }
       st.side[side] = out;
       st.aliveCount[side] = out.length;
@@ -1000,7 +1248,56 @@
        *   ★ 判定写成 st.t < buffUntil：过期不需要任何人来清，
        *     旧的 buffMul 留在对象上也永远不会被读到。 */
       var boost = (src && st.t < src.buffUntil) ? src.buffMul : 1;
-      var effective = raw * boost * ramp;
+      /* ★ 陈兴裕「暴力点」的两半：
+           · `jettOutPct` —— **自己造成**的伤害 +40%（和 buffMul 同一层，
+             都是"出手方这一下打得重不重"）
+           · `jettInPct`  —— **自己受到**的伤害 +40%（加在下面的减免之后，
+             见"受到伤害"那一段）
+         两半都写在这里而不是去改攻击力面板：改面板会连带改吸血、
+         反伤、以及"攻击力 × 80%"这类按 ad 算的技能，
+         而需求说的是"造成与受到的**伤害**"。 */
+      /* ★★ `|| 0` 不能省：没有这个被动的单位身上根本没有 jettOutPct 这个字段，
+         `1 + undefined` 是 **NaN** —— 那一下的伤害会静默变成 NaN，
+         然后血量也跟着变成 NaN（整个战斗从这一击开始全乱）。
+         默认值表里有 0，但 dealDamage 也会被非 buildSide 造出来的对象调到。 */
+      var outMul = src ? (1 + (src.jettOutPct || 0)) : 1;
+      /* ★ ZMJJKK「世一决」：队内每阵亡一个角色，自己 +20% 增伤（累加）。
+         和"暴力点"的 +40% 是同一层（都是出手方的输出倍率），相乘叠加。
+         ★ 已经选好了"谁出手"再算 —— 所以队友死光的那一刻，
+           它接下来打出的每一发都变重，不需要任何额外事件。 */
+      if (src && src.deathBonus > 0) outMul *= (1 + src.deathBonus);
+      /* ★★ 「下一次造成的伤害」这一类倍率（大肥鱼的吃白饭 / 全队的 TOKEN）。
+       *
+       *   ★ 放在 dealDamage 里（而不是像羊帆那样挂在 attackOnce 上）是有意的：
+       *     需求写的是"下一次造成的**伤害**"，不是"下一次普攻" ——
+       *     所以普攻、技能、反伤、坠机都算，谁先落地谁把它花掉。
+       *   ★ 两个来源**相乘**：自己蓄着 ×2、身上又有 TOKEN ×1.5，
+       *     那一下就是 ×3（两边都会各自被消耗掉，不会留着）。
+       *   ★ 事件写两次（`consume` 一次一个来源）：不然"这一下为什么这么大"
+       *     在回放里查不出来。
+       */
+      var nextMul = 1;
+      if (src) {
+        if (src.nextDmgMul > 1) {
+          var eatMul = src.nextDmgMul;
+          src.nextDmgMul = 1;
+          nextMul *= eatMul;
+          ev({ type: 'consume', who: src.uid, to: dst.uid, what: 'eat', mul: eatMul });
+        }
+        if (src.tokenStacks > 0) {
+          src.tokenStacks--;
+          src.tokensUsed++;
+          src.flashToken = 1;
+          nextMul *= src.tokenMul;
+          ev({ type: 'tokenUsed', who: src.uid, to: dst.uid, left: src.tokenStacks,
+               mul: src.tokenMul });
+          /* ★ 3 星：**队友**每消耗一层 TOKEN，大肥鱼回 20% 魔力。
+             ★ 写在"消耗的那一刻"（这里），不是伤害结算之后 ——
+               TOKEN 花掉和魔力到账是同一件事，中间隔着别的逻辑迟早对不上。 */
+          tokenManaBack(src);
+        }
+      }
+      var effective = raw * boost * ramp * outMul * nextMul;
 
       /* ★★ 「遁入暗影」（楚生疑犯 3 星）：免疫**一切**伤害。
        *
@@ -1032,27 +1329,82 @@
 
       var resist = kind === 'phys' ? dst.armor : (kind === 'true' ? 0 : dst.mr);
       var mitigated = effective * reduce(resist);
+      /* ★★ 刘浩文「世界第一帅」：**他不吃任何"别的"受伤减免**。
+       *
+       *   `noDr` 一开，下面三层（捧腹大笑 -80% / 玉璋护盾 -20% /
+       *   同伙掩护 -30%）**全部跳过** —— 需求写的是"不受除本被动外
+       *   任何受伤减免增益影响"，所以这里不是"减弱"而是"作废"。
+       *   ★ 三层各自包在 `if (!dst.noDr)` 里，而不是在最后统一乘一个 0 ——
+       *     统一乘 0 会让 `dst.fieldBlocked` 之类的标记照旧被点亮，
+       *     回放里就会出现"它挡下了伤害"的假记录。 */
+      var drLocked = !!dst.noDr;
       /* ★ 「捧腹大笑」的减伤：-80% 乘在**减抗之后**。
          放在这里而不是 effective 上，是为了让日志里的 raw 保持
          "出手方本来能打多少"的含义 —— 自检的「raw >= dmg」和
          「倍率 = 1 / 1.2 / 0.8」两条都还成立。
          和 buffUntil 一样：到期靠比时间，不需要任何人清理。 */
-      if (dst.laughUntil >= 0 && st.t < dst.laughUntil && dst.laughCut > 0) {
+      if (!drLocked && dst.laughUntil >= 0 && st.t < dst.laughUntil && dst.laughCut > 0) {
         mitigated *= (1 - dst.laughCut);
+      }
+      /* ★ 钟离 2 星「玉璋护盾」：被它罩住的队友少受 20%。
+         和上面那条一样放在减抗之后 —— 日志里的 raw 保持"出手方本来能打多少"。
+         盾还在才生效（`warded` 里判的就是 shield > 0）。 */
+      if (!drLocked && warded(dst)) {
+        mitigated *= (1 - dst.wardCut);
+        dst.wardBlocked = true;
       }
       /* ★ 「同伙掩护」（楚生疑犯 2 星）：站在**己方**领域的队友少受 30% 伤害。
          ★ 只挡**敌方的**伤害（src 必须存在且是敌人）——
            不然自爆/反伤之类的自家伤害也会被领域吃掉，那就不是"掩护"了。
          ★ 和上面几条一样放在减抗之后：raw 保持"本来能打多少"的含义。 */
-      if (src && src.side !== dst.side) {
+      if (!drLocked && src && src.side !== dst.side) {
         var fcut = fieldAllyCutAt(dst.r, dst.c, dst.side);
         if (fcut > 0) {
           mitigated *= (1 - fcut);
           dst.fieldBlocked = true;
         }
       }
+      /* ★★ 刘浩文「世界第一帅」的**唯一一条**减伤：血量每少 1%，受伤 -1%。
+       *
+       *   放在所有减免之后、增伤之前 —— 它是"这个人最后一道皮"。
+       *   减伤下限 `drFloor`：不设下限的话，残血时会算成"受到 0 伤害"，
+       *   那等于无敌（对手永远打不死它，战斗直接卡死）。
+       *   ★ 判定读的是**当前血量**，所以每挨一下就自动变硬一点，
+       *     不需要任何"血量变化"事件。 */
+      if (dst.drPerHpPct > 0 && dst.maxHp > 0) {
+        var missing = 1 - dst.hp / dst.maxHp;
+        if (missing < 0) missing = 0;
+        if (missing > 1) missing = 1;
+        var selfCut = 1 - missing * dst.drPerHpPct;
+        if (selfCut < dst.drFloor) selfCut = dst.drFloor;
+        mitigated *= selfCut;
+        dst.drShown = U.round2(1 - selfCut);      // 给渲染层/校验器看的实时减伤
+      }
+      /* ★ 陈兴裕「暴力点」的代价：**自己受到的伤害 +40%**。
+         放在所有减免之后 —— 它是这个角色身上最后一道乘数，
+         顺序写成"先算完所有减伤再挨这一下 40%"，读起来才和面板一致。
+         ★ 只对**敌人的**伤害生效（和上面的同伙掩护同一个判据）：
+           自家自爆/反伤不该被这个被动放大，那不是"他挨了对面的打"。 */
+      if (src && src.side !== dst.side && dst.jettInPct > 0) {
+        mitigated *= (1 + dst.jettInPct);
+      }
       var shieldLoss = Math.min(dst.shield, mitigated);
       dst.shield -= shieldLoss;
+      /* ★★ 丁真「小马珍珠」：这层护盾是**一匹马**，它被打光的那一刻
+         丁真会喊一句、并且开始狂暴（魔力获取 +70%）。
+         ★ 判"死"用的是**这层护盾自己的余量**（ponyLeft），不是 dst.shield：
+           丁真身上可能同时挂着羁绊盾、技能盾，用总盾量去判的话，
+           别人给的盾被打光也会把马算死。
+         ★ `ponyDead` 只让它触发一次 —— 这一局就这样了。 */
+      if (dst.ponyLeft > 0 && shieldLoss > 0) {
+        dst.ponyLeft = Math.max(0, U.round2(dst.ponyLeft - shieldLoss));
+        if (dst.ponyLeft <= 0 && !dst.ponyDead) {
+          dst.ponyDead = true;
+          dst.manaRegenMul = U.round2(dst.manaRegenMul * (1 + dst.ponyManaPct));
+          ev({ type: 'ponyDead', who: dst.uid, shout: dst.ponyShout,
+               manaMul: dst.manaRegenMul, by: src ? src.uid : null });
+        }
+      }
       var hpLoss = mitigated - shieldLoss;
       if (hpLoss > dst.hp) hpLoss = dst.hp;
       if (hpLoss < 0) hpLoss = 0;
@@ -1281,6 +1633,62 @@
            until: round3(dst.buffUntil) });
     }
 
+    /**
+     * 钟离 2 星「玉璋护盾」：这个单位现在受不受守护？
+     *
+     * ★★ 判据只有两条：**是被钟离罩的**（wardBy）而且**盾还在**（shield > 0）。
+     *   不写到期时间 —— 守护的寿命就是护盾的寿命，盾一破两条效果同时结束。
+     *   这也让玩家有据可依：白条还在 = 免控 + 减伤还在。
+     */
+    function warded(u) {
+      return !!(u && u.wardBy && u.wardCut > 0 && u.shield > 0);
+    }
+
+    /** 被守护的人挡下了一次控制 —— 必须写事件，不然玩家只看到"技能没生效" */
+    function refuseControl(dst, src, what) {
+      ev({ type: 'ward', who: dst.uid, from: src ? src.uid : null, what: what,
+           cut: dst.wardCut });
+      return true;
+    }
+
+    /**
+     * 给一个单位挂一段**控制**（眩晕/冰冻/石化/捆住/击退）之前先问这里。
+     *
+     * ★★ 控制有**五个**入口（眩晕技能 / 电流麻痹 / 坠机震晕 / 冰冻 / 粉丝捆住），
+     *   再加上击退。逐个写 `if (warded)` 迟早漏一个，而且漏掉的那个
+     *   在测试里长得和"这次没打中"一模一样。所以收敛到这一个函数：
+     *   返回 true = 挡下了，调用方**什么都不要做**。
+     */
+    function controlBlocked(dst, src, what) {
+      /* ★★ 鹰佐 2 星「霸体」：**受到控制的那一刻**反击 ——
+         金色特效、立刻解控（连身上正挂着的控制一起清掉）、免控 5 秒，冷却 25 秒。
+         ★ 放在这里（而不是某个具体控制的入口）的理由和钟离的守护一样：
+           控制在引擎里有五个入口 + 击退，逐个写必然漏一个。
+         ★ 冷却没好时**不拦** —— 那一下控制照常生效，
+           这正是"25 秒一次"的意思；不拦也不发事件，免得战报刷屏。 */
+      if (dst.batiOn && st.t >= dst.batiCdUntil) {
+        dst.batiCdUntil = st.t + dst.batiCd;
+        dst.immuneUntil = st.t + dst.batiImmuneDur;
+        // 立刻解控：身上正挂着的眩晕/捆住一起清掉（"解控"两个字就是这个）
+        dst.stunUntil = -1;
+        dst.rootUntil = -1;
+        dst.batiFlash = 1;
+        ev({ type: 'bati', who: dst.uid, from: src ? src.uid : null, what: what,
+             immuneUntil: round3(dst.immuneUntil), cdUntil: round3(dst.batiCdUntil),
+             cd: dst.batiCd, dur: dst.batiImmuneDur });
+        return true;
+      }
+      /* ★ 免控窗口里也直接挡掉（但不重置冷却）。 */
+      if (st.t < dst.immuneUntil) {
+        ev({ type: 'bati', who: dst.uid, from: src ? src.uid : null, what: what,
+             immuneUntil: round3(dst.immuneUntil), cdUntil: round3(dst.batiCdUntil),
+             cd: dst.batiCd, dur: dst.batiImmuneDur, passive: true });
+        return true;
+      }
+      if (!warded(dst)) return false;
+      return refuseControl(dst, src, what);
+    }
+
     function addShield(src, dst, amount) {
       if (!dst.alive) return;
       var real = Math.round(amount);
@@ -1288,6 +1696,17 @@
       if (src) src.shielding += real;
       ev({ type: 'shield', from: src ? src.uid : null, to: dst.uid,
            amount: real, shieldAfter: dst.shield, reason: 'skill' });
+      /* ★ 钟离 2 星：套盾的同时把「守护」一起挂上 —— 只给**队友**，不给它自己
+         （5 费前排自己免疫控制的话，对面的眩晕/冰冻组合拳就全废了，
+          需求里写的也是"被自身挂护盾的队友"）。
+         ★ 事件单独发一条：卡面上那枚 💠 徽章、以及"技能没控住人"的解释，
+           渲染层都得靠它才知道。 */
+      if (src && dst !== src && src.wardCut > 0) {
+        dst.wardBy = src.uid;
+        dst.wardCut = src.wardCut;
+        ev({ type: 'ward', who: dst.uid, from: src.uid, what: 'grant',
+             cut: dst.wardCut });
+      }
     }
 
     function checkDeath(u) {
@@ -1300,6 +1719,15 @@
       // 击杀统计：最后打它的人
       if (u._lastHitBy && u._lastHitBy.alive) {
         u._lastHitBy.kills++;
+        /* ★★ ZMJJKK「世一决」：队内每阵亡一个角色，自己 +20% 增伤；
+         *    以及「霓虹激光」期间**击杀就重置技能时长**（连杀可以一直续）。
+         *
+         *   ★ 两条都挂在击杀统计这里，理由和 Dank1ng 的「锁头」一样：
+         *     "击杀"不等于"被技能打死"—— 普攻打死的、反伤弹死的、
+         *     剧毒毒死的都算。挂在 checkDeath 上，所有死法一视同仁。
+         *   ★ 增伤算的是**队友**阵亡（含自己？不含 —— 自己死了就没输出了）：
+         *     所以先判 u.side 再判"死者不是它自己"。 */
+        shiaiOnAllyDeath(u);
         /* ★ 「锁头」（Dank1ng 3 星）：击杀敌人**自动回满能量**。
            ★ 放在击杀统计这里，而不是塞进技能分支 —— 「击杀」不等于"被技能打死"：
              普攻打死的、反伤弹死的、坠机砸死的都算。挂在 checkDeath 上，
@@ -1316,7 +1744,29 @@
            /* ★ 带上击杀者。加它是因为 Dank1ng 的「锁头」要验
               "能量回满必须紧跟在自己的一次击杀之后" —— 没有这一列，
               "谁杀的"在事件流里根本读不出来（回放也只能写"X 阵亡了"）。 */
-           by: (u._lastHitBy && u._lastHitBy.alive) ? u._lastHitBy.uid : null });
+           by: (u._lastHitBy && u._lastHitBy.alive) ? u._lastHitBy.uid : null,
+           // ★ 陈兴裕那本书要靠它判"这一下是不是远程攻击打死的"
+           ranged: !!u._lastHitRanged });
+      /* ★★ 陈兴裕 3 星「感谢抗渗送的魔法书」：**友方被远程攻击打死**时，
+         自己立刻回满弹药（法力）。
+       *
+       *   ★ 判据两条，都写在事件里了：这一下是**远程**（ranged）而且是
+       *     **普攻**（_lastHitRanged 只在 kind === 'phys' 时为真）。
+       *     被近战砍死、被技能砸死、被烧死都不会触发 —— 那本书写的是"远程"。
+       *   ★ 遍历的是**阵亡者的队友**（含阵亡者自己不算：它已经倒下了，
+       *     弹药对它没意义），所以是"友方"而不是"自己"。
+       *   ★ 事件 reason 写 'tome'：回放里要能分清这次回蓝是
+       *     "杀了人"（Dank1ng 的锁头）还是"队友被远程打死了"。 */
+      if (u._lastHitRanged) {
+        var tomeMates = (u.side === 'a') ? st.side.a : st.side.b;
+        for (var ti = 0; ti < tomeMates.length; ti++) {
+          var tm = tomeMates[ti];
+          if (!tm.alive || !tm.tomeOn) continue;
+          if (tm.mana >= tm.maxMana) continue;      // 已经是满的就不用写事件
+          tm.mana = tm.maxMana;
+          ev({ type: 'refill', who: tm.uid, to: u.uid, mana: tm.maxMana, reason: 'tome' });
+        }
+      }
       /* ★ 星级被动「坠机」：牢大不会就这么算了。
          阵亡的这一刻只是**开始计时**，1 秒后直升机才落地。
          注意这里不能改 aliveCount 的最终结果 —— 它在倒下的瞬间就已经 -1 了，
@@ -1509,7 +1959,35 @@
     }
 
     /**
-     * 暗影的解除：**只剩自己一个人的时候必须现形**。
+     * 「遁入暗影」的**存活队友数**：只数"不会遁入暗影的自己人"（也就是非楚生疑犯）。
+     *
+     * ★★ 为什么要专门排掉同类 —— 这是一个真实发生过的死局：
+     *   场上有**两只**楚生疑犯时，两只都放完技能遁入暗影，于是
+     *   谁也打不到谁（暗影免疫一切伤害 + 不会被索敌），
+     *   而"队友都死了就现形"那条终止条件**永远不成立** ——
+     *   因为每一只都把**另一只躲在暗影里的**算成了"我还活着"。
+     *   结果就是这场战斗只能拖到 60 秒读秒判平局，两边谁也赢不了。
+     *
+     * ★ 判据用 `a.shadowAt`（有没有这个能力）而不是 `a.shadow`（现在是否躲着）：
+     *   需求说的是"**非楚生疑犯单位**全部阵亡就解除"。用"此刻是否躲着"的话，
+     *   一只还没放技能的同类会被算成队友 —— 那样两只交替放技能又能互相续命。
+     * ★ 而且入口和出口用的是**同一个函数**：没有非同类队友时压根不会遁入
+     *   （否则会出现"进暗影 → 下一 tick 立刻现形"的闪烁）。
+     */
+    function shadowMates(u) {
+      var list = alliesOf(u);
+      var n = 0;
+      for (var i = 0; i < list.length; i++) {
+        var a = list[i];
+        if (a.uid === u.uid || !a.alive) continue;
+        if (a.shadowAt) continue;      // 同类：不能给彼此"续命"
+        n++;
+      }
+      return n;
+    }
+
+    /**
+     * 暗影的解除：**没有会遁入暗影的队友了就必须现形**。
      *
      * ★★ 这不是风味，是**终止条件**。
      *   一个"免疫一切伤害 + 不会被索敌"的单位如果永远不现形，
@@ -1517,14 +1995,14 @@
      *   60 秒读秒判平局。而玩家的直觉是"队友都死了，你该出来了"，
      *   所以这条规则同时满足了两边。
      *
-     * ★ 判定用 aliveCount[自己的阵营] <= 1：它自己算一个，
-     *   所以"<= 1"就是"没有活着的队友了"。
+     * ★ 判定用 shadowMates(u) === 0（见上面那个函数的注释：
+     *   原来的 aliveCount > 1 会让两只楚生疑犯互相续命）。
      */
     function shadowTick() {
       for (var i = 0; i < st.units.length; i++) {
         var u = st.units[i];
         if (!u.shadow) continue;
-        if (st.aliveCount[u.side] > 1) continue;
+        if (shadowMates(u) > 0) continue;
         u.shadow = false;
         u.flash = 1;
         ev({ type: 'shadow', who: u.uid, on: false, side: u.side,
@@ -1686,6 +2164,7 @@
             var se2 = list[s2];
             if (!se2.alive || se2.side === u.side) continue;
             if (U.cheb(se2.r, se2.c, cr, cc) > radius) continue;
+            if (controlBlocked(se2, u, 'stun')) continue;
             se2.stunUntil = Math.max(se2.stunUntil, st.t + u.boomStunDur);
             ev({ type: 'stun', from: u.uid, to: se2.uid, dur: u.boomStunDur,
                  until: round3(se2.stunUntil), reason: 'peak',
@@ -1784,6 +2263,15 @@
       }
 
       if (dst.alive && res.dmg > 0) dst._lastHitBy = src || null;
+      /* ★ 陈兴裕 3 星那本书认的是"**被远程攻击**打死"，所以这里要记下
+         "最后这一下是不是远程普攻"：
+           · kind === 'phys'  —— 只有普通攻击算"攻击"，技能不算
+           · src.range > 1    —— 远程（射程 1 的近战砍死不算）
+         ★ 记在受害者身上（和 _lastHitBy 同一个位置），checkDeath 才读得到；
+           不记的话那条被动只能靠"看看谁杀的"去猜，而近战和远程是两个人。 */
+      if (dst.alive && res.dmg > 0) {
+        dst._lastHitRanged = !!(src && kind === 'phys' && src.range > 1);
+      }
 
       checkDeath(dst);
       if (src) checkDeath(src);
@@ -1812,6 +2300,18 @@
       // ★ 攻击力加成（雪毙）单独存，不改 u.ad ——
       //   改了的话日志里的 raw 就和初始快照里的 ad 对不上了
       var raw = u.ad * (1 + u.adBonusPct) * (crit ? u.critMult : 1);
+      /* ★★ ZMJJKK「霓虹激光」：这 4 秒里**每一发都是激光**。
+       *
+       *   单发伤害 = 攻击力 × `neonDmgPct`（3 星再 ×2 → 也就是 100%）。
+       *   和羊帆的巅峰一击一样乘在 **raw** 上（"本该打出多少"），
+       *   所以 raw/dmg 的关系、以及「raw >= dmg」那条自检全都继续成立。
+       *   ★ 攻速那一半在 updateUnit 里（×10），两半合起来才是完整的大招：
+       *     0.5 × 10 = 平时输出的 5 倍。
+       *   ★ 顺便记一发数（neonShots）：回放里"这 4 秒打了几发"要读得出来。 */
+      if (u.neonDmgPct > 0 && st.t < u.neonUntil) {
+        raw *= u.neonDmgPct;
+        u.neonShots++;
+      }
       /* ★★ 「羊巅峰」：蓄势好的那一下翻 20 倍。
        *
        *   ★ 它乘在 **raw** 上（也就是"本该打出多少"），而不是直接改 dmg。
@@ -1895,7 +2395,7 @@
        *     但会在事件流里留下一条指向死人的 stun，那是最容易骗过校验器的一种脏数据。
        *   ★ reason 写 'peak'：渲染层看到它就会冒「哈哈」，
        *     和嘉豪「男人领域」用的是同一套表现（见 arena.js 的 stun 分支）。 */
-      if (peak && u.peakStunDur > 0 && target.alive) {
+      if (peak && u.peakStunDur > 0 && target.alive && !controlBlocked(target, u, 'stun')) {
         target.stunUntil = Math.max(target.stunUntil, st.t + u.peakStunDur);
         ev({ type: 'stun', from: u.uid, to: target.uid, dur: u.peakStunDur,
              until: round3(target.stunUntil), reason: 'peak',
@@ -1942,6 +2442,18 @@
      */
     function freezeUnit(src, dst, dur, reason) {
       if (!dst || !dst.alive || !(dur > 0)) return false;
+      /* ★ 钟离 2 星的守护在这里也拦一道 —— 冰冻/石化都是控制，
+         被罩住的人既不吃冰冻也不吃石化（而且这里也是"石化"的出口）。 */
+      if (controlBlocked(dst, src, reason === 'petrify' ? 'petrify' : 'freeze')) return false;
+      /* ★★ 祖国人 2 星「灼烧」的另一半：**被灼烧的单位免疫冰冻**。
+         烧起来的东西冻不住 —— 这是需求里写在灼烧括号里的那一层。
+         ★ 单独发一条 `immune` 事件（不借用 block）：`block` 在渲染层
+           是要写 guardLeft 的格挡，借用它会把「抓娃娃」的剩余次数改掉。 */
+      if (dst.burnFreezeImmune && st.t < dst.burnCurUntil && dst.burnCurPct > 0) {
+        ev({ type: 'immune', who: dst.uid, from: src ? src.uid : null,
+             what: 'freeze', reason: reason });
+        return false;
+      }
       /* ★ 取 max 不是覆盖：一个已经冻到第 3 秒的人，再吃一发 1.5 秒的
          不应该**缩短**他的冰冻时间。 */
       dst.stunUntil = Math.max(dst.stunUntil, st.t + dur);
@@ -2018,6 +2530,7 @@
         var e = list[i];
         if (!e.alive) continue;
         if (U.cheb(e.r, e.c, src.r, src.c) > src.bindRadius) continue;
+        if (controlBlocked(e, src, 'root')) continue;
         e.rootUntil = Math.max(e.rootUntil, st.t + src.bindDur);
         e.rooted++;
         ev({ type: 'root', from: src.uid, to: e.uid, dur: src.bindDur,
@@ -2188,6 +2701,269 @@
     }
 
     /**
+     * ★★ 鹰佐 3 星「天照」：一把**永不熄灭**的黑火。
+     *
+     *   和祖国人那把火的区别只有两条，但两条都很要紧：
+     *     · 时间 = **无限**（burnCurUntil 写成 Infinity，回合结束前一直烧）
+     *     · **无视冰冻**：不给目标"免疫冰冻"，被冻住也照烧不误
+     *       （祖国人那把火反过来 —— 它会让目标冻不住）
+     *   公式是同一条：每秒失去 5% **当前**生命（所以越烧越轻，永远烧不死最后一点血）。
+     */
+    function applyAmaterasu(src, dst) {
+      if (!src || !dst || !dst.alive) return false;
+      if (!(src.amaterasuOn)) return false;
+      dst.burnCurPct = src.amaterasuPct || 0.05;
+      dst.burnCurBy = src.uid;
+      dst.burnCurUntil = Infinity;        // ★ 无限时间
+      dst.burnFreezeImmune = false;       // ★ 无视冰冻：冻住也照烧
+      dst.burnCurFlash = 1;
+      ev({ type: 'ignite', from: src.uid, to: dst.uid, pct: dst.burnCurPct,
+           dur: -1, until: -1, eternal: true, reason: 'amaterasu',
+           // ★ 天照**不给**冰冻免疫（无视冰冻），徽章因此是黑紫色
+           freezeImmune: false });
+      return true;
+    }
+
+    /**
+     * ★★ 鹰佐 3 星「天照」的落点与结算：**放完技能之后**在 3×3 里点一把黑火。
+     *
+     *   · 落点优先取**当前目标那一格**（黑火落在敌人身上才是天照）；
+     *     没有目标就烧自己脚下 —— 鹰佐是近战，他站在哪儿哪儿就是前线。
+     *   · "造成双倍伤害"：对范围内每个敌人造成 **2 倍攻击力**的魔法伤害
+     *     （倍率从被动表读，不写死）。
+     *   · 伤害打完、活下来的人**才**被点着 —— 被这一下打死的不用再挂火。
+     */
+    function amaterasuStrike(u) {
+      var cr = u.r, cc = u.c;
+      if (targetable(u.target)) { cr = u.target.r; cc = u.target.c; }
+      var list = enemiesOf(u);
+      var hit = [];
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e.alive) continue;
+        if (U.cheb(e.r, e.c, cr, cc) > u.amaterasuRadius) continue;
+        hit.push(e.uid);
+      }
+      ev({ type: 'amaterasu', from: u.uid, r: cr, c: cc, radius: u.amaterasuRadius,
+           dmg: Math.round(u.ad * u.amaterasuAdMul), targets: hit });
+      for (i = 0; i < hit.length; i++) {
+        var se = st.byUid[hit[i]];
+        if (!se || !se.alive) continue;
+        var res = dealDamage(u, se, u.ad * u.amaterasuAdMul, 'magic');
+        ev({ type: 'damage', from: u.uid, to: se.uid, dmg: res.dmg, kind: 'magic',
+             shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
+             hpAfter: se.hp, hpMax: se.maxHp, reason: 'amaterasu' });
+        afterDamage(u, se, res, 'magic', false);
+      }
+      for (i = 0; i < hit.length; i++) {
+        var we = st.byUid[hit[i]];
+        if (we && we.alive) applyAmaterasu(u, we);
+      }
+    }
+
+    /**
+     * ★★ ZMJJKK 2 星「闪电乒乓」：扔一个闪电球，把 3×3 内的敌人**眩晕 3.5 秒**。
+     *
+     *   ★ 落点 = 敌人最密的那一格（和钟离的陨石同一套选法）：
+     *     闪电球是范围控制，挑"人最多的地方"才配得上它。
+     *   ★ 眩晕走 `stunUntil`（不能动、不能打、攻速计时也停），
+     *     理由单独写 'pingpong' —— 渲染层要画成电球而不是哈哈/冰块。
+     *   ★ 逐个人过 `controlBlocked`：钟离的守护、鹰佐的霸体都该拦得住它。
+     */
+    function pingpongBall(u) {
+      var list = enemiesOf(u);
+      var cr = -1, cc = -1, bestN = -1, bestD = 1e9;
+      for (var i = 0; i < list.length; i++) {
+        var c0 = list[i];
+        if (!c0.alive) continue;
+        var n = 0;
+        for (var j = 0; j < list.length; j++) {
+          if (list[j].alive && U.cheb(list[j].r, list[j].c, c0.r, c0.c) <= u.ballRadius) n++;
+        }
+        var d = U.cheb(c0.r, c0.c, u.r, u.c);
+        if (n > bestN || (n === bestN && d < bestD)) {
+          bestN = n; bestD = d; cr = c0.r; cc = c0.c;
+        }
+      }
+      if (cr < 0) return;
+      var hit = [];
+      for (i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e.alive) continue;
+        if (U.cheb(e.r, e.c, cr, cc) > u.ballRadius) continue;
+        hit.push(e.uid);
+      }
+      ev({ type: 'pingpong', from: u.uid, r: cr, c: cc, radius: u.ballRadius,
+           dur: u.ballStun, targets: hit });
+      for (i = 0; i < hit.length; i++) {
+        var se = st.byUid[hit[i]];
+        if (!se || !se.alive) continue;
+        if (controlBlocked(se, u, 'stun')) continue;
+        se.stunUntil = Math.max(se.stunUntil, st.t + u.ballStun);
+        ev({ type: 'stun', from: u.uid, to: se.uid, dur: u.ballStun,
+             until: round3(se.stunUntil), reason: 'pingpong',
+             targets: hit, count: hit.length, durMul: 1, skill: '闪电乒乓' });
+      }
+    }
+
+    /**
+     * ★★ ZMJJKK「世一决」+「霓虹激光」的击杀后续。
+     *
+     *   两件事，都发生在**有人被击杀**的那一刻：
+     *     ① 死者如果是 ZMJJKK 的**队友**（或它自己这边的人）→
+     *        队里每一个有「世一决」的人都 +20% 增伤（累加）
+     *     ② 如果杀人者是 ZMJJKK 而且正处于激光状态 →
+     *        持续时间**重置回 4 秒**，并按双方星级喊一句台词
+     *
+     *   ★ 增伤只算**自己这边**的人阵亡：需求写的是"队内每有一个角色阵亡"。
+     *   ★ 喊话按**星级比较**选一句（键名说的是"被打死的那个人的星级相对我"）：
+     *       敌人比我**高** → 以下犯上！！   （对面牌比我大，还敢来送）
+     *       敌人比我**低** → 降维打击！！   （我把它按在地上碾）
+     *       同星           → 你才是挑战者！
+     *     三句话都从数据里取，不写死。
+     */
+    function shiaiOnAllyDeath(dead) {
+      var mates = (dead.side === 'a') ? st.side.a : st.side.b;
+      for (var i = 0; i < mates.length; i++) {
+        var m = mates[i];
+        if (!m.alive || !m.shiaiOn || !(m.dmgPerDeath > 0)) continue;
+        m.deathsSeen++;
+        m.deathBonus = U.round2(m.deathBonus + m.dmgPerDeath);
+        ev({ type: 'shiai', who: m.uid, to: dead.uid, bonus: m.deathBonus,
+             deaths: m.deathsSeen });
+      }
+      /* ② 击杀者是 ZMJJKK、而且正在放激光 */
+      var killer = dead._lastHitBy;
+      if (!killer || !killer.alive || !killer.shiaiOn) return;
+      if (!(st.t < killer.neonUntil)) return;
+      killer.neonUntil = st.t + killer.neonResetDur;
+      killer.neonResets++;
+      var sh = killer.shouts || {};
+      var shout = (dead.star < killer.star) ? sh.lower
+                : (dead.star > killer.star) ? sh.higher
+                : sh.same;
+      if (shout) {
+        killer.neonShout = shout;
+        killer.neonShoutFlash = 1;
+        ev({ type: 'neonKill', who: killer.uid, to: dead.uid,
+             shout: shout, star: killer.star, victimStar: dead.star,
+             until: round3(killer.neonUntil), resets: killer.neonResets });
+      } else {
+        ev({ type: 'neonKill', who: killer.uid, to: dead.uid, shout: null,
+             star: killer.star, victimStar: dead.star,
+             until: round3(killer.neonUntil), resets: killer.neonResets });
+      }
+    }
+
+    /**
+     * 「剧毒火龙果」的范围毒：装备者身边 3×3 内**所有单位**
+     *   （不分敌我、**连自己也算**）每秒受到「装备角色 60% 攻击力」的伤害。
+     *
+     *   ★ 三个设计点，都写在数据里、不写死：
+     *     · 半径 1 = 3×3（`radius`）
+     *     · 每秒一跳（`interval`，用独立的 acc 计时，和别的 tick 不共振）
+     *     · 伤害按**装备角色当时的攻击力**现算 —— 半路加上去的巨力之刃
+     *       会同步让毒变重，而不是开战时算一次就钉死
+     *   ★ **连自己都烧**：需求写的是"范围所有单位"，而装备者就在这个范围的
+     *     正中间。这既是"剧毒"两个字的字面意思，也是这条装备的代价 ——
+     *     不烧自己的话它就是一件纯赚的范围输出装。
+     *   ★ 走 dealDamage（不是直接扣血）：它是"敌人造成的伤害"（会吃护甲/护盾、
+     *     触发反伤、也算进伤害统计），和"自己烧自己"的大果刻意不同。
+     *   ★ 只打**活着**的单位；`damage` 事件带 reason:'poison'，
+     *     渲染层据此画绿色的毒雾和数字。
+     */
+    function poisonAuraTick() {
+      for (var i = 0; i < st.units.length; i++) {
+        var src = st.units[i];
+        if (!src.alive || !(src.poisonRadius > 0) || !(src.poisonAdPct > 0)) continue;
+        src.poisonAcc += CFG.DT;
+        if (src.poisonAcc < src.poisonInterval) continue;
+        src.poisonAcc -= src.poisonInterval;
+        var dmg = src.ad * src.poisonAdPct;
+        var victims = [];
+        for (var j = 0; j < st.units.length; j++) {
+          var dst = st.units[j];
+          if (!dst.alive) continue;                       // ★ 不分敌我，也不排除自己
+          if (U.cheb(dst.r, dst.c, src.r, src.c) > src.poisonRadius) continue;
+          victims.push(dst);
+        }
+        ev({ type: 'poison', who: src.uid, r: src.r, c: src.c,
+             radius: src.poisonRadius, dmg: Math.round(dmg),
+             targets: victims.map(function (v) { return v.uid; }) });
+        for (j = 0; j < victims.length; j++) {
+          var v2 = victims[j];
+          if (!v2.alive) continue;
+          var res = dealDamage(src, v2, dmg, 'magic');
+          ev({ type: 'damage', from: src.uid, to: v2.uid, dmg: res.dmg, kind: 'magic',
+               shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
+               hpAfter: v2.hp, hpMax: v2.maxHp, reason: 'poison' });
+          afterDamage(src, v2, res, 'magic', false);
+        }
+      }
+    }
+
+    /**
+     * 祖国人 2 星「灼烧」：给被激光打中的人挂上"正在燃烧"。
+     *
+     * ★ 时间**取 max**（和 stunUntil / buffUntil 同一套约定）：
+     *   一个还剩 3 秒的灼烧又被点一次，应该是"续到 5 秒"，
+     *   而不是把剩余时间清零重来、也不是两条火并行结算。
+     * ★ `burnCurAcc` 故意**不清零**：连点的时候每一秒该掉的血不能因为
+     *   被打断而往后拖（否则疯狂连点就能让灼烧永远不跳第一下）。
+     * ★ 写事件 `ignite`：卡面上那枚 🔥 徽章只有靠它才知道该亮起来。
+     */
+    function applyLaserBurn(src, dst) {
+      if (!src || !dst || !dst.alive) return false;
+      if (!(src.burnCurPct > 0) || !(src.burnCurDur > 0)) return false;
+      dst.burnCurPct = src.burnCurPct;
+      dst.burnCurBy = src.uid;
+      dst.burnCurUntil = Math.max(dst.burnCurUntil, st.t + src.burnCurDur);
+      /* ★ 祖国人这把火**自带冰冻免疫**（"烧起来的东西冻不住"）。
+         ★★ 鹰佐的「天照」是**另一把火**，它把这一位设成 false —— 两把火
+            共用 burnCur* 那套字段（公式都是"每秒 5% 当前生命"），
+            但"冻不冻得住"这件事必须分开，否则后点的那把火会把前一把的
+            性质改掉。所以它是**每一次点火都要显式写一遍**的字段。 */
+      dst.burnFreezeImmune = true;
+      dst.burnCurFlash = 1;
+      ev({ type: 'ignite', from: src.uid, to: dst.uid, pct: src.burnCurPct,
+           dur: src.burnCurDur, until: round3(dst.burnCurUntil),
+           // ★ 这把火自带冰冻免疫（渲染层靠它决定徽章颜色）
+           freezeImmune: true });
+      return true;
+    }
+
+    /**
+     * 祖国人「灼烧」的每秒结算。
+     *
+     * ★★ 和装备自燃（itemBurnTick）是**两条独立的规则**，所以是两个函数、
+     *   两套字段：大果烧的是"生命上限的固定比例"（越烧越慢但恒定），
+     *   灼烧烧的是"**当前生命**的比例"（越烧越轻，永远烧不死最后那点血）。
+     *   混成一个字段的话，调其中一条就会误伤另一条。
+     * ★ 同理是"失去生命"而不是"受到伤害"：不过护盾、不触发反伤、
+     *   也不被鸭子的「抓娃娃」挡掉（那不是"敌人攻击"）——
+     *   和 itemBurnTick 同一条理由，直接改 hp 再 checkDeath。
+     * ★ 事件单独一类（`laserburn`）：玩家看到的都是"着火了在掉血"，
+     *   但回放和校验器要能分清这是哪一把火、按哪条公式对账。
+     */
+    function laserBurnTick() {
+      for (var i = 0; i < st.units.length; i++) {
+        var u = st.units[i];
+        if (!u.alive || !(u.burnCurPct > 0) || !(st.t < u.burnCurUntil)) continue;
+        u.burnCurAcc += CFG.DT;
+        if (u.burnCurAcc < 1) continue;
+        u.burnCurAcc -= 1;
+        var loss = Math.max(0.01, U.round2(u.hp * u.burnCurPct));
+        if (loss > u.hp) loss = u.hp;
+        u.hp = U.round2(u.hp - loss);
+        if (u.hp < 0) u.hp = 0;
+        u.burnCurFlash = 1;
+        ev({ type: 'laserburn', who: u.uid, from: u.burnCurBy, amount: U.round2(loss),
+             hpAfter: u.hp, hpMax: u.maxHp, pct: u.burnCurPct });
+        checkDeath(u);
+      }
+    }
+
+    /**
      * 电棍「导电」：在刚被打中的敌人身上留下一道电流。
      *
      * ★★ 「每个电棍制造的电流只能存在一个」是**按人算**的 ——
@@ -2291,7 +3067,7 @@
              hpAfter: tgt.hp, hpMax: tgt.maxHp, reason: 'current' });
         afterDamage(owner, tgt, res, 'magic', false);
         var stunned = false;
-        if (owner.currentStunDur > 0 && tgt.alive) {
+        if (owner.currentStunDur > 0 && tgt.alive && !controlBlocked(tgt, owner, 'stun')) {
           tgt.stunUntil = Math.max(tgt.stunUntil, st.t + owner.currentStunDur);
           stunned = true;
           ev({ type: 'stun', from: cur.owner, to: tgt.uid, dur: owner.currentStunDur,
@@ -2333,6 +3109,162 @@
     }
 
     /* ---------- 技能 ---------- */
+    /**
+     * ★★ 蓝色大肥鱼 3 星：**队友**每消耗一层 TOKEN，自己回 20% 魔力。
+     *
+     *   ★ 遍历的是「消耗者的队友」，不是消耗者自己 ——
+     *     需求写的是"每一个队友消耗一层 TOKEN 会使大肥鱼获得 20% 魔力"，
+     *     所以大肥鱼**自己**花掉 TOKEN 也会算（它也在队友名单里）。
+     *   ★ 回的是**上限的 20%**（不是当前法力的 20%），走 gainMana →
+     *     于是「锁头」的回复倍率、空悲切的无限能量这些规则照常生效。
+     */
+    function tokenManaBack(user) {
+      var mates = (user.side === 'a') ? st.side.a : st.side.b;
+      for (var i = 0; i < mates.length; i++) {
+        var m = mates[i];
+        if (!m.alive || !(m.tokenManaPct > 0)) continue;
+        var gain = U.round2(m.maxMana * m.tokenManaPct);
+        gainMana(m, gain);
+        ev({ type: 'tokenMana', who: m.uid, from: user.uid, mana: gain,
+             manaAfter: m.mana, reason: 'token' });
+      }
+    }
+
+    /**
+     * ★★ 蓝色大肥鱼 3 星：吃掉一个敌人。
+     *
+     *   ★ "吃掉"是**直接处死**，不走 dealDamage：需求写的是"直接吃掉"，
+     *     所以护盾、护甲、免伤都不该拦（它张嘴把人吞了）。
+     *     但**必须**走 checkDeath（否则会留下"血量 0 还活着"的僵尸）。
+     *   ★ 事件 `eat` 单独一类：这是这个角色一整局唯一的高光，
+     *     渲染层要靠它播"张嘴吞下去"的演出，回放也要能一眼找到。
+     */
+    function eatUnit(src, dst) {
+      if (!src || !dst || !dst.alive) return false;
+      var hpBefore = dst.hp;
+      dst.shield = 0;
+      dst.hp = 0;
+      src.eats++;
+      src.flashEat = 1;
+      ev({ type: 'eat', from: src.uid, to: dst.uid, r: dst.r, c: dst.c,
+           hpBefore: U.round2(hpBefore), hpMax: dst.maxHp,
+           pct: U.round2(hpBefore / dst.maxHp) });
+      checkDeath(dst);
+      return true;
+    }
+
+    /**
+     * 蓝色大肥鱼的「吃白饭」：把**下一次伤害翻倍**立起来，并且当场找一口吃的。
+     *
+     * ★ 找谁吃：射程内**生命不超过 20%** 的敌人（多个就挑血最少的那个）。
+     *   不看距离的话，一个 4 费辅助能隔着半个战场把人吞了 ——
+     *   那不是一个"辅助"该有的射程，而且玩家完全没法防。
+     * ★ 吃到了就给**全队**一层 TOKEN（含它自己）。
+     * ★ 2 星：吃掉之后回 50% 最大生命（走 healUnit，所以治疗统计/羁绊都算数）。
+     */
+    function eatRice(u) {
+      var sk = u.def.skill || {};
+      u.nextDmgMul = Math.max(u.nextDmgMul, sk.nextMul || 2);
+      ev({ type: 'chargeUp', who: u.uid, mul: u.nextDmgMul, reason: 'eatrice' });
+      /* 找一口吃的：射程内、生命百分比 ≤ eatPct、血最少的那个 */
+      var list = enemiesOf(u);
+      var prey = null, preyHp = Infinity;
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e.alive) continue;
+        if (U.cheb(e.r, e.c, u.r, u.c) > u.range) continue;
+        if (e.hp > e.maxHp * u.eatPct + 1e-6) continue;
+        if (e.hp < preyHp) { prey = e; preyHp = e.hp; }
+      }
+      if (!prey) return;
+      eatUnit(u, prey);
+      /* 全队一层 TOKEN（含自己）：需求写的是"使全队获得一层" */
+      var mates = (u.side === 'a') ? st.side.a : st.side.b;
+      for (i = 0; i < mates.length; i++) {
+        var m = mates[i];
+        if (!m.alive) continue;
+        m.tokenStacks++;
+        m.flashToken = 1;
+        u.tokensGiven++;
+      }
+      ev({ type: 'token', from: u.uid, to: prey.uid, stacks: 1, side: u.side,
+           mul: u.tokenMul });
+      if (u.eatHealPct > 0) {
+        healUnit(u, u, u.maxHp * u.eatHealPct, 'eat');
+      }
+    }
+
+    /**
+     * 刘浩文「手机大王」的**目标池**：优先"前方的敌人"。
+     *
+     *   ★ 朝向按阵营推："我方面朝对面半场"——所以 b 方的前方是 r 更小的格子、
+     *     a 方是 r 更大的格子。判据用**同一个 r 轴上的相对位置**，
+     *     而不是"离我多远"：贴在我背后的人也不该挨手机。
+     *   ★ 前方一个人都没有时（被绕后了）才退回"全场随机" ——
+     *     宁可回头打，也不要站在那里一手机都扔不出来。
+     */
+    function phoneTargets(u) {
+      var all = enemiesOf(u);
+      var front = [], any = [];
+      for (var i = 0; i < all.length; i++) {
+        var e = all[i];
+        if (!e.alive) continue;
+        any.push(e);
+        var inFront = (u.side === 'b') ? (e.r <= u.r) : (e.r >= u.r);
+        if (inFront) front.push(e);
+      }
+      return front.length ? front : any;
+    }
+
+    /**
+     * 刘浩文的一部手机（或一次爆炸）。
+     *
+     * ★ 和「顶赋Jett」的飞刀是同一套结构（独立结算的物理伤害段），
+     *   所以复用同一个形状：dealDamage → skill 事件 → afterDamage。
+     *   40 段一起打的时候，事件流里就是 40 条，回放读得出"手机雨"的节奏。
+     */
+    function phoneDamage(src, dst, amount) {
+      var res = dealDamage(src, dst, amount, 'phys');
+      ev({ type: 'skill', from: src.uid, skill: src.def.skill.name,
+           kind: src.def.skill.kind, to: dst.uid, phone: true,
+           dmg: res.dmg, ramp: U.round2(res.ramp),
+           shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
+           hpAfter: dst.hp, hpMax: dst.maxHp });
+      afterDamage(src, dst, res, 'phys', false);
+      if (src.alive && src.skillHealPct > 0 && res.dmg > 0) {
+        healUnit(src, src, res.dmg * src.skillHealPct, 'skillHeal');
+      }
+      spawnCurrent(src, dst);
+      return res;
+    }
+
+    /**
+     * 陈兴裕「顶赋Jett」的**一把飞刀**。
+     *
+     * ★ 为什么另开一个函数而不是直接用 skillDamage：
+     *   skillDamage 打的是**魔法**伤害、而且基数要乘 `ap`（法术强度）。
+     *   飞刀的基数写的是"攻击力 × 80%"，也就是**物理**伤害 ——
+     *   走 skillDamage 的话，一件秘法之书会平白给一把飞刀加三成，
+     *   而且护甲会被无视。所以这里照 skillDamage 的结构重写一份，
+     *   只把伤害类型换成 phys、基数换成 ad。
+     *   ★ 该挂的后处理一个不少（afterDamage 判死亡/吸血/反伤、
+     *     技能伤害转治疗、电棍的导电），否则"五把刀"会和别处的技能表现不一致。
+     */
+    function knifeDamage(src, dst, amount) {
+      var res = dealDamage(src, dst, amount, 'phys');
+      ev({ type: 'skill', from: src.uid, skill: src.def.skill.name,
+           kind: src.def.skill.kind, to: dst.uid, knife: true,
+           dmg: res.dmg, ramp: U.round2(res.ramp),
+           shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
+           hpAfter: dst.hp, hpMax: dst.maxHp });
+      afterDamage(src, dst, res, 'phys', false);
+      if (src.alive && src.skillHealPct > 0 && res.dmg > 0) {
+        healUnit(src, src, res.dmg * src.skillHealPct, 'skillHeal');
+      }
+      spawnCurrent(src, dst);
+      return res;
+    }
+
     function skillDamage(src, dst, amount) {
       var res = dealDamage(src, dst, amount * src.ap, 'magic');
       ev({ type: 'skill', from: src.uid, skill: src.def.skill.name, kind: src.def.skill.kind,
@@ -2377,6 +3309,9 @@
      */
     function knockback(src, dst, n) {
       if (!src || !dst || !dst.alive || !(n > 0)) return 0;
+      /* ★ 击退也是一种控制（人被打飞了就不能站在原来的位置上输出）——
+         被钟离罩住的人免疫它，一步都不退。 */
+      if (controlBlocked(dst, src, 'knockback')) return 0;
       var dr = dst.r - src.r, dc = dst.c - src.c;
       var sr = 0, sc = 0;
       if (Math.abs(dr) >= Math.abs(dc) && dr !== 0) sr = dr > 0 ? 1 : -1;
@@ -2446,6 +3381,60 @@
       }
     }
 
+    /**
+     * 钟离 3 星「天星」：召一颗陨石，砸在**敌人最密**的那一格。
+     *
+     * ★ 落点不是"当前目标"，而是"九宫格里敌人最多的地方" ——
+     *   这是"陨石"和"一发单体技能"在观感上的分水岭：
+     *   挑目标格的话，那些散开的敌人永远挨不到砸。
+     *   并列时选**离自己最近**的一格（打得着的才叫威胁）。
+     * ★ 伤害走 skillDamage（= 全部技能伤害的唯一出口）：
+     *   法术强度、2 星「儒雅随和」那种"技能伤害转治疗"、
+     *   电棍留电流这些挂件全都自动生效，不需要在这里重复一遍。
+     *   基数写成"5 倍攻击力"，所以传进去的是 `ad × meteorAdMul`。
+     * ★ 石化排在**伤害之后**：被砸死的人不该再拿一条石化
+     *   （和「巅峰谢幕」那边"炸完一圈再统一结算控制"是同一条约定）。
+     */
+    function meteorStrike(u) {
+      var list = enemiesOf(u);
+      var cr = -1, cc = -1, bestN = -1, bestD = 1e9;
+      for (var i = 0; i < list.length; i++) {
+        var c0 = list[i];
+        if (!c0.alive) continue;
+        var n = 0;
+        for (var j = 0; j < list.length; j++) {
+          if (list[j].alive && U.cheb(list[j].r, list[j].c, c0.r, c0.c) <= u.meteorRadius) n++;
+        }
+        var d = U.cheb(c0.r, c0.c, u.r, u.c);
+        if (n > bestN || (n === bestN && d < bestD)) {
+          bestN = n; bestD = d; cr = c0.r; cc = c0.c;
+        }
+      }
+      if (cr < 0) return;                     // 场上一个敌人都没有
+
+      var dmg = u.ad * u.meteorAdMul;
+      var hit = [];
+      for (i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e.alive) continue;
+        if (U.cheb(e.r, e.c, cr, cc) > u.meteorRadius) continue;
+        hit.push(e.uid);
+      }
+      /* ★ 落点、半径、命中的名单、以及"该喊什么"，全部写进事件 ——
+         渲染层才知道要在哪一格画陨石，回放也才读得出来这是天星而不是不动如山。 */
+      ev({ type: 'meteor', from: u.uid, r: cr, c: cc, radius: u.meteorRadius,
+           dmg: Math.round(dmg), dur: u.meteorDur, targets: hit,
+           shout: u.meteorShout || '' });
+      for (i = 0; i < hit.length; i++) {
+        var se = st.byUid[hit[i]];
+        if (se && se.alive) skillDamage(u, se, dmg);
+      }
+      for (i = 0; i < hit.length; i++) {
+        var pe = st.byUid[hit[i]];
+        if (pe && pe.alive) freezeUnit(u, pe, u.meteorDur, 'petrify');
+      }
+    }
+
     function castSkill(u) {
       var sk = u.def.skill;
       /* ★ 施法的**唯一入口**里记一次锁：这样不管走的是哪条收费分支
@@ -2460,7 +3449,10 @@
            to: target ? target.uid : null, manaAfter: 0,
            // ★ 技能喊话原样带出去：渲染层不需要知道「肘击」是谁的技能，
            //   谁想喊什么由数据决定
-           callout: sk.callout || null });
+           /* ★ 钟离 3 星：一旦「天星」开了，喊的就是被动里那句台词
+              （「天动万象」），而不是技能自己的 callout ——
+              台词跟着**星级**走，因为陨石就是随着 3 星才出现的。 */
+           callout: sk.callout || ((u.meteorOn && u.meteorShout) ? u.meteorShout : null) });
 
       var i, list, e;
       switch (sk.kind) {
@@ -2491,6 +3483,191 @@
             ev({ type: 'knife', who: u.uid, to: target.uid, dur: sk.knifeDur || 0,
                  until: round3(u.knifeUntil), skill: sk.name });
           }
+          break;
+        }
+
+        /**
+         * ★★ 祖国人「耀眼红光」：眼睛里射出一道红色激光，打单个敌人。
+         *
+         *   三件事按星级叠上去：
+         *     · 1/2 星：一发。3 星：**连射三发**，每发 80% 伤害
+         *       （`beamShots` / `beamShotMul` 在 buildSide 里按星级算好）
+         *     · 2 星起：打完之后给目标挂**灼烧**（每秒 5% 当前生命、5 秒）
+         *
+         *   ★★ 三发**逐发结算**，而不是"一次打三个 80%"：
+         *     每一发都是一次独立的 skillDamage —— 于是暴击、护盾、
+         *     反伤、吸血、电棍的导电全都按"三下"各自记一次，
+         *     事件流里也读得出"第一发打死了、第二发换了个人"。
+         *   ★ 中途目标死了就**换一个最近的**接着射：
+         *     "连续射击三次"是这一发技能的形状，不该因为第一发就打死了而少两发。
+         *     换不到人（场上没活敌人了）才停。
+         */
+        case 'laser': {
+          if (!target) break;
+          var beamTgt = target;
+          for (var bi = 0; bi < u.beamShots; bi++) {
+            if (!targetable(beamTgt)) beamTgt = acquireTarget(u);
+            if (!beamTgt) break;
+            skillDamage(u, beamTgt, sk.damage * u.beamShotMul);
+          }
+          /* 灼烧挂在**最后挨打的那个**身上：三发打在不同人身上时，
+             烧的是最后那一下挨的人（也是玩家看到激光最后停住的地方）。 */
+          if (beamTgt && beamTgt.alive) applyLaserBurn(u, beamTgt);
+          break;
+        }
+
+        /**
+         * ★★ 陈兴裕「顶赋Jett」：召唤五把飞刀。
+         *
+         *   ★★ **一次骰子决定五把**：`rng.chance(0.80)` 掷一次 ——
+         *     80% 五把全中、20% 五把全空。每把各掷一次的话
+         *     "五把全中"只剩 33%，和需求里的数字完全不是一回事。
+         *     掷出来的结果写进 `jett` 事件（`hit`），渲染层照着画：
+         *     中了就是五把扎到人身上，没中就是五把从旁边飞过去。
+         *   ★ 全空时不写任何伤害事件 —— "打空了"必须是一眼看得出来的
+         *     干净结果，而不是"打了但是 0 伤害"（后者在两边的统计里
+         *     会留下一串 dmg=0，读起来像 bug）。
+         *   ★ 每把都是独立的物理伤害（攻击力 × 80%）：暴击、护盾、反伤、
+         *     吸血各记一次；中途把目标打死了就换最近的敌人接着扔，
+         *     保证"五把"这个形状不缩水。
+         */
+        case 'jett': {
+          if (!target) break;
+          var kJett = sk.knives || 5;
+          var kJettPct = (sk.knifePct > 0) ? sk.knifePct : 0.8;
+          var kJettHit = rng.chance((typeof sk.hitChance === 'number') ? sk.hitChance : 0.8);
+          ev({ type: 'jett', from: u.uid, to: target.uid,
+               knives: kJett, hit: kJettHit, chance: (typeof sk.hitChance === 'number') ? sk.hitChance : 0.8,
+               // ★ 台词只在这一种结果下带出去（见 arena 的 jett 分支）
+               shout: kJettHit ? null : (sk.missShout || null) });
+          if (!kJettHit) break;
+          var kJettTgt = target;
+          for (var ji = 0; ji < kJett; ji++) {
+            if (!targetable(kJettTgt)) kJettTgt = acquireTarget(u);
+            if (!kJettTgt) break;
+            knifeDamage(u, kJettTgt, u.ad * kJettPct);
+          }
+          break;
+        }
+
+        /**
+         * ★★ 丁真「雪豹撕咬」：喊一句「雪豹闭嘴」，让雪豹扑上去咬一口。
+         *
+         *   ★ 那句台词走的是**技能自己的 callout**（`cast` 事件带出来），
+         *     所以"喊话"和"技能结算"是同一刻发生的 —— 不需要额外的事件类型。
+         *   ★ 2 星起，被咬的人**攻速和移速一起 -40%、持续 3 秒**：
+         *     减速挂在受害者身上（`biteUntil` / `biteCut`），
+         *     时间取 max、过期自动失效（和 stunUntil / buffUntil 同一套约定）。
+         */
+        case 'bite': {
+          if (!target) break;
+          skillDamage(u, target, sk.damage);
+          if (u.biteOn && target.alive) {
+            target.biteCut = u.biteCut;
+            target.biteUntil = Math.max(target.biteUntil, st.t + u.biteDur);
+            ev({ type: 'bite', from: u.uid, to: target.uid, cut: u.biteCut,
+                 dur: u.biteDur, until: round3(target.biteUntil),
+                 skill: sk.name });
+          }
+          break;
+        }
+
+        /**
+         * ★★ 蓝色大肥鱼「吃白饭」：下一口更重，顺便看看桌上有没有剩的。
+         *
+         *   两件事一起做，而且顺序是刻意的：
+         *     ① 先把「下一次造成的伤害翻倍」立起来（`nextDmgMul = 2`）
+         *     ② 再找一口能直接吞的（射程内生命 ≤ 20% 的敌人）
+         *   先立 buff 再吃：万一它吃掉了场上最后一个人，这一局结束时
+         *   那个 ×2 还挂在它身上（下一场战斗会重新 build，不会串味）。
+         *   ★ 吃到了才发 TOKEN；没吃到就只是"下一口更重"——
+         *     这也是这一条技能的最低收益，不会出现"放了个空技能"。
+         */
+        case 'eatrice':
+          eatRice(u);
+          break;
+
+        /**
+         * ★★ ZMJJKK「霓虹激光」：进入 4 秒的激光机关枪状态。
+         *
+         *   技能本身**一点伤害都不打** —— 它只是把接下来 4 秒的普攻换一个形状：
+         *     攻速 ×10、单发伤害 ×0.5、移速 +50%（都记在自己身上，
+         *     由 updateUnit / attackOnce / moveMul 各自读）。
+         *   ★ 2 星「闪电乒乓」：开技能的同时扔一个闪电球（眩晕 3×3 内的敌人）。
+         *     挂在"开技能"这一刻，不是挂在激光的每一发上。
+         *   ★ 3 星：喊一句「你们的王回来了！」（只有 3 星带得出这句）。
+         */
+        case 'neon': {
+          u.neonUntil = st.t + (sk.dur || 4);
+          u.neonAsMul = sk.asMul || 10;
+          u.neonDmgPct = (sk.dmgPct > 0 ? sk.dmgPct : 0.5) * u.neonMul;
+          u.neonMovePct = sk.movePct || 0;
+          u.neonResetDur = sk.resetOnKill || sk.dur || 4;
+          u.neonShots = 0;
+          ev({ type: 'neon', who: u.uid, until: round3(u.neonUntil),
+               asMul: u.neonAsMul, dmgPct: U.round2(u.neonDmgPct),
+               movePct: u.neonMovePct, mul: u.neonMul,
+               shout: u.kingShout || null });
+          if (u.kingShout) {
+            u.neonShout = u.kingShout;
+            u.neonShoutFlash = 1;
+          }
+          if (u.ballOn) pingpongBall(u);
+          break;
+        }
+
+        /**
+         * ★★ 刘浩文「手机大王」：向前方**随机扔出 40 部手机**。
+         *
+         *   ★ 「随机」用的是战斗种子（`rng.next()`）—— 同一个种子必然打出
+         *     同一场手机雨，所以自检能复现、回放也对得上。
+         *   ★ 每部手机独立结算（走 `phoneDamage`，物理伤害）：
+         *     40 段各自的暴击/护盾/反伤/吸血。
+         *   ★ 「向前方」：先在**不在自己身后**的敌人里随机（按阵营朝向判断），
+         *     前方一个都没有了才回头打后面的 —— 不然一个远程会一直朝背后扔。
+         *   ★ 3 星「三星手机」：每部命中之后在**命中点**炸开 3×3，
+         *     对范围内所有敌人再吃一次 25% 攻击力（含主目标）。
+         */
+        case 'phone': {
+          var kPhones = sk.phones || 40;
+          var kPct = (sk.phonePct > 0) ? sk.phonePct : 0.25;
+          var thrown = [];
+          for (var pi = 0; pi < kPhones; pi++) {
+            var pool = phoneTargets(u);
+            if (!pool.length) break;
+            var pt = pool[Math.floor(rng.next() * pool.length) % pool.length];
+            if (!pt) break;
+            thrown.push(pt.uid);
+            u.phonesThrown++;
+            u.phoneHits++;
+            phoneDamage(u, pt, u.ad * kPct);
+            /* ★ 爆炸：命中点 3×3 里的**所有人**（含主目标）再吃一发。
+               排在单发伤害之后 —— 先挨手机、再挨爆炸，读起来才是"手机炸了"。 */
+            if (u.phoneBoom) {
+              var boomList = [];
+              var all = enemiesOf(u);
+              for (var bj = 0; bj < all.length; bj++) {
+                var be = all[bj];
+                if (!be.alive) continue;
+                if (U.cheb(be.r, be.c, pt.r, pt.c) > u.phoneBoomRadius) continue;
+                boomList.push(be);
+              }
+              if (boomList.length) {
+                ev({ type: 'phoneBoom', from: u.uid, r: pt.r, c: pt.c,
+                     radius: u.phoneBoomRadius, dmg: Math.round(u.ad * u.phoneBoomPct),
+                     targets: boomList.map(function (x) { return x.uid; }) });
+                for (bj = 0; bj < boomList.length; bj++) {
+                  var be2 = boomList[bj];
+                  if (!be2.alive) continue;
+                  phoneDamage(u, be2, u.ad * u.phoneBoomPct);
+                }
+              }
+            }
+          }
+          /* ★ 一条总事件给渲染层画"手机雨"：40 个 uid 按扔出的顺序排好，
+             渲染层按顺序错开出发时间，就成了一串飞出去的手机。 */
+          ev({ type: 'phones', from: u.uid, count: thrown.length,
+               targets: thrown, pct: kPct, boom: !!u.phoneBoom });
           break;
         }
 
@@ -2623,16 +3800,19 @@
                radius: fld.radius, dur: sk.dur, until: round3(fld.until),
                side: fld.side, asCut: fld.asCut, allyCut: fld.allyCut,
                skill: sk.name });
-          /* ★ 3 星「遁入暗影」：**放完技能之后**才进暗影（这一次施法本身
-             照常结算）。已经在暗影里就什么都不做 —— 暗影不是"每放一次刷新一次"，
-             它只有一个解除条件：队友全死光。 */
-          if (u.shadowAt && !u.shadow && st.aliveCount[u.side] > 1) {
+          /* ★ 3 星「遁入暗影」：**放完技能之后**才进暗影（这一次施法本身照常结算）。
+             已经在暗影里就什么都不做 —— 暗影不是"每放一次刷新一次"，
+             它只有一个解除条件：**不会遁入暗影的队友**全死光。
+             ★★ 入口和出口用同一个 `shadowMates()`：没有那种队友时压根不进 ——
+                否则两只楚生疑犯会在"进暗影 → 下一 tick 现形"之间来回闪。 */
+          var shMates = shadowMates(u);
+          if (u.shadowAt && !u.shadow && shMates > 0) {
             u.shadow = true;
             u.shadows++;
             u.flash = 1;
             ev({ type: 'shadow', who: u.uid, on: true, side: u.side,
                  asCut: u.shadowAsCut, dmgMul: u.shadowDmgMul,
-                 mates: st.aliveCount[u.side] - 1 });
+                 mates: shMates });
           }
           break;
         }
@@ -2690,6 +3870,10 @@
             if (!e.alive) continue;
             addShield(u, e, sk.amount * u.ap * u.shieldPct);
           }
+          /* ★ 钟离 3 星「天星」：盾发完，天上再掉一颗陨石下来。
+             放在**发完盾之后**：这颗陨石是"放技能"的附赠，
+             先让玩家看见全队亮起玉璋，再看见天动万象。 */
+          if (u.meteorOn) meteorStrike(u);
           break;
         }
 
@@ -2737,6 +3921,7 @@
           for (i = 0; i < picked.length; i++) {
             var se = picked[i];
             if (!se.alive) continue;          // 被这一发打死的就不再眩晕
+            if (controlBlocked(se, u, 'stun')) continue;   // 被钟离罩住的免疫控制
             se.stunUntil = Math.max(se.stunUntil, st.t + dur);
             ev({ type: 'stun', from: u.uid, to: se.uid, dur: dur,
                  until: round3(se.stunUntil), count: picked.length,
@@ -2766,6 +3951,13 @@
        *   电棍把电流挂在同一个出口，是同一个思路：**找必经之地**。
        */
       if (u.bindOn) bindEnemies(u);
+      /* ★★ 鹰佐 3 星「天照」：**放完技能之后**点一把黑火。
+       *   同样写在 switch 外面，理由和上面那条一模一样 ——
+       *   需求说的是"使用技能后"，和"他放的是哪个技能"无关；
+       *   塞进 `buff` 分支里的话，以后技能一换这条被动就静默失效。
+       *   ★ 放在 bindEnemies **之后**：先捆住（那一下是他自己的动作），
+       *     再让黑火落地 —— 顺序读起来和画面上"先挥刀、再着火"一致。 */
+      if (u.amaterasuOn) amaterasuStrike(u);
     }
 
     /* ---------- 移动 ---------- */
@@ -2835,7 +4027,12 @@
      * ★ 下限保到 0.1：三层减速叠起来也不会算出 0 攻速把人卡死。
      */
     function slowMul(u) {
-      return Math.max(0.1, effAsMul(u) * fieldSlowMul(u));
+      /* ★ 丁真 2 星「芝士雪豹」：被咬过的人**攻速和移速一起 -40%**，持续 3 秒。
+         放在 slowMul 里而不是 effectiveAs 里，是因为这一个函数同时喂给
+         "出手频率"（effectiveAs 会调它）和"走一格要多久"（moveMul）——
+         需求要的就是两条一起降，写一次就够，写两处迟早对不上。 */
+      var bite = (st.t < u.biteUntil) ? (1 - u.biteCut) : 1;
+      return Math.max(0.1, effAsMul(u) * fieldSlowMul(u) * bite);
     }
 
     /** 这个单位能不能被索敌：活着，而且没有遁入暗影 */
@@ -2847,7 +4044,10 @@
       var bonus = (st.t < u.asBuffUntil) ? u.asBuffPct : 0;
       // ★ 暗影期间攻速减半（和领域/冰棍一样是"乘在最后"的减速）
       var shadowCut = u.shadow ? (1 - u.shadowAsCut) : 1;
-      return u.as * (1 + bonus + u.frenzyPct + u.ocAsPct) * slowMul(u) *
+      /* ★ 陈兴裕「暴力点」的 +20% 攻速是**永久面板**，和限时攻速增益
+         （asBuffPct）、越打越快（frenzyPct）、超频（ocAsPct）并列相加 ——
+         它们表达的都是"出手快了多少"，乘在一起会变成一个看不懂的复利。 */
+      return u.as * (1 + bonus + u.frenzyPct + u.ocAsPct + u.jettAsPct) * slowMul(u) *
         Math.max(0.1, shadowCut);
     }
 
@@ -2867,7 +4067,12 @@
      *   没提走位。移速跟着一起砍的话，一个要来去自如的幽影会变得笨重。
      */
     function moveMul(u) {
-      return Math.max(0.1, u.movePct * (1 + u.ocMovePct) * slowMul(u));
+      /* ★ 祖国人「飞行」：+60% 移速是**天生**的，所以并进这一条乘法里
+         （和「红薯粉丝」的减速、张雪峰的 +100% 都是同一套叠乘规则）。
+         ★ ZMJJKK「霓虹激光」：开大那 4 秒移速 +50%（需求原话是"蓄力后移速+50%"）——
+           同一层加法，所以它和飞行/疾风这类加成是**相加**的。 */
+      var neonMove = (u.neonMovePct > 0 && st.t < u.neonUntil) ? u.neonMovePct : 0;
+      return Math.max(0.1, u.movePct * (1 + u.ocMovePct + u.flyMovePct + neonMove) * slowMul(u));
     }
 
     /**
@@ -3148,7 +4353,54 @@
      *   绕不到出手位、但**换位能立刻进射程**时，就换上去。
      *   前面那位堵着唯一的出手位，绕到天荒地老也打不到 —— 只能换。
      */
+    /**
+     * 祖国人「飞行」：**从挡路的那个人上方飞过去**，落在它后面那一格。
+     *
+     * ★★ 为什么不是"无视占位随便走"：
+     *   占位表（st.occ）是整套走位/寻路/换位的地基，允许两个单位同格
+     *   等于把地基抽掉（反伤、AOE、索敌全要重写）。
+     *   而需求里的"从单位上方飞过去"表达的是**路径**：中间那个人拦不住它。
+     *   所以这里只做一件事：紧邻那一格被占、再往外那一格空着时，直接落到外面那格。
+     *
+     * ★ 方向和 moveToward 用同一套判据（切比雪夫/曼哈顿都要变小），
+     *   否则会出现"飞过去之后反而更远"这种看起来像 bug 的位移。
+     * ★ 只飞一格：两格以上的穿越留给下一次走位计时，节奏上和走路一致，
+     *   不会出现"一眨眼穿过整条阵线"的瞬移感。
+     */
+    function flyOverStep(u, target) {
+      var curC = U.cheb(u.r, u.c, target.r, target.c);
+      var curM = U.manhattan(u.r, u.c, target.r, target.c);
+      var bestR = -1, bestC = -1, bestC2 = 0, bestM2 = 0, bestTie = 0;
+      var isA = (u.side === 'a');
+      for (var dr = -1; dr <= 1; dr++) {
+        for (var dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          var mr = u.r + dr, mc = u.c + dc;          // 中间那一格（被占着）
+          var lr = u.r + dr * 2, lc = u.c + dc * 2;  // 飞过去之后的落点
+          if (!inBounds(lr, lc)) continue;
+          if (!occupiedAt(mr, mc)) continue;         // 中间没人挡着 → 交给普通走位
+          if (occupiedAt(lr, lc)) continue;          // 落点上有人 → 不能叠上去
+          var kc = U.cheb(lr, lc, target.r, target.c);
+          var km = U.manhattan(lr, lc, target.r, target.c);
+          if (kc > curC) continue;
+          if (kc === curC && km >= curM) continue;
+          var tie = (isA ? lr : (CFG.ROWS - 1 - lr)) * CFG.COLS + lc;
+          var better = false;
+          if (bestR < 0) better = true;
+          else if (kc < bestC2) better = true;
+          else if (kc === bestC2 && km < bestM2) better = true;
+          else if (kc === bestC2 && km === bestM2 && tie < bestTie) better = true;
+          if (better) { bestR = lr; bestC = lc; bestC2 = kc; bestM2 = km; bestTie = tie; }
+        }
+      }
+      if (bestR < 0) return false;
+      return takeStep(u, { r: bestR, c: bestC });
+    }
+
     function advanceToward(u, target) {
+      /* ★ 会飞的先试"越过挡路的人"：这一步失败就照常走普通路线，
+         所以飞行只是**多一条路**，不会让它在空旷的地方也乱跳。 */
+      if (u.flyOver && flyOverStep(u, target)) return true;
       if (moveToward(u, target)) return true;
 
       var step = bfsToward(u, target);
@@ -3222,6 +4474,11 @@
       if (laughing && !u.laughMove) return;
 
       var as = effectiveAs(u);
+      /* ★ ZMJJKK「霓虹激光」：这 4 秒里出手频率 ×10。
+         放在这里（而不是去改 effectiveAs 的基础值）是有意的 ——
+         effectiveAs 是"这个棋子平时多快"，而激光是**一段临时状态**，
+         混进去的话徽章、走位减速、暗影减半全都会被这 10 倍污染。 */
+      if (u.neonAsMul > 1 && st.t < u.neonUntil) as *= u.neonAsMul;
 
       // ① 射程内有敌人 → 站住打，谁近打谁
       var near = nearestEnemyInRange(u);
@@ -3410,6 +4667,7 @@
                不导出的话校验器只能自己再乘一遍倍率，那是把规则抄成两份。 */
           ocPerHitBerserk: u.ocPerHitBerserk, ocMaxAs: u.ocMaxAs,
           ocBerserkName: u.ocBerserkName,
+          ocBerserkShout: u.ocBerserkShout,
           /* 老牧师「临终祷告」：校验器要独立判两件事 ——
              「一场只能救一个人」（ritesUsed）和「+20% 到底加没加」（adBonusPct）。
              adBonusPct 也顺便导出：它是雪毙和圣光赐福共用的那个攻击力加成，
@@ -3419,13 +4677,88 @@
           adBonusPct: u.adBonusPct,
           /* 装备的自燃：校验器要按"上限的 6%"独立对账，所以得从快照里读到它 */
           burnMaxPct: u.burnMaxPct,
+          /* 「剧毒火龙果」的范围毒：三个参数（半径 / 每秒的伤害 / 间隔）
+             都要进快照 —— 校验器按"装备角色当时的攻击力 × 60%"独立对账，
+             不能靠读引擎算好的数字（那就等于把规则抄了两遍）。 */
+          poisonRadius: u.poisonRadius, poisonAdPct: u.poisonAdPct,
+          poisonInterval: u.poisonInterval,
+          /* 钟离「玉璋护盾 / 天星」：
+               · wardBy / wardCut —— 渲染层画卡面上那枚 💠 徽章（盾还在才算数），
+                 校验器也靠它判"免控到底该不该生效"
+               · meteorOn / meteorAdMul / meteorRadius / meteorDur —— 校验器要独立
+                 算出这颗陨石"该打多少、该砸多大、该石化几秒"，不能抄引擎的算法 */
+          wardBy: u.wardBy, wardCut: u.wardCut,
+          meteorOn: u.meteorOn, meteorAdMul: u.meteorAdMul,
+          meteorRadius: u.meteorRadius, meteorDur: u.meteorDur,
+          meteorShout: u.meteorShout,
+          /* 祖国人「飞行 / 灼烧 / 三连激光」：
+               · flyOn / flyMovePct —— 渲染层要把卡面抬起来画（影子分开），
+                 校验器要独立算出"它一步该走多快"
+               · burnCurPct / burnCurUntil —— 卡面那枚 🔥 徽章和"免疫冰冻"都看它
+               · beamShots / beamShotMul —— 校验器要独立算"三发各打多少" */
+          flyOn: u.flyOn, flyMovePct: u.flyMovePct, flyOver: u.flyOver,
+          burnCurPct: u.burnCurPct, burnCurUntil: u.burnCurUntil,
+          beamShots: u.beamShots, beamShotMul: u.beamShotMul,
+          /* 陈兴裕「暴力点 / 满充能 / 魔法书」：
+               · jettAsPct / jettOutPct / jettInPct —— 永久面板，
+                 校验器要独立算出"这一下该打多少 / 该挨多少"
+               · tomeOn —— 那本书开了没有（refill 事件的 reason:'tome' 靠它判合法） */
+          jettAsPct: u.jettAsPct, jettOutPct: u.jettOutPct, jettInPct: u.jettInPct,
+          tomeOn: u.tomeOn,
+          /* 丁真「芝士雪豹 / 小马珍珠」：
+               · biteCut / biteUntil —— 被咬的人身上挂着的减速（40%、3 秒）
+               · ponyOn / ponyMax / ponyLeft / ponyDead —— 小马还剩多少、
+                 死没死（ponyDead 事件和"魔力 +70%"都靠它核对）
+               · manaRegenMul —— 小马死后会从 1 变成 1.7 */
+          biteCut: u.biteCut, biteUntil: u.biteUntil,
+          ponyOn: u.ponyOn, ponyMax: u.ponyMax, ponyLeft: u.ponyLeft,
+          ponyDead: u.ponyDead, ponyManaPct: u.ponyManaPct,
+          /* 鹰佐「霸体 / 天照」：
+               · batiOn / batiCdUntil / immuneUntil —— 校验器要独立判
+                 "解控必须紧跟在那次控制之后""25 秒冷却""免控 5 秒"
+               · amaterasuOn / amaterasuAdMul / amaterasuRadius —— 黑火的三个数
+               · burnFreezeImmune —— 两把火靠它区分（祖国人 true / 天照 false） */
+          batiOn: u.batiOn, batiCd: u.batiCd, batiCdUntil: u.batiCdUntil,
+          immuneUntil: u.immuneUntil, batiImmuneDur: u.batiImmuneDur,
+          amaterasuOn: u.amaterasuOn, amaterasuAdMul: u.amaterasuAdMul,
+          amaterasuRadius: u.amaterasuRadius,
+          burnFreezeImmune: u.burnFreezeImmune,
+          /* 蓝色大肥鱼「吃白饭 / TOKEN」：
+               · nextDmgMul / tokenStacks / tokenMul —— 校验器要独立算出
+                 "这一下该是多少倍"（两个来源相乘、各自消耗一次）
+               · eatPct / eatHealPct / tokenManaPct —— 吃掉的门槛、回血、回蓝
+               · eats / tokensUsed —— 吃了几口、TOKEN 花了几层 */
+          nextDmgMul: u.nextDmgMul, tokenStacks: u.tokenStacks, tokenMul: u.tokenMul,
+          eatOn: u.eatOn, eatPct: u.eatPct, eatHealPct: u.eatHealPct,
+          tokenManaPct: u.tokenManaPct, eats: u.eats,
+          tokensGiven: u.tokensGiven, tokensUsed: u.tokensUsed,
+          /* ZMJJKK「世一决 / 闪电乒乓 / 霓虹激光」：
+               · deathBonus —— 已累加的增伤（校验器按"阵亡人数 × 20%"独立对账）
+               · neonUntil / neonAsMul / neonDmgPct / neonMovePct —— 激光的四个数
+               · neonMul（3 星的 ×2）、neonResets（续了几次）
+               · ballOn / ballRadius / ballStun —— 2 星的闪电球 */
+          shiaiOn: u.shiaiOn, dmgPerDeath: u.dmgPerDeath, deathBonus: u.deathBonus,
+          deathsSeen: u.deathsSeen, neonUntil: u.neonUntil,
+          neonAsMul: u.neonAsMul, neonDmgPct: u.neonDmgPct,
+          neonMovePct: u.neonMovePct, neonResetDur: u.neonResetDur,
+          neonMul: u.neonMul, neonResets: u.neonResets, neonShots: u.neonShots,
+          ballOn: u.ballOn, ballRadius: u.ballRadius, ballStun: u.ballStun,
+          /* 刘浩文「世界第一帅」：
+               · noDr / drPerHpPct / drFloor —— 校验器要独立算出
+                 "这一下该挨多少"（别的减伤全作废 + 少血比例那一层）
+               · drShown —— 当前实时减伤（界面徽章也读它）
+               · phoneBoom / phoneBoomPct / phoneBoomRadius —— 三星手机的爆炸 */
+          noDr: u.noDr, drPerHpPct: u.drPerHpPct, drFloor: u.drFloor,
+          drShown: u.drShown, lifesteal: u.lifesteal,
+          phoneBoom: u.phoneBoom, phoneBoomPct: u.phoneBoomPct,
+          phoneBoomRadius: u.phoneBoomRadius,
+          phonesThrown: u.phonesThrown, phoneHits: u.phoneHits,
           /* 孙笑川「天皇」：校验器要判"光环只给 3×3 内的队友"和"招安的条件" */
           mikadoAura: u.mikadoAura, mikadoLifesteal: u.mikadoLifesteal,
           skillHealPct: u.skillHealPct, convertOnKill: u.convertOnKill,
           convertHpPct: u.convertHpPct,
           /* 电棍「导电」：校验器要判"每次弹射 25% 攻击力""最多四次""上限按星级" */
-          currentOn: u.currentOn, currentPct: u.currentPct,
-          currentMaxBounces: u.currentMaxBounces, currentStunDur: u.currentStunDur,
+          currentOn: u.currentOn, currentPct: u.currentPct,          currentMaxBounces: u.currentMaxBounces, currentStunDur: u.currentStunDur,
           currentMaxAt: u.currentMaxAt, currentRadius: u.currentRadius,
           currentDelay: u.currentDelay,
           /* 冰冰冰「冻手冻脚 / 千里冰封」：校验器要判
@@ -3471,6 +4804,13 @@
            放在超频之后：同一 tick 里两个都烧的话，顺序只影响先扣谁的，
            而这两个计时器是独立的、各扣各的。 */
         itemBurnTick();
+        /* ★ 祖国人的「灼烧」是**另一把火**（烧的是当前生命的比例），
+           所以单独一跳、单独一类事件 —— 和大果那边共用计时器的话，
+           两种节奏会互相顶掉。位置就在大果之后：都是"失去生命"。 */
+        laserBurnTick();
+        /* ★ 「剧毒火龙果」的范围毒同样按 tick 走（每秒一跳）。
+           放在两把火之后：都是"按时间结算的伤害"，顺序只影响谁先扣。 */
+        poisonAuraTick();
         /* ★ 电棍的电流也要按 tick 走（0.5 秒一跳）。
            放在胜负判定之前：最后一跳可能正好打死对面最后一个人。 */
         currentTick();
