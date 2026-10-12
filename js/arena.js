@@ -659,21 +659,78 @@
   /**
    * 刘浩文「手机大王」的手机雨。
    *
-   * ★ 40 部手机**不能一次全画出来**：同一帧 40 个小方块 + 40 条弹道
-   *   在 95px 的格子上就是一团糊。所以按扔出的顺序错开出发时间
-   *   （每部差 0.012 秒，40 部总共 0.48 秒）—— 看起来是"一把一把甩出去"，
-   *   最后几部还在飞的时候第一批已经命中，节奏正好。
-   * ★ 终点是**目标当时的位置**：手机飞一半目标死了也不改道
+   * ★★ 要演的是"**胡乱**扔"这四个字，所以每一部手机都是**独立的一扔**：
+   *     · 出手点在自己身上随机一个角度、随机远近（不是从同一个点排队飞出去）
+   *     · 出发时间随机错开（0.006~0.028 秒），不是整齐的等间距
+   *     · 飞行时间随机（0.16~0.36 秒）—— 于是有的手机先到、有的后到，
+   *       40 部**不会**排成一条漂亮的抛物线队列
+   *     · 弧度、横向甩动、旋转速度、大小全都各自随机
+   *   齐刷刷的一排看起来像"机关枪扫射"，而需求要的是"一把一把乱甩出去"。
+   *
+   * ★ 40 部手机**不能同一帧全画出来**：一帧 40 个小方块在 95px 的格子上
+   *   就是一团糊。随机错开之后，同一帧最多七八部，而且方向各不相同。
+   * ★ 终点是**目标当时的位置**再加一点随机偏移：手机飞一半目标死了也不改道
    *   （改道反而像"追踪导弹"，而需求说的是"随机扔出"）。
    */
   function addPhones(x1, y1, points, boom) {
-    var step = 0.012;
+    var t0 = 0;
     for (var i = 0; i < points.length; i++) {
       if (fx.length > FX_MAX) return;
+      var ang = Math.random() * Math.PI * 2;
+      var off = CELL * (0.08 + Math.random() * 0.36);
+      t0 += 0.006 + Math.random() * 0.022;
       fx.push({
-        type: 'phoneFly', x1: x1, y1: y1,
-        x2: points[i].x, y2: points[i].y, boom: !!boom,
-        age: -i * step, life: 0.26, vx: 0, vy: 0
+        type: 'phoneFly',
+        /* 出手点：绕自己一圈的随机位置（"从身上各处甩出去"） */
+        x1: x1 + Math.cos(ang) * off,
+        y1: y1 + Math.sin(ang) * off * 0.62,
+        /* 落点：目标格 + 随机抖动（手扔的东西本来就不准） */
+        x2: points[i].x + (Math.random() - 0.5) * CELL * 0.34,
+        y2: points[i].y + (Math.random() - 0.5) * CELL * 0.34,
+        boom: !!boom,
+        arc: CELL * (0.28 + Math.random() * 0.78),          // 抛物线高度
+        wob: (Math.random() - 0.5) * CELL * 0.62,           // 横向甩动（歪着飞）
+        spin: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 13),
+        scale: 0.7 + Math.random() * 0.75,
+        age: -t0,
+        life: 0.16 + Math.random() * 0.20,
+        vx: 0, vy: 0
+      });
+    }
+  }
+
+  /**
+   * 爆炸的**第一下**：一块短促的亮盘。
+   *
+   * ★ 为什么"爆炸感"必须从这一片亮开始：冲击环、火星、碎片都是**形状**，
+   *   而人眼认"炸"靠的是**一瞬间的光**。没有 flash 的话，
+   *   再多的环和碎片看起来都像"一堆粒子被扔出来"。
+   * ★ 寿命极短（0.14 秒）而且一开始就接近全尺寸 ——
+   *   慢慢涨大的圆看起来是"泡泡"，一下就铺满的才是"炸"。
+   */
+  function addFlash(x, y, r, life) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'flash', x: x, y: y, r: r, age: 0, life: life || 0.14 });
+  }
+
+  /**
+   * 碎屏：几片旋转着飞出去的小方块（屏幕玻璃 + 机身碎片）。
+   * ★ 单独一类而不是拿 spark 凑：spark 是**圆点**，而"手机炸了"
+   *   体现在**有棱角的碎片**上 —— 圆点看起来像烟花，方块才像碎屏。
+   */
+  function addShards(x, y, n, gold) {
+    for (var i = 0; i < n; i++) {
+      if (fx.length > FX_MAX) return;
+      var a = Math.random() * Math.PI * 2;
+      var sp = 120 + Math.random() * 220;
+      fx.push({
+        type: 'shard', x: x, y: y,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+        size: 3 + Math.random() * 5,
+        spin: (Math.random() - 0.5) * 22,
+        rot: Math.random() * 6.28,
+        gold: !!gold,
+        age: 0, life: 0.32 + Math.random() * 0.34
       });
     }
   }
@@ -1078,9 +1135,20 @@
           }
           if (pts.length) {
             addPhones(cellX(phu), cellY(phu) - CELL * 0.10, pts, !!e.boom);
-            addRing(cellX(phu), cellY(phu), 'rgba(216,162,74,.85)', CELL * 1.1, 0.5);
-            addSparks(cellX(phu), cellY(phu), 10, '#ffe0a0', 170);
-            addCallout(cellX(phu), cellY(phu) - (CELL + 10) / 2 - CELL * 0.34,
+            var phx = cellX(phu), phy = cellY(phu);
+            addRing(phx, phy, 'rgba(216,162,74,.85)', CELL * 1.1, 0.5);
+            addSparks(phx, phy, 10, '#ffe0a0', 170);
+            /* ★ 「胡乱扔」的第一眼：施法瞬间在自己身上**炸开一圈小气浪**，
+               每撮的方向和距离都随机 —— 手机不再是从一个点排队出来，
+               而是从身上各处"炸"出来的。 */
+            for (var pf = 0; pf < 6; pf++) {
+              var fa = Math.random() * Math.PI * 2;
+              var fd = CELL * (0.2 + Math.random() * 0.55);
+              addSparks(phx + Math.cos(fa) * fd, phy + Math.sin(fa) * fd * 0.7,
+                        4, '#ffd98a', 150);
+            }
+            addFlash(phx, phy, CELL * 0.8, 0.16);
+            addCallout(phx, phy - (CELL + 10) / 2 - CELL * 0.34,
                        '手机大王 ×' + pts.length, '#d8a24a');
             addShake(7);
           }
@@ -1088,19 +1156,33 @@
         break;
       }
 
-      /* ★ 3 星「三星手机」：每部手机命中后的那一下爆炸。
-       *   画成一圈**金白色的爆环 + 方形的碎片**（碎屏），
-       *   和 ZMJJKK 的蓝色激光、钟离的土黄陨石都分得开。 */
+      /* ★★ 3 星「三星手机」：每部手机命中后的那一下爆炸。
+       *
+       *   ★★ "爆炸感"是**四层叠出来的**，少一层都会塌成"一堆粒子"：
+       *     ① `addFlash` —— 一瞬间的白闪（人眼认"炸"靠的是光，不是形状）
+       *     ② 冲击环    —— 一圈迅速扩到 3×3 之外的透明圆环（力量的方向）
+       *     ③ 火球/火星 —— 金白两层火星（能量）
+       *     ④ `addShards` —— 旋转着飞出去的碎屏方块（"这是个**手机**炸了"）
+       *   ★ 震屏随命中次数递增但**有上限**：40 部手机连着炸，
+       *     固定 6 的话屏幕会一直抖到看不清；2 + 命中数上限 7 正好是
+       *     "一下比一下猛、最后稳定在一个很响的档位"。
+       *   ★ 不加顿帧（hitstop）：40 次 × 0.05 秒 = 2 秒的冻结，
+       *     那是把"手机雨"变成幻灯片。 */
       case 'phoneBoom': {
         var pbu = pb.units[e.from];
         var bx3 = e.c * PITCH + CELL / 2, by3 = e.r * PITCH + CELL / 2;
         var bRad3 = CELL * ((e.radius || 1) * 2 + 1);
-        addRing(bx3, by3, 'rgba(255,217,138,.95)', bRad3 * 0.52, 0.42);
-        addRing(bx3, by3, 'rgba(255,255,255,.9)', bRad3 * 0.3, 0.28);
-        addSparks(bx3, by3, 10, '#ffd98a', 210);
-        addSparks(bx3, by3, 6, '#fff2cf', 160);
+        var boomN = (e.seq === undefined) ? 1 : e.seq;
+        addFlash(bx3, by3, bRad3 * 0.42, 0.15);
+        addRing(bx3, by3, 'rgba(255,217,138,.95)', bRad3 * 0.62, 0.44);
+        addRing(bx3, by3, 'rgba(255,255,255,.92)', bRad3 * 0.34, 0.3);
+        addRing(bx3, by3, 'rgba(255,160,60,.7)', bRad3 * 0.5, 0.5);
+        addSparks(bx3, by3, 12, '#ffd98a', 260);
+        addSparks(bx3, by3, 8, '#fff2cf', 200);
+        addSparks(bx3, by3, 5, '#8a8f98', 130);       // 一点机身灰
+        addShards(bx3, by3, 7, true);
         if (pbu) addSparks(cellX(pbu), cellY(pbu), 3, '#ffd98a', 90);
-        addShake(4);
+        addShake(Math.min(7, 2 + boomN));
         break;
       }
 
@@ -2755,37 +2837,68 @@
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r1 * (0.3 + 0.9 * bp), 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
       } else if (e.type === 'phoneFly') {
-        /* 一部飞出去的小手机：一个圆角小方块 + 一条淡淡的拖尾。
-           ★ p 夹到 0~1：后几部的 age 是负数（错开出发时间），
-             不夹的话它们会出现在画面外或者算成 NaN。
-           ★ 手机自己**转着飞**（角度跟着 p 变）—— 直线飞出去的小方块
-             看起来像子弹，转起来才像"被扔出去的手机"。 */
+        /* 一部乱飞出去的手机。
+           ★★ 三件事让它读起来是"被**扔**出去的"而不是"射出去的"：
+             ① 残影：后面跟 3 个半透明的自己（拖影越长越像高速甩出去）
+             ② 自转：整部手机跟着飞行进度转（spin 每部不同、方向也不同）
+             ③ 歪着飞：路径上加一段横向摆动（wob），不是一条直线
+           ★ p 夹到 0~1：后几部的 age 是负数（随机错开出发时间），
+             不夹的话它们会出现在画面外或者算成 NaN。 */
         var phP = Math.max(0, Math.min(1, p));
-        var phX = e.x1 + (e.x2 - e.x1) * phP;
-        var phY = e.y1 + (e.y2 - e.y1) * phP - Math.sin(phP * Math.PI) * CELL * 0.35;
-        var phW = CELL * 0.16, phH = CELL * 0.26;
+        var phW = CELL * 0.17 * e.scale, phH = CELL * 0.28 * e.scale;
+        /* ★ 4 份拷贝：3 个残影 + 本体。
+           ★★ 这里刻意**不用内嵌函数**（`function phAt(q){}` 写在循环里）：
+             每一帧每一部手机都会重新创建那些闭包 —— 40 部 × 30fps
+             就是每秒上千个临时函数，纯属给 GC 添活。摊开成"算一遍位置"
+             反而更快也更好读。 */
+        for (var gh = 0; gh < 4; gh++) {
+          var gq = Math.max(0, Math.min(1, phP - (3 - gh) * 0.055));
+          var gAlpha = (gh === 3) ? 1 : (0.14 * (gh + 1));
+          var gx = e.x1 + (e.x2 - e.x1) * gq + Math.sin(gq * Math.PI) * e.wob;
+          var gy = e.y1 + (e.y2 - e.y1) * gq - Math.sin(gq * Math.PI) * e.arc;
+          ctx.save();
+          ctx.globalAlpha = gAlpha;
+          ctx.translate(gx, gy);
+          ctx.rotate(e.spin * gq);
+          ctx.fillStyle = '#23272e';
+          roundRect(-phW / 2, -phH / 2, phW, phH, 2.5);
+          ctx.fill();
+          ctx.strokeStyle = e.boom ? '#ffd98a' : '#93a4b8';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          // 屏幕：3 星是"三星手机"，屏幕亮金色；1/2 星是普通蓝屏
+          ctx.fillStyle = e.boom ? 'rgba(255,217,138,.95)' : 'rgba(140,200,255,.8)';
+          roundRect(-phW * 0.34, -phH * 0.30, phW * 0.68, phH * 0.52, 1.5);
+          ctx.fill();
+          ctx.restore();
+        }
+      } else if (e.type === 'flash') {
+        /* 爆炸的白闪：一下就铺满、然后迅速退掉。
+           ★ 用两层叠出"内核白 + 外圈暖"的感觉：
+             纯白圆太大看起来像 UI 里的光斑，加一圈暖色才像爆。 */
+        var flFade = 1 - p;
+        var flR = e.r * (0.72 + 0.28 * p);
+        var flG = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, flR);
+        flG.addColorStop(0, 'rgba(255,255,255,' + (flFade * 0.95).toFixed(3) + ')');
+        flG.addColorStop(0.45, 'rgba(255,232,170,' + (flFade * 0.75).toFixed(3) + ')');
+        flG.addColorStop(1, 'rgba(255,180,80,0)');
         ctx.save();
-        ctx.globalAlpha = 0.95;
-        // 拖尾
-        ctx.strokeStyle = 'rgba(216,162,74,.5)';
-        ctx.lineWidth = 1.6;
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = flG;
         ctx.beginPath();
-        ctx.moveTo(e.x1 + (e.x2 - e.x1) * Math.max(0, phP - 0.22),
-                   e.y1 + (e.y2 - e.y1) * Math.max(0, phP - 0.22));
-        ctx.lineTo(phX, phY);
-        ctx.stroke();
-        ctx.translate(phX, phY);
-        ctx.rotate(phP * 7);
-        ctx.fillStyle = '#2b2f36';
-        roundRect(-phW / 2, -phH / 2, phW, phH, 2.5);
+        ctx.arc(e.x, e.y, flR, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = e.boom ? '#ffd98a' : '#8fa0b4';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        // 屏幕：3 星是"三星手机"，屏幕亮金色
-        ctx.fillStyle = e.boom ? 'rgba(255,217,138,.95)' : 'rgba(140,200,255,.8)';
-        roundRect(-phW * 0.34, -phH * 0.30, phW * 0.68, phH * 0.52, 1.5);
-        ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'shard') {
+        /* 碎屏：带重力的小方块，边飞边转，快落地时淡出。 */
+        var shX = e.x + e.vx * e.age;
+        var shY = e.y + e.vy * e.age + 260 * e.age * e.age;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - p);
+        ctx.translate(shX, shY);
+        ctx.rotate(e.rot + e.spin * e.age);
+        ctx.fillStyle = e.gold ? '#ffd98a' : '#cfe6ff';
+        ctx.fillRect(-e.size / 2, -e.size / 2, e.size, e.size * 0.8);
         ctx.restore();
       } else if (e.type === 'knifeFly') {
         /* 陈兴裕的五把飞刀：从出手者飞向落点的一小片刀影。
