@@ -561,6 +561,9 @@
           if (!uu) continue;
           uu.hp = row[1]; uu.shield = row[2]; uu.mana = row[3];
           uu.r = row[4]; uu.c = row[5]; uu.alive = !!row[6];
+          // 第 8/9 位：招安（卡面变灰 + 换阵营）。见 arena.js 的同名分支。
+          if (row[7] !== undefined) uu.converted = !!row[7];
+          if (row[8] !== undefined) uu.side = row[8] ? 'a' : 'b';
         }
         break;
       case 'end':
