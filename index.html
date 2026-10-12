@@ -19,7 +19,12 @@
 <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="game.css">
+<!-- ★ 这一行由 tools\部署到GitHub.ps1 在上传前**自动填上**当前版本号，
+     并同时给下面所有 js/css 的地址盖上 ?v=同一个号（新 URL = 新缓存条目）。
+     js/uptodate.js 会拿它和线上的 version.json 比对，不一致就把页面换到新地址。
+     本地双击打开时它是空的 → 自动更新完全静默。 -->
+<meta name="app-version" content="d9f20a2a1fa4">
+<link rel="stylesheet" href="game.css?v=d9f20a2a1fa4">
 </head>
 <body>
 <div id="app">
@@ -154,7 +159,7 @@
           <span class="hs-bar"><span id="hud-hp-fill"></span></span>
         </div>
         <div class="hud-stat gold"><span class="hs-icon">🪙</span><span class="hs-val" id="hud-gold">10</span></div>
-        <div class="hud-stat">
+        <div class="hud-stat lvl">
           <span class="hs-icon">⭐</span><span class="hs-val" id="hud-lvl">2</span>
           <span class="hs-bar xp"><span id="hud-xp-fill"></span></span>
           <span class="hs-note" id="hud-xp-text">0/2</span>
@@ -164,7 +169,7 @@
         </div>
       </div>
       <div class="hud-right">
-        <div class="hud-field">上场 <b id="hud-field">0/2</b></div>
+        <div class="hud-field"><span class="hf-label">上场 </span><b id="hud-field">0/2</b></div>
         <button class="icon-btn" id="btn-settings2" title="设置">⚙️</button>
       </div>
     </header>
@@ -264,7 +269,7 @@
     <div class="prep-bench">
       <div class="bench-head">
         <span class="bench-title">备战池</span>
-        <span class="note">3 个同名同星自动合成高一星 · 点棋子选中，右键卖掉</span>
+        <span class="note">3 个同名同星自动合成高一星（最高 4 星）· 点棋子选中，右键卖掉</span>
       </div>
       <div class="bench" id="bench"></div>
     </div>
@@ -292,7 +297,7 @@
       <div class="hud-stats">
         <div class="hud-stat"><span class="hs-icon">❤️</span><span class="hs-val" id="chud-hp">100</span></div>
         <div class="hud-stat gold"><span class="hs-icon">🪙</span><span class="hs-val" id="chud-gold">10</span></div>
-        <div class="hud-stat"><span class="hs-icon">⭐</span><span class="hs-val" id="chud-lvl">2</span></div>
+        <div class="hud-stat lvl"><span class="hs-icon">⭐</span><span class="hs-val" id="chud-lvl">2</span></div>
       </div>
       <div class="hud-right">
         <button class="icon-btn" id="btn-settings3" title="设置">⚙️</button>
@@ -354,17 +359,20 @@
 
 </div>
 
-<script src="js/util.js"></script>
-<script src="js/traits.js"></script>
-<script src="js/items.js"></script>
-<script src="js/units.js"></script>
-<script src="js/art.js"></script>
-<script src="js/battle.js"></script>
-<script src="js/levels.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/settings.js"></script>
-<script src="js/arena.js"></script>
-<script src="js/cover.js"></script>
-<script src="js/game.js"></script>
+<script src="js/util.js?v=d9f20a2a1fa4"></script>
+<script src="js/traits.js?v=d9f20a2a1fa4"></script>
+<script src="js/items.js?v=d9f20a2a1fa4"></script>
+<script src="js/units.js?v=d9f20a2a1fa4"></script>
+<script src="js/art.js?v=d9f20a2a1fa4"></script>
+<script src="js/battle.js?v=d9f20a2a1fa4"></script>
+<script src="js/levels.js?v=d9f20a2a1fa4"></script>
+<script src="js/ui.js?v=d9f20a2a1fa4"></script>
+<script src="js/settings.js?v=d9f20a2a1fa4"></script>
+<script src="js/arena.js?v=d9f20a2a1fa4"></script>
+<script src="js/cover.js?v=d9f20a2a1fa4"></script>
+<script src="js/game.js?v=d9f20a2a1fa4"></script>
+<!-- 自动更新：定时比对 version.json，有新版本就自己换成带 ?v= 的新地址。
+     本地双击打开（file://）或没被部署脚本盖过章时它会安静地什么都不做。 -->
+<script src="js/uptodate.js?v=d9f20a2a1fa4"></script>
 </body>
 </html>
