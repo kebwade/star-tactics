@@ -216,9 +216,18 @@
            卡牌上会常驻一个 🛡N 的徽章 —— 这只鸭子只有 95 血，
            全部生存能力都押在这串次数上，玩家必须能一眼看出还剩多少。 */
         guardLeft: u.guardMax || 0, guardFlash: 0,
-        /* 张雪峰「超频」：攻速加成（开局 1.0，每次普攻 +0.02，无上限）。
-           over 打开之后卡片会有红色描边 —— 那是"正在自毁"的信号。 */
+        /* 张雪峰「超频」：攻速加成（开局 ocStart，每次普攻 +step，
+           进入狂暴后叠加翻倍，封顶 ocMax）。
+           ocOver 打开之后徽章变红（🔥）—— 那是"正在狂暴 / 自毁"的信号；
+           每次自毁还会再闪一下（ocBurnFlash）。
+           ★ ocMax === 0 表示这一版没设上限（旧数据），画徽章时要按"没上限"处理。 */
         oc: u.ocStart || 0, ocOver: false, ocFlash: 0, ocBurnFlash: 0,
+        ocMax: u.ocMaxAs || 0, ocCapped: false,
+        /* 「和成天下5000精品大果」的自燃：卡片上要一直挂一个 🌰 徽章 ——
+           带上它的人每秒都在掉血，不标出来的话玩家只会觉得"这张卡莫名其妙在死"。 */
+        burnMaxPct: u.burnMaxPct || 0, burnFlash: 0,
+        ocBerserkName: u.ocBerserkName || '狂暴',
+        ocOverFlash: 0,
         /* 「巧乐兹」的冰棍层数（挂在自己身上） */
         chill: 0, chillMax: u.chillMax || 0, chillFlash: 0,
         /* 奶龙「捧腹大笑」：笑到什么时候。播放时间越过它就自动消失 ——
@@ -380,6 +389,22 @@
     fx.push({
       type: 'tracer', x1: x1, y1: y1, x2: x2, y2: y2,
       over: over || 0, color: color, age: 0, life: 0.30
+    });
+  }
+
+  /* ---------- 老牧师「临终祷告」的金色光束 ----------
+   * ★ 和荣誉那条蓄力激光**故意画得相反**：
+   *   那一条是"越蓄越粗、最后一炸"（p^1.7），因为它指向的是"马上要开枪"；
+   *   这一条是"安安静静一直照着"，因为它指向的是"我在救他，还要 1 秒"。
+   *   所以用**恒定粗细 + 两头淡中间实的呼吸**（sin(p·π)）。
+   * ★ life 同样和规则对齐（= 祷告时长 e.delay）：
+   *   光消失的那一帧，人正好站起来 —— 不是渲染层挑了个好看的时长。
+   */
+  function addBeam(x1, y1, x2, y2, color, life) {
+    if (fx.length > FX_MAX) return;
+    fx.push({
+      type: 'beam', x1: x1, y1: y1, x2: x2, y2: y2,
+      color: color, age: 0, life: life || 1
     });
   }
 
@@ -764,28 +789,45 @@
           ou2.ocFlash = 1;
           if (e.justOver) {
             ou2.ocOver = true;
+            ou2.ocOverFlash = 1;
             addRing(cellX(ou2), cellY(ou2), 'rgba(255,90,70,.95)', CELL * 1.5, 0.55);
             addSparks(cellX(ou2), cellY(ou2), 18, '#ff6a4a', 260);
+            /* ★ 喊的是**状态名**「狂暴」，不是被动名。
+               这一下之后玩家要认的是"他现在在烧自己"，所以喊状态。 */
             addCallout(cellX(ou2), cellY(ou2) - (CELL + 10) / 2 - CELL * 0.34,
-                       '你快不过我你信吗', '#ff6a4a');
+                       ou2.ocBerserkName + '！', '#ff6a4a');
             addShake(8);
             pb.hitstop = 0.08;
+          }
+          /* ★ 顶到上限：加一圈金色收束环 + 一条独立提示。
+             没有这个的话玩家只会看到徽章数字"不动了"，
+             会以为卡住了或者以为是 bug。 */
+          if (e.capped) {
+            ou2.ocCapped = true;
+            addRing(cellX(ou2), cellY(ou2), 'rgba(255,214,120,.9)', CELL * 1.25, 0.4);
+            addCallout(cellX(ou2), cellY(ou2) - (CELL + 10) / 2 - CELL * 0.34,
+                       '攻速满 ' + Math.round(e.pct * 100) + '%', '#ffd98a');
           }
         }
         break;
       }
 
-      /* ★ 超频自毁：每秒掉 44% 当前生命。红色的数字 + 一小撮红火星，
-         和"挨打"的伤害数字区分开（那个是白/黄的）。 */
+      /* ★ 自燃：两种来源（张雪峰的超频 / 「和成天下5000精品大果」），
+         表现共用一套 —— 玩家看到的都是"血量自己在往下掉"。
+         ★ 只把**颜色和火星**分开：超频是红橙（火在烧自己），
+           果子是暖褐+果壳色（嘴里的东西在发作），混战中能看出不是同一件事。 */
       case 'selfburn': {
         var su3 = pb.units[e.who];
         if (su3) {
           su3.hp = e.hpAfter;
           su3.ocBurnFlash = 1;
+          su3.burnFlash = 1;
           su3.flash = 0.6;
+          var byItem = e.reason === 'item';
           addNum(cellX(su3), cellY(su3) - CELL * 0.42, '-' + Math.round(e.amount),
                  'selfBurn', 1.05);
-          addSparks(cellX(su3), cellY(su3), 5, '#ff6a4a', 120);
+          addSparks(cellX(su3), cellY(su3), byItem ? 4 : 5,
+                    byItem ? '#c98a4b' : '#ff6a4a', byItem ? 90 : 120);
         }
         break;
       }
@@ -933,6 +975,71 @@
           addCallout(cellX(ru), cellY(ru) - (CELL + 10) / 2 - CELL * 0.34,
                      '我回来了', '#ffd24d');
           addShake(9);
+        }
+        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* ★ 老牧师「临终祷告」的开始：**人还没起来**。
+         ★★ 这一条必须和 reviveAlly 分开画，否则玩家看到的顺序就错了：
+            先亮一圈光、1 秒后才站起来 —— 那 1 秒是"还有救"的信号，
+            也是这张卡唯一一个能让对手"眼睁睁看着"的窗口。
+         ★ 用的是金色，和"阵亡"的暗红、牢大坠机的土色都分得开。 */
+      case 'lastRites': {
+        var lu = pb.units[e.to];
+        var lp = pb.units[e.from];
+        if (lu) {
+          /* ★ 环的 life 直接取祷告时长（e.delay）——
+             "光消失的那一帧人正好站起来"是**规则对齐**的，
+             不是渲染层自己挑了一个好看的时长（和荣誉的蓄力激光同一个约定）。 */
+          addRing(cellX(lu), cellY(lu), 'rgba(255,226,150,.9)', CELL * 0.9, e.delay);
+          addSparks(cellX(lu), cellY(lu), 12, '#ffe9a8', 90);
+          addCallout(cellX(lu), cellY(lu) - (CELL + 10) / 2 - CELL * 0.34,
+                     '还能抢救一下', '#ffd24d');
+        }
+        /* 一条从牧师连到尸体的金色光束 —— "是谁在救他"必须一眼看出来，
+           不然场上两个辅助的话根本分不清被动是哪个人的。 */
+        if (lu && lp) {
+          addBeam(cellX(lp), cellY(lp) - CELL * 0.3, cellX(lu), cellY(lu), '#ffe2a0', e.delay);
+          lp.flash = 0.8;
+        }
+        break;
+      }
+
+      /* ★ 老牧师「临终祷告」的结算：人站起来了（3 星的话顺手给了 buff）。
+         ★ 和牢大的 revive 分开写：牢大是"坠机之后自己爬起来"（土色烟尘），
+           这一条是"别人把他拉回来"（金色圣光），画面语言必须不一样。 */
+      case 'reviveAlly': {
+        var au = pb.units[e.who];
+        if (au) {
+          if (e.ok) {
+            au.alive = true; au.hp = e.hp; au.shield = 0;
+            au.r = e.r; au.c = e.c; au.rr = e.r; au.cc = e.c;
+            au.flash = 1;
+            addPillar(cellX(au), cellY(au));
+            addRing(cellX(au), cellY(au), 'rgba(255,226,150,.95)', CELL * 1.8, 0.6);
+            addSparks(cellX(au), cellY(au), 22, '#ffe9a8', 230);
+            addCallout(cellX(au), cellY(au) - (CELL + 10) / 2 - CELL * 0.34,
+                       '我回来了', '#ffd24d');
+            addShake(8);
+            /* 3 星「圣光赐福」：真的拿到 buff 的人身上各加一圈金环，
+               顺带在牧师那边也亮一下 —— "两个人都变强了"要靠画面说清。 */
+            if (e.blessed && e.blessed.length) {
+              for (var bi = 0; bi < e.blessed.length; bi++) {
+                var bu = pb.units[e.blessed[bi]];
+                if (!bu) continue;
+                addRing(cellX(bu), cellY(bu), 'rgba(255,214,120,.95)', CELL * 1.15, 0.5);
+                addSparks(cellX(bu), cellY(bu), 8, '#ffe9a8', 120);
+              }
+              addCallout(cellX(au), cellY(au) - (CELL + 10) / 2 - CELL * 0.34 - CELL * 0.42,
+                         '圣光赐福 +' + Math.round((e.adPct || 0) * 100) + '%', '#ffd24d');
+            }
+          } else {
+            /* 救不回来：灰掉的一小圈，别让玩家以为"什么都没发生" */
+            addRing(cellX(au), cellY(au), 'rgba(150,140,120,.7)', CELL * 0.8, 0.45);
+            addCallout(cellX(au), cellY(au) - (CELL + 10) / 2 - CELL * 0.34,
+                       '救不回来了', '#a89c86');
+          }
         }
         if (A.onEvent) A.onEvent(e);
         break;
@@ -1292,6 +1399,8 @@
       if (u.guardFlash > 0) u.guardFlash = Math.max(0, u.guardFlash - dt * 3.2);
       if (u.ocFlash > 0) u.ocFlash = Math.max(0, u.ocFlash - dt * 3.2);
       if (u.ocBurnFlash > 0) u.ocBurnFlash = Math.max(0, u.ocBurnFlash - dt * 3.2);
+      if (u.ocOverFlash > 0) u.ocOverFlash = Math.max(0, u.ocOverFlash - dt * 3.2);
+      if (u.burnFlash > 0) u.burnFlash = Math.max(0, u.burnFlash - dt * 3.2);
       if (u.chillFlash > 0) u.chillFlash = Math.max(0, u.chillFlash - dt * 3.2);
       if (u.laughFlash > 0) u.laughFlash = Math.max(0, u.laughFlash - dt * 3.2);
       if (u.knifeFlash > 0) u.knifeFlash = Math.max(0, u.knifeFlash - dt * 3.2);
@@ -1483,7 +1592,11 @@
     ctx.drawImage(img, dx + (dw - w) / 2, dy + (dh - h) / 2, w, h);
   }
 
-  function starText(n) { return n >= 3 ? '★★★' : (n === 2 ? '★★' : ''); }
+  /* 卡片上画几颗星。★ 1 星不画；4 星要画 4 颗 ——
+     写成 `n >= 3 ? '★★★'` 的话四星会被画成三星，玩家分不出来。 */
+  function starText(n) {
+    return n <= 1 ? '' : new Array(n + 1).join('★');
+  }
 
   var NUM_STYLE = {
     phys: { fill: '#ffffff', edge: '#3c4a41', size: 1.0 },
@@ -1799,6 +1912,26 @@
         ctx.beginPath();
         ctx.arc(kx + Math.cos(kAng) * kR, ky + Math.sin(kAng) * kR, 2.6, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'beam') {
+        /* ★ 祷告光束：两头淡、中间实，粗细恒定，微微呼吸。
+           和上面那条蓄力激光是**刻意相反**的读法 —— 那条在"涨"，这条在"守"。
+           不写成渐强的原因：渐强会被读成"要打出伤害了"，
+           而这一秒里其实什么都没打，只是在等人站起来。 */
+        var bAlpha = Math.sin(Math.min(1, p) * Math.PI);
+        var bPulse = 0.78 + 0.22 * Math.sin(e.age * 7);
+        ctx.save();
+        ctx.lineCap = 'round';
+        // ① 外晕
+        ctx.globalAlpha = Math.min(1, bAlpha * 0.30 * bPulse);
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = CELL * 0.30;
+        ctx.beginPath(); ctx.moveTo(e.x1, e.y1); ctx.lineTo(e.x2, e.y2); ctx.stroke();
+        // ② 白热芯
+        ctx.globalAlpha = Math.min(1, bAlpha * 0.85);
+        ctx.strokeStyle = '#fff8e0';
+        ctx.lineWidth = CELL * 0.085 * bPulse;
+        ctx.beginPath(); ctx.moveTo(e.x1, e.y1); ctx.lineTo(e.x2, e.y2); ctx.stroke();
         ctx.restore();
       } else if (e.type === 'chargeGlow') {
         /* ★ 自爆蓄力：一圈**越收越紧、越涨越亮**的红环 + 中心一颗在憋的火种。
@@ -2175,6 +2308,19 @@
       ctx.stroke();
     }
 
+    /* ★ 张雪峰进入「狂暴」之后的红色呼吸外圈。
+       狂暴是个**持续状态**（一直在烧自己的血，也一直在加速），
+       光靠角落那个徽章数字不够显眼 —— 这圈描边让他在混战里一眼就能被认出来。
+       每次自毁的那一瞬（ocBurnFlash）会额外亮一下，和掉血数字对上。 */
+    if (u.ocOver) {
+      var zhPulse = Math.sin(state.t * 9) * 0.5 + 0.5;
+      roundRect(dx - 3, dy - 3, cw + 6, ch + 6, 13);
+      ctx.lineWidth = 3 + zhPulse * 2.5;
+      ctx.strokeStyle = (u.ocBurnFlash > 0 ? 'rgba(255,140,110,' : 'rgba(255,90,70,') +
+        (0.40 + zhPulse * 0.45).toFixed(3) + ')';
+      ctx.stroke();
+    }
+
     /* ★ 楚生疑犯「遁入暗影」的冷色外圈：半透明之外再补一圈描边，
        否则在深色地面上"淡下去的卡片"和"快要阵亡的卡片"容易看混。 */
     if (u.shadow) {
@@ -2376,12 +2522,26 @@
       stateBadge('🛡' + u.guardLeft, u.guardFlash > 0 ? '#7ef0d8' : '#8fd8f0', u.guardFlash);
     }
 
+    /* ★ 「和成天下5000精品大果」的自燃徽章：`🌰-6%/s`。
+       带它的人每秒都在掉上限的 6%，**这是常驻状态**（不是触发一下），
+       不常驻显示的话玩家只会看到一张卡的血莫名其妙一路往下掉。
+       ★ 颜色跟自燃的火星对齐（暖褐），和超频那个红橙的 🔥 一眼分得开。 */
+    if (u.burnMaxPct > 0) {
+      stateBadge('🌰-' + Math.round(u.burnMaxPct * 100) + '%/s',
+        u.burnFlash > 0 ? '#ffe0b8' : '#e0a86a', u.burnFlash);
+    }
+
     /* ★ 张雪峰的超频攻速。越过阈值之后变成红色 ——
        那一瞬间开始他就在烧自己的血了，这个颜色是唯一的长期提示。 */
     if (u.oc > 0) {
-      stateBadge((u.ocOver ? '🔥+' : '⚡+') + Math.round(u.oc * 100) + '%',
-        u.ocBurnFlash > 0 ? '#ff8a6a' : (u.ocOver ? '#ff6a4a' : '#ffd98a'),
-        Math.max(u.ocFlash, u.ocBurnFlash));
+      /* ★ 顶到上限时把「+」换成「满」，颜色改成金色。
+         不这么写的话数字停在 200 不动，玩家会以为卡住了。 */
+      var zhFull = (u.ocMax > 0 && u.oc >= u.ocMax - 1e-9);
+      stateBadge(
+        (u.ocOver ? '🔥' : '⚡') + (zhFull ? '满' : '+') + Math.round(u.oc * 100) + '%',
+        zhFull ? '#ffd98a'
+               : (u.ocBurnFlash > 0 ? '#ff8a6a' : (u.ocOver ? '#ff6a4a' : '#ffd98a')),
+        Math.max(u.ocFlash, u.ocBurnFlash, u.ocOverFlash));
     }
 
     /* ★ 冰棍层数。10 层就冻住，所以玩家要能数得出来还差几层。 */
