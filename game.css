@@ -124,6 +124,9 @@
   --shop-card: min(var(--shop-card-max), calc((100vw - 310px) / 5));
   --shop-h: 204px;
   --bench-cell: 70px;
+  /* 商店卡"没有立绘时那个 emoji"的字号。各断点只改这一个值，
+     多图形 emoji（🧊🧊🧊）的缩放在 .sc-fallback-x2/-x3 里统一算。 */
+  --sc-fallback-size: 58px;
 }
 
 * { box-sizing: border-box; }
@@ -517,8 +520,17 @@ button { font: inherit; color: inherit; }
 .sc-art { position: absolute; inset: 0; background: linear-gradient(180deg, #f8fbf6, #e8f0e5); }
 .sc-fallback {
   position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center; font-size: 58px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--sc-fallback-size);
 }
+/* ★★ 一个棋子可以挂**多个** emoji（冰冰冰 = 🧊🧊🧊）。
+ *   三个 emoji 按单字号的尺寸横着排，宽度是三个字 —— 一定会被
+ *   `overflow: hidden` 切掉两边。所以按图形个数缩一档。
+ *   ★ 尺子只有一把：各断点只改 `--sc-fallback-size`，缩放在这里统一算。
+ *     在断点里各写一遍 `-x2 / -x3` 的话，4 个断点 × 2 个变体 = 8 个数字，
+ *     改一个漏一个（"商店卡 emoji 被切 2px"那条坑就是这么来的）。 */
+.sc-fallback.sc-fallback-x2 { font-size: calc(var(--sc-fallback-size) * 0.72); }
+.sc-fallback.sc-fallback-x3 { font-size: calc(var(--sc-fallback-size) * 0.56); }
 .sc-artimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .sc-badge {
@@ -708,6 +720,10 @@ button { font: inherit; color: inherit; }
 .u-art { position: absolute; inset: 0; }
 .u-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .u-emoji { font-size: calc(var(--cell-r) * 0.38); line-height: 1; }
+/* 多图形 emoji（冰冰冰 = 🧊🧊🧊）：三个字横着排会冲出棋子卡，缩一档。
+   两选择器保证能压过上面那条基础规则。 */
+.u-emoji.u-emoji-x2 { font-size: calc(var(--cell-r) * 0.28); }
+.u-emoji.u-emoji-x3 { font-size: calc(var(--cell-r) * 0.22); }
 .u-name { font-size: calc(var(--cell-r) * 0.145); font-weight: 800; color: #1a241d; letter-spacing: -.2px; margin-top: 1px; }
 .u-stars {
   position: absolute; top: 3px; left: 5px; z-index: 4;
@@ -1227,18 +1243,18 @@ button { font: inherit; color: inherit; }
   :root {
     --cell-max: 100px; --cell-chrome: 460px;
     --shop-card-max: 136px; --shop-h: 182px; --bench-cell: 60px;
+    --sc-fallback-size: 50px;
   }
-  .sc-fallback { font-size: 50px; }
   .sc-name { font-size: 14px; }
 }
 @media (max-height: 790px) {
   :root {
     --cell-max: 80px; --cell-chrome: 450px;
     --shop-card-max: 124px; --shop-h: 164px; --bench-cell: 54px;
+    --sc-fallback-size: 42px;
   }
   .logo h1 { font-size: clamp(42px, 5.6vw, 66px); }
   .logo-mark { font-size: 40px; }
-  .sc-fallback { font-size: 42px; }
   .sc-name { font-size: 13px; }
   .sc-traits { font-size: 9.5px; }
   .sc-badge { width: 21px; height: 21px; font-size: 11px; top: 8px; }
@@ -1299,7 +1315,7 @@ button { font: inherit; color: inherit; }
      比卡片宽 2px，于是被 `overflow: hidden` 切掉一点。
      24 个棋子里有 12 个还没立绘，所以这条是**能看见**的。
      改成跟 `--shop-card` 走之后，卡片变小 emoji 跟着变小，永远不会切。 */
-  .sc-fallback { font-size: calc(var(--shop-card) * 0.60); }
+  .sc-fallback { --sc-fallback-size: calc(var(--shop-card) * 0.60); }
 
   /* 手指点得着的那两条在文件末尾的 `(hover: none) and (pointer: coarse)` 里 ——
      放在那儿才能连 iPad 一起覆盖到。 */
