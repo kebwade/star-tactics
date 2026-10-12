@@ -1497,7 +1497,8 @@
       if (ps.ballAt && star >= ps.ballAt) {
         segS.push('⚡ ' + wan(psn[2], '闪电乒乓') + '：开技能的同时扔出闪电球，' +
           '眩晕 ' + ((ps.ballRadius || 1) * 2 + 1) + '×' +
-          ((ps.ballRadius || 1) * 2 + 1) + ' 内的敌人 ' + (ps.ballStun || 0) + ' 秒');
+          ((ps.ballRadius || 1) * 2 + 1) + ' 内的敌人 ' + (ps.ballStun || 0) +
+          ' 秒（**内置冷却 ' + (ps.ballCd || 20) + ' 秒**）');
       }
       if (ps.kingAt && star >= ps.kingAt) {
         segS.push('👑 ' + wan(psn[3], '你们的王回来了！') + '：技能伤害 ×' +
@@ -2248,11 +2249,16 @@
           ((e.radius || 1) * 2 + 1) + '×' + ((e.radius || 1) * 2 + 1) + ' 内 ' +
           (e.targets ? e.targets.length : 0) + ' 个单位，每个 ' +
           Math.round(e.dmg) + ' 点）';
-      /* ★ 刘浩文「手机大王」：40 段全写会刷屏（一次施法 40~80 行），
-         所以只在 summary 那一条上记一行 —— 单发伤害在飘字里看得见。 */
-      case 'phones':
-        return '📱【手机大王】' + nm(e.from) + ' 一口气扔出 ' + e.count +
-          ' 部手机' + (e.boom ? '（**三星手机**，每部都会爆炸）' : '');
+      /* ★ 刘浩文「手机大王」2026-10 改成**5 秒连扔 40 部**：
+         开场记一行（几部、扔多久），之后每一部手机一个事件，
+         但**只在每 8 部记一行**（每秒一行）—— 40 行会刷屏。 */
+      case 'phoneStart':
+        return '📱【手机大王】' + nm(e.from) + ' 开始连扔：' + e.count +
+          ' 部手机 / ' + e.dur + ' 秒（每秒 ' + e.perSec + ' 部）' +
+          (e.boom ? ' —— **三星手机**，每部命中都会爆炸' : '');
+      case 'phoneThrow':
+        if (e.left % 8 !== 0) return null;
+        return '📱 ' + nm(e.from) + ' 还在扔手机……还剩 ' + e.left + ' 部';
       case 'phoneBoom':
         return '💥 ' + nm(e.from) + ' 的手机炸了 —— ' +
           ((e.radius || 1) * 2 + 1) + '×' + ((e.radius || 1) * 2 + 1) + ' 内 ' +
@@ -2265,7 +2271,8 @@
           Math.round(e.movePct * 100) + '%';
       case 'pingpong':
         return '⚡【闪电乒乓】' + nm(e.from) + ' 的闪电球砸在 ' + e.r + ',' + e.c +
-          '，' + (e.targets ? e.targets.length : 0) + ' 个敌人被眩晕 ' + e.dur + ' 秒';
+          '，' + (e.targets ? e.targets.length : 0) + ' 个敌人被眩晕 ' + e.dur +
+          ' 秒（内置冷却 ' + e.cd + ' 秒）';
       case 'neonKill':
         return '🔫 ' + nm(e.who) + ' 在激光期间击杀 ' + nm(e.to) +
           '（' + e.victimStar + '★）—— 激光时间重置回 4 秒' +
