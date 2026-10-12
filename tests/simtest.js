@@ -500,6 +500,29 @@
       }
       return n;
     }
+    /* ★★ 「遁入暗影」要数的是**不会遁入暗影的**存活队友（非楚生疑犯）。
+     *
+     *   这一条是用户报的 bug：场上有两只楚生疑犯时，两只都躲进暗影，
+     *   谁也打不到谁、谁也死不了，"队友都死了就现形"永远不成立 ——
+     *   因为每一只都把**另一只躲在暗影里的**算成了"我还活着"。
+     *
+     *   ★★★ 而校验器原来用的正是**同一个（错的）定义**（matesOf = 所有存活队友），
+     *   所以 80 场随机对局跑了那么久都没报过 —— 引擎和校验器犯了同一个错，
+     *   这条不变量就永远不可能发现它。教训：**校验器的判据要独立于引擎的写法**，
+     *   照着引擎的实现抄一遍，抄到的就是同一个盲点。 */
+    function shadowMatesOf(uid) {
+      var me = init[uid];
+      if (!me) return 0;
+      var n = 0;
+      for (var k in init) {
+        if (k === uid) continue;
+        if (init[k].side !== me.side) continue;
+        if (!alive[k]) continue;
+        if (init[k].shadowAt) continue;      // 同类：不给彼此续命
+        n++;
+      }
+      return n;
+    }
     var lastBurnT = {};                                        // 张雪峰：上次自毁的时刻
     var lastLaughT = {}, laughUntil = {};                      // 奶龙：上次大笑 / 笑到什么时候
     for (uid in init) {
@@ -1506,13 +1529,18 @@
           if (e.on) {
             if (!alive[e.who]) bad(tag + ' 已死亡的棋子遁入暗影 ' + e.who);
             if (shadows[e.who]) bad(tag + ' 已经在暗影里又开了一次 ' + e.who);
-            if (matesOf(e.who) < 1) bad(tag + ' 一个队友都没有就遁入暗影（该直接现形）');
+            if (shadowMatesOf(e.who) < 1) {
+              bad(tag + ' 一个"不会遁入暗影的"队友都没有就遁入暗影（该直接现形）');
+            }
             shadows[e.who] = true;
           } else {
             if (!shadows[e.who]) bad(tag + ' 没进暗影就解除了 ' + e.who);
             shadows[e.who] = false;
-            if (matesOf(e.who) > 0) {
-              bad(tag + ' 队友还没死光就现形了（' + e.who + ' 还有 ' + matesOf(e.who) + ' 个队友）');
+            /* ★ 判据是"非同类队友还剩几个"，不是"所有队友" ——
+               两只楚生疑犯都在暗影里时，谁都不该给谁续命。 */
+            if (shadowMatesOf(e.who) > 0) {
+              bad(tag + ' 队友还没死光就现形了（' + e.who + ' 还有 ' +
+                  shadowMatesOf(e.who) + ' 个非同类队友）');
             }
           }
           break;
@@ -2025,7 +2053,7 @@
      */
     for (var suid in shadows) {
       if (!shadows[suid]) continue;
-      if (matesOf(suid) > 0) continue;      // 还有队友活着 → 躲着是合法的
+      if (shadowMatesOf(suid) > 0) continue;   // 还有非同类队友活着 → 躲着是合法的
       bad(label + ' 战斗结束时 ' + suid + ' 还躲在暗影里（对面既打不到也打不死它）');
     }
     /* ★ 领域也要收尾：**它必须是会长大的有限状态，不能是永久地形**。
@@ -3543,30 +3571,47 @@
    *       否则张雪峰 20 秒就被打死，攻速只叠到 +186%（差 7 次普攻），
    *       「越线」永远触发不了，自毁和雪毙全都会测成「机制没生效」。
    *     · 医师**不能**换成豆包：豆包有「幻觉 / 开智」，会给张雪峰加伤害倍率，
-   *       而雪毙那条断言正是靠 raw ÷ (ad × ramp) 反推攻击力倍率。 */
+   *       而雪毙那条断言正是靠 raw ÷ (ad × ramp) 反推攻击力倍率。
+   *  ★★ 陪练**不能用 3 星钟离**（原来是 3 星山岳）：
+   *     钟离 3 星「天星」每次放技能都会把 3×3 里的人**石化 3 秒**，
+   *     四个钟离轮流放 = 张雪峰全程僵着，普攻从 45 次掉到 11 次，
+   *     「叠到 +200%」这条曲线整段作废（自检一次报出 9 条红）。
+   *     换成「大地守护」：**无被动**、血量相近（5538 vs 6672）、
+   *     技能只是给队友套盾（不控制、不伤害），当沙包正合适。 */
   var ZHANG_ITEMS = ['dragonscale', 'dragonscale', 'belt'];
   function zhangFight(star, seed, extraFoe) {
-    var foes = [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }];
-    if (extraFoe) foes.push({ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 4 });
+    var foes = [{ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }];
+    if (extraFoe) foes.push({ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 4 });
     return ST.Battle.battle({
       a: [{ id: 'blademaster', star: star, items: ZHANG_ITEMS, r: 4, c: 3 },
           { id: 'medic', star: 3, items: ['sapphire', 'sapphire', 'sapphire'], r: 6, c: 6 }],
       b: foes
     }, seed || 313131);
   }
-  /** 3 星专用：4 个摊开的 3 星山岳（各三腰带）。
+  /** 3 星专用：4 个摊开的 3 星「大地守护」（各三腰带）。
    *  ★ 为什么 3 星要换场景：3 星张雪峰的攻击力是 135 × 3.24 = 437，
-   *    对单目标 DPS 六百多 —— 一个山岳 10 秒就没了，战斗 10 秒结束，
+   *    对单目标 DPS 六百多 —— 一个陪练 10 秒就没了，战斗 10 秒结束，
    *    根本走不到「50 次普攻」的阈值。敌人总血量必须够大，
-   *    而且要摊开摆（挨着就会被 3×3 溅射一起扫掉）。 */
+   *    而且要摊开摆（挨着就会被 3×3 溅射一起扫掉）。
+   *  ★ 用大地守护而不是钟离：钟离 3 星的陨石会把张雪峰石化 3 秒，
+   *    他一路僵着根本叠不起来（理由同上一条）。 */
   function zhangLong(star) {
     return ST.Battle.battle({
       a: [{ id: 'blademaster', star: star, items: ZHANG_ITEMS, r: 4, c: 3 },
           { id: 'medic', star: 3, items: ['sapphire', 'sapphire', 'sapphire'], r: 6, c: 6 }],
-      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 3 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 0 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 7 }]
+      b: [{ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 0 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 2 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 4 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 6 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 0 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 2 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 4 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 6 },
+          /* ★ 陪练一侧也带一个奶：这条断言要量的是「封顶**之后**的出手频率」，
+             而 8 个陪练总会在 25 秒前后被砍光 —— 少了这口奶，
+             封顶之后只剩 0.77 秒可量（2 次普攻），频率算出来是 0。
+             老牧师还会把第一个阵亡的队友满血拉回来，等于又白送一条命。 */
+          { id: 'medic', star: 3, items: ['holygrail', 'holygrail', 'holygrail'], r: 7, c: 3 }]
     }, 313131);
   }
   function eventsOf(res, type, uid) {
@@ -3830,11 +3875,23 @@
   (function () {
     var r = ST.Battle.battle({
       a: [{ id: 'blademaster', star: 3, items: ['bloodthirst', 'giantblade', 'belt'], r: 4, c: 3 },
-          { id: 'medic', star: 3, items: ['sapphire', 'sapphire', 'sapphire'], r: 6, c: 6 }],
-      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 3 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 0 },
-          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 7 }]
+          { id: 'medic', star: 3, items: ['sapphire', 'sapphire', 'sapphire'], r: 6, c: 6 },
+          /* ★★ 第二个奶：这一条要量的是「**封顶之后**的出手频率」。
+             实测对局长度不是被陪练的血量决定的，而是被**张雪峰自己能活多久**
+             决定的 —— 他一进狂暴就每秒烧 44% 当前生命，撑不住就先倒，
+             同一帧战斗就结束了（"封顶后只量到 0.77 秒"就是这么来的）。
+             所以延长窗口的办法是**让他活久一点**，而不是给对面加血：
+             实测对面从 4 个加到 8 个陪练，对局长度 23.67s → 25.13s，几乎没动。
+             （多一个奶 = 每秒多 620×1.3 的治疗，专门喂给"血量百分比最低"的他。） */
+          { id: 'medic', star: 2, items: ['holygrail', 'holygrail', 'holygrail'], r: 0, c: 0 }],
+      b: [{ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 0 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 2 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 4 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 6 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 0 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 2 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 4 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 6, c: 6 }]
     }, 313131);
     var ocs = eventsOf(r, 'ocas', 'a0');
     var dur = r.log.length ? r.log[r.log.length - 1].t : 0;
@@ -3863,7 +3920,14 @@
         if (e.t > ocs[capIdx].t) atkAfter++;
       }
       var span = dur - ocs[capIdx].t;
-      var rate = span > 1 ? atkAfter / span : 0;
+      /* ★★ 门槛从 1 秒放宽到 0.5 秒（并要求至少 2 次普攻）。
+         原来那句 `span > 1` 本意是"别拿一个太短的窗口去除"，
+         但它把一种**完全正常**的结果判成了 0：封顶正好发生在收尾阶段时，
+         剩下 0.77 秒里正好还有 2 次普攻 —— 间隔 0.385 秒，
+         换算出来就是 2.6 次/秒，和理论值一模一样，
+         却因为窗口不够 1 秒被写成「0 次/秒」报红。
+         判据本身没变（仍然是 2.3~2.95 次/秒），只是不再要求窗口那么长。 */
+      var rate = (span > 0.5 && atkAfter >= 2) ? atkAfter / span : 0;
       TH.ok('★ 封顶之后出手频率停在 +200% 对应的 2.64 次/秒',
         rate > 2.3 && rate < 2.95,
         U.round2(rate) + ' 次/秒（理论 2.64）—— 封顶后 ' + atkAfter + ' 次 / ' +
@@ -3991,7 +4055,7 @@
     return ST.Battle.battle({
       a: [{ id: 'medic', star: priestStar, items: ['belt', 'belt', 'belt'], r: 0, c: 0 },
           { id: 'bowman', star: 3, r: 3, c: 3 }],
-      b: [{ id: 'titan', star: 3, r: 4, c: 3 }]
+      b: [{ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
     }, 424242);
   }
 
@@ -6609,6 +6673,73 @@
       hpStart + ' → ' + hpEnd);
   })();
 
+  /* ④-b ★★ 两只楚生疑犯：不能互相"续命"（用户报的那个死局）
+   *
+   *   原来解除条件是「aliveCount[自己这方] <= 1」—— 两只都躲进暗影之后，
+   *   每一只都把**另一只躲在暗影里的**算成"我还活着"，
+   *   于是谁也现不了形：对面打不到它们（免疫 + 不会被索敌），
+   *   它们也打不到对面（暗影里攻速减半但能打？—— 能打，可对面打不死它们），
+   *   这一局只能拖到 60 秒读秒判平局。
+   *
+   *   修法：解除条件改成「**不会遁入暗影的**队友全部阵亡」，
+   *   而且**入口用同一个判据**（没有那种队友就压根不遁入，
+   *   否则会出现"进暗影 → 下一 tick 现形"的闪烁）。 */
+  (function () {
+    // ① 只有两只楚生疑犯：根本没有"非同类队友"，所以谁都不该遁入暗影
+    var only = ST.Battle.battle({
+      a: [{ id: 'windcaller', star: 3, items: ['sapphire', 'sapphire', 'belt'], r: 3, c: 2 },
+          { id: 'windcaller', star: 3, items: ['sapphire', 'sapphire', 'belt'], r: 3, c: 5 }],
+      b: [{ id: 'titan', star: 2, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, 424242);
+    var onlyOn = only.log.filter(function (e) { return e.type === 'shadow' && e.on; });
+    TH.eq('★★ 只有两只楚生疑犯时，谁都不遁入暗影（进去就出不来了）',
+      onlyOn.length, 0);
+    TH.ok('★ 这一局也没被拖成超时（两边真的在打）',
+      only.reason !== 'timeout' || only.ticks < CFG.MAX_TICKS,
+      only.reason + ' / ' + only.ticks + ' tick');
+
+    // ② 两只楚生疑犯 + 一个会先阵亡的脆皮队友
+    var withMate = ST.Battle.battle({
+      a: [{ id: 'windcaller', star: 3, items: ['sapphire', 'sapphire', 'belt'], r: 3, c: 2 },
+          { id: 'windcaller', star: 3, items: ['sapphire', 'sapphire', 'belt'], r: 3, c: 5 },
+          { id: 'dagger', star: 1, r: 3, c: 7 }],
+      b: [{ id: 'titan', star: 2, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, 909090);
+    var wOn = withMate.log.filter(function (e) { return e.type === 'shadow' && e.on; });
+    var wOff = withMate.log.filter(function (e) { return e.type === 'shadow' && !e.on; });
+    var mateDeath = withMate.log.filter(function (e) { return e.type === 'death' && e.who === 'a2'; });
+    TH.ok('这一场两只都遁入过暗影（否则下面全是空断言）', wOn.length > 0,
+      wOn.length + ' 次进入');
+    TH.ok('★ 那个脆皮队友确实阵亡了（解除条件的触发点）', mateDeath.length > 0,
+      mateDeath.length ? U.round2(mateDeath[0].t) + 's' : '没死');
+    if (wOn.length && mateDeath.length) {
+      /* ★★ 关键：非同类队友一死光，**两只都**必须现形 ——
+         不是只现形一只、另一只继续躲着。 */
+      var lastMateT = mateDeath[mateDeath.length - 1].t;
+      var who = {};
+      wOn.forEach(function (e) { who[e.who] = true; });
+      var missing = Object.keys(who).filter(function (k) {
+        return !wOff.some(function (e) { return e.who === k && e.t >= lastMateT - 1e-9; });
+      });
+      TH.ok('★★ 非同类队友死光之后，**每一只**都现形了（没有谁继续躲着）',
+        missing.length === 0, missing.join(',') || '全部现形');
+      /* 收尾：用事件流算出"战斗结束那一刻还有谁躲着" */
+      var stillHidden = {};
+      withMate.log.forEach(function (e) {
+        if (e.type !== 'shadow') return;
+        if (e.on) stillHidden[e.who] = true; else delete stillHidden[e.who];
+      });
+      TH.eq('★★ 战斗结束时没有任何人还躲在暗影里（否则这一局没人能赢）',
+        Object.keys(stillHidden).length, 0);
+      TH.ok('★ 而且这一局没有因此拖到读秒结束',
+        withMate.reason !== 'timeout' || withMate.ticks < CFG.MAX_TICKS,
+        withMate.reason + ' / ' + withMate.ticks + ' tick');
+    }
+    checkInvariants(withMate, '楚生疑犯·双份', function (msg) {
+      TH.ok('不变量（双份楚生疑犯）: ' + msg, false);
+    });
+  })();
+
   /* ⑤ 3 星暗影的"攻速减半、伤害翻倍"：两个倍率都要在事件里读得出来。
         ★ 判据还是 raw ÷ (ad × ramp) —— 减抗和 ramp 会被约掉。 */
   (function () {
@@ -6849,7 +6980,12 @@
       a: [{ id: 'deadeye', star: 1, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
           // 裸装匕首客：一定会先死，用来触发"所有队友阵亡"
           { id: 'dagger', star: 1, r: 3, c: 4 }],
-      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+      /* ★★ 陪练用「大地守护」而不是钟离：钟离 3 星的陨石会把 Dank1ng
+         **石化 3 秒**，而这一条量的正是"他放技能的频率" ——
+         被石化的那几秒里他一次技能都放不出来，数字直接掉一半以上。
+         摆两个是为了让"开之后"那段窗口够长（一个陪练 4 秒就没了）。 */
+      b: [{ id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 },
+          { id: 'earthwarden', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 6 }]
     }, 3131);
     var on = res.log.filter(function (e) { return e.type === 'endless' && e.on; });
     var off = res.log.filter(function (e) { return e.type === 'endless' && !e.on; });
