@@ -324,7 +324,7 @@
       for (var k in groups) {
         var list = groups[k];
         if (list.length < R.COMBINE_COUNT) continue;
-        if (list[0].unit.star >= 3) continue;
+        if (list[0].unit.star >= ST.MAX_STAR) continue;
 
         // 优先让合成结果留在棋盘上，其次保留装备最多的那个位置的装备
         list.sort(function (a, b) {
@@ -426,7 +426,11 @@
 
   function sellRefund(u) {
     var d = def(u.defId);
-    var mult = u.star === 1 ? 1 : (u.star === 2 ? 3 : 9);
+    /* ★ 星级每高一档，价值 ×3（因为合成要 3 个）——
+       1★→1、2★→3、3★→9、4★→27。写成 pow 而不是三元链：
+       加 4 星的时候，`u.star === 1 ? 1 : (u.star === 2 ? 3 : 9)` 会**静默地**
+       把 4 星也当成 9 倍，玩家卖掉一个 4 星只拿回三分之一。 */
+    var mult = Math.pow(R.COMBINE_COUNT, u.star - 1);
     return Math.max(1, d.cost * mult);
   }
 
@@ -612,7 +616,11 @@
     art.appendChild(img);
     box.appendChild(art);
 
-    box.appendChild(UI.el('span', 'u-stars', u.star === 1 ? '' : (u.star === 2 ? '★★' : '★★★')));
+    /* ★ 1 星不画星（画了反而显得像"有星"），2 星起画对应颗数。
+       用 repeat 而不是三元链：加 4 星时 `star === 2 ? '★★' : '★★★'`
+       会把 4 星画成 3 颗 —— 玩家看到一个"三星"其实是四星。 */
+    box.appendChild(UI.el('span', 'u-stars',
+      u.star <= 1 ? '' : new Array(u.star + 1).join('★')));
     box.appendChild(UI.el('span', 'u-cost', String(d.cost)));
     if (u.items.length) {
       /* 棋子卡上的装备角标：有图用图、没图用 emoji。
@@ -830,16 +838,26 @@
       '：' + it.desc;
   }
 
+  /**
+   * 从被动名字表里取某个星级的**显示名字**。
+   *
+   * ★★ 为什么必须走这一个函数：`passive.names` 里同一个星级的名字写法不统一 ——
+   *    有的是字符串（`2: '巧乐兹'`），有的是**累积数组**
+   *    （`2: ['你快不过我你信吗', '巧乐兹']`，3 星就是三个名字叠在一起）。
+   *    直接塞进字符串拼接里，数组会被 `toString()` 成「你快不过我你信吗,巧乐兹」，
+   *    玩家看到的就是一串带逗号的名字链 —— **12 个被动里有 7 个是数组写法**，
+   *    所以这不是个别失误，是这一类写法的默认坑。
+   *    统一取数组的**最后一个**（= 这个星级新解锁的那一层）。
+   */
+  function wan(v, fb) {
+    return (v instanceof Array) ? (v[v.length - 1] || fb) : (v || fb);
+  }
+
   function passiveLine(d, star) {
     var name = ST.passiveName(d, star);
     if (!name) return null;
     var kind = ST.passiveKind(d);
     var step = Math.round(ST.passiveStep(d, star) * 100);
-    /* ★ 被动名字可能写成数组（3 星叠了多个名字），统一取最后一个 ——
-       好几个 kind 都要做同一件事，抽一个小工具比每处写一遍三元表达式强。 */
-    function wan(v, fb) {
-      return (v instanceof Array) ? (v[v.length - 1] || fb) : (v || fb);
-    }
     if (kind === 'frenzy') {
       var cap = Math.round(ST.passiveCap(d) * 100);
       return '⚡ ' + name + '：每次攻击攻速 +' + step + '%，本局内叠加、上限 +' + cap + '%';
@@ -877,26 +895,58 @@
          所以这一行要说清"已经解锁到哪一层"。数值全部从数据取。 */
       var po = d.passive || {};
       var pn = po.names || {};
-      var seg = ['⚡ ' + (pn[1] || '超频') + '：开局攻速/移速 +' +
-                 Math.round((po.ocAsStart || 0) * 100) + '%，每次普攻再 +' +
-                 Math.round((po.ocPerHit || 0) * 100) + '%，' +
+      /* ★ 数值全部从数据取，一个都不写死 —— 2026-10 削弱过一版
+         （开局 100%→60%、狂暴线 200%→100%、新加 200% 上限），
+         写死的地方全都变成了假信息。 */
+      var zhStep = (po.ocPerHit || 0) * (po.ocBerserkMul > 0 ? po.ocBerserkMul : 1);
+      var zhName = po.ocBerserkName || '狂暴';
+      var seg = ['⚡ ' + (pn[1] || '超频') + '：开局攻速 +' +
+                 Math.round((po.ocAsStart || 0) * 100) + '%、移速 +' +
+                 Math.round((po.ocMoveStart || 0) * 100) + '%，每次普攻再 +' +
+                 Math.round((po.ocPerHit || 0) * 100) + '%；攻速加成到 +' +
+                 Math.round((po.ocThreshold || 0) * 100) + '% 进入「' + zhName +
+                 '」—— 每秒失去当前生命的 ' + Math.round((po.ocBurnPct || 0) * 100) +
+                 '%，但每次普攻叠的攻速翻倍到 +' + Math.round(zhStep * 100) + '%' +
+                 // ★ 上限是 2026-10 新加的：没有上限时这一句不该出现
+                 (po.ocMaxAs > 0
+                   ? ('（加成上限 +' + Math.round(po.ocMaxAs * 100) + '%）')
+                   : '') +
+                 '；' +
                  // ★ 范围是 3 星才有的，1/2 星写「单体」—— 写错就是假信息
                  ((po.ocAoeAt && star >= po.ocAoeAt)
                    ? ('普攻变 ' + ((po.ocAoeRadius || 0) * 2 + 1) + '×' +
                       ((po.ocAoeRadius || 0) * 2 + 1) + ' 范围')
-                   : '普攻是单体') +
-                 '；攻速到 +' + Math.round((po.ocThreshold || 0) * 100) +
-                 '% 后每秒失去当前生命的 ' + Math.round((po.ocBurnPct || 0) * 100) + '%'];
+                   : '普攻是单体')];
       if (po.chillAt && star >= po.chillAt) {
-        seg.push('🧊 ' + (pn[2] || '巧乐兹') + '：每次普攻给敌人 +' + (po.chillPerHit || 1) +
+        seg.push('🧊 ' + wan(pn[2], '巧乐兹') + '：每次普攻给敌人 +' + (po.chillPerHit || 1) +
           ' 层冰棍（每层 -' + Math.round((po.chillPerStack || 0) * 100) +
           '% 攻速移速），满 ' + po.chillMax + ' 层冰冻 ' + po.freezeDur + ' 秒');
       }
       if (po.ocAdAt && star >= po.ocAdAt) {
         var pn3 = (pn[3] instanceof Array) ? pn[3][pn[3].length - 1] : '雪毙';
-        seg.push('❄ ' + pn3 + '：攻速达标后攻击力 +' + Math.round((po.ocAdPct || 0) * 100) +
+        seg.push('❄ ' + pn3 + '：进入「' + zhName + '」之后攻击力 +' +
+          Math.round((po.ocAdPct || 0) * 100) +
           '%，普攻升级成 ' + ((po.ocAoeRadius || 0) * 2 + 1) + '×' +
           ((po.ocAoeRadius || 0) * 2 + 1) + ' 范围');
+      }
+      return seg.join('　');
+    }
+    if (kind === 'lastRites') {
+      /* ★ 老牧师 1 星没有被动（names 从 2 开始写），所以这里只可能被 2/3 星调到；
+         代码仍然按"已经解锁到哪一层"写，和别的 kind 保持一致。
+         ★ 这一条**不能写"每 X 秒"或"每次"** —— 它是**每场战斗一次**的
+           一次性资源，写含糊了玩家会以为能反复救人。 */
+      var pr = d.passive || {};
+      var prn = pr.names || {};
+      var seg = ['🙏 ' + wan(prn[2], '还能抢救一下') + '：每场战斗一次 —— 第一个阵亡的' +
+                 '队友会在 ' + (pr.reviveDelay || 1) + ' 秒祷告后' +
+                 (Math.round((pr.reviveHpPct || 1) * 100) >= 100
+                   ? '满血站起来' : ('以 ' + Math.round((pr.reviveHpPct || 1) * 100) +
+                                     '% 的血站起来')) +
+                 '（原地，原格被占就落到最近的空格；老牧师救不了自己）'];
+      if (pr.adBuffAt && star >= pr.adBuffAt) {
+        seg.push('✨ ' + wan(prn[3], '圣光赐福') + '：复活的那一刻，老牧师和被救的人' +
+          '攻击力都 +' + Math.round((pr.adBuffPct || 0) * 100) + '%（本局有效）');
       }
       return seg.join('　');
     }
@@ -1006,7 +1056,7 @@
       var pl = d.passive || {};
       var pln = pl.names || {};
       var segL = [];
-      segL.push('♾️ ' + (pln[1] || '空悲切') + '：队友全部阵亡后**能量无限**（法力永远满格）');
+      segL.push('♾️ ' + (pln[1] || '空悲切') + '：队友全部阵亡后能量无限（法力永远满格）');
       if (pl.startFullAt && star >= pl.startFullAt) {
         segL.push('⚡ ' + wan(pln[2], '老男孩') + '：开局满能量');
       }
@@ -1075,11 +1125,27 @@
       var po2 = d.passive || {};
       var pn2 = po2.names || {};
       var pn3b = (pn2[3] instanceof Array) ? pn2[3][pn2[3].length - 1] : '雪毙';
-      return '☆ 已解锁「' + (pn2[1] || '超频') + '」；2 星「' + (pn2[2] || '巧乐兹') +
+      var zhB2 = po2.ocBerserkName || '狂暴';
+      return '☆ 已解锁「' + (pn2[1] || '超频') + '」：开局攻速 +' +
+        Math.round((po2.ocAsStart || 0) * 100) + '%、每次普攻 +' +
+        Math.round((po2.ocPerHit || 0) * 100) + '%，到 +' +
+        Math.round((po2.ocThreshold || 0) * 100) + '% 进「' + zhB2 +
+        '」（每秒烧 44% 血、之后每次叠的攻速翻倍）；2 星「' + wan(pn2[2], '巧乐兹') +
         '」普攻叠冰棍、满 ' + (po2.chillMax || 10) + ' 层冰冻，3 星「' + pn3b +
-        '」攻速达标后攻击力 +' + Math.round((po2.ocAdPct || 0) * 100) +
+        '」进狂暴后攻击力 +' + Math.round((po2.ocAdPct || 0) * 100) +
         '%、普攻升级成 ' + ((po2.ocAoeRadius || 0) * 2 + 1) + '×' +
         ((po2.ocAoeRadius || 0) * 2 + 1) + ' 范围';
+    }
+    if (kind === 'lastRites') {
+      /* ★ 老牧师 1 星**没有任何被动**，所以这一行要说的是"升星能得到什么"，
+         而不是"已经解锁了什么" —— 和豆包的写法对齐（它也是 1 星没被动）。 */
+      var pr2 = d.passive || {};
+      var prn2 = pr2.names || {};
+      return '☆ 被动预览：2 星「' + wan(prn2[2], '还能抢救一下') +
+        '」每场战斗一次，第一个阵亡的队友会在 ' + (pr2.reviveDelay || 1) +
+        ' 秒祷告后满血站起来；3 星「' + wan(prn2[3], '圣光赐福') +
+        '」复活时老牧师和被救的人攻击力都 +' +
+        Math.round((pr2.adBuffPct || 0) * 100) + '%';
     }
     if (kind === 'laugh') {
       /* ★ 奶龙 1 星就有被动（笑气护体），所以这里的「预告」说的是**还差什么**，
@@ -1373,19 +1439,73 @@
         return null;
       /* ★ 张雪峰的超频。平时不写（一局能叠几十次，会刷屏），
          只在**越过阈值**和**每掉到一半血**这两个时刻各写一条。 */
-      case 'ocas':
+      case 'ocas': {
+        var zsnap = names[e.who] || {};
         if (e.justOver) {
+          /* ★ 这里说的事情有三件，缺一件玩家就理解不了自己在看什么：
+               ① 状态换了个名字（狂暴）；② 从现在起每秒掉血；
+               ③ 但叠攻速的速度翻倍了 —— 这是"狂暴"唯一的正面收益。
+             数值全部从开局快照里取，不写死：削弱那天 44%/4%/100% 都会变。 */
           return '🔥『你快不过我你信吗』' + nm(e.who) + ' 的攻速冲到了 +' +
-            Math.round(e.pct * 100) + '% —— 从现在起他每秒烧掉自己 44% 的血' +
+            Math.round(e.pct * 100) + '% —— 进入「' + (zsnap.ocBerserkName || '狂暴') +
+            '」：从现在起每秒烧掉自己 ' +
+            Math.round((zsnap.ocBurnPct || 0.44) * 100) + '% 的血，' +
+            '但每次普攻叠的攻速也翻倍到 +' +
+            Math.round((zsnap.ocPerHitBerserk || 0.04) * 100) + '%' +
             (e.adBonus > 0 ? ('，攻击力 +' + Math.round(e.adBonus * 100) + '%') : '');
         }
+        if (e.capped) {
+          return '⚡ ' + nm(e.who) + ' 的攻速加成顶到 +' +
+            Math.round(e.pct * 100) + '% 上限了';
+        }
         return null;
+      }
       case 'selfburn':
         /* 只在血量跌破一半的那一下写一条，不然每秒一行也会刷屏 */
         if (e.hpAfter <= e.hpMax * 0.5 && e.hpAfter + e.amount > e.hpMax * 0.5) {
-          return '🔥 ' + nm(e.who) + ' 烧掉了一半血（剩 ' + Math.round(e.hpAfter) + '）';
+          /* ★ 两种自燃的**原因不一样**，文案要分开：
+               超频是"他自己在烧"，果子是"那颗果子的劲儿上来了"。
+               写成同一句话，玩家会以为是同一个机制、或者以为是 bug。 */
+          return e.reason === 'item'
+            ? '🌰 ' + nm(e.who) + ' 的大果劲儿上来了，烧掉了一半血（剩 ' +
+              Math.round(e.hpAfter) + '）'
+            : '🔥 ' + nm(e.who) + ' 烧掉了一半血（剩 ' + Math.round(e.hpAfter) + '）';
         }
         return null;
+
+      /* ★ 老牧师「临终祷告」。两个事件合成一个故事：
+           lastRites  有队友倒下了，牧师开始祷告（**还没救活**）
+           reviveAlly 1 秒之后，人站起来了；3 星的话双方一起拿到 +20% 攻击力
+         ★ 两件事都要写：只写"复活了"的话，玩家看不到那 1 秒里发生了什么；
+           只写"开始祷告"的话，会以为必救 —— 而自己半场站满时是真救不回来的。 */
+      case 'lastRites':
+        /* ★ 这里**不能用 U.round2** —— game.js 里没有 U 这个别名（只有 util.js 的
+           ST.U），写了会在真的有牧师上场的对局里抛 ReferenceError。
+           要保留一位小数就自己算。 */
+        return '🙏 ' + nm(e.from) + ' 开始给 ' + nm(e.to) + ' 做临终祷告（' +
+          (Math.round(e.delay * 10) / 10) + ' 秒）' +
+          (e.adPct > 0 ? ('——救回来之后两人的攻击力都会 +' +
+            Math.round(e.adPct * 100) + '%') : '');
+      case 'reviveAlly': {
+        if (!e.ok) {
+          /* ★ 失败也要有一条。这是**唯一**一条"牧师用掉了被动、人却没起来"
+             的线索，不写出来在日志里就是凭空少了一次复活。 */
+          return '⚠️ ' + nm(e.from) + ' 的祷告没能救回 ' + nm(e.who) +
+            '（自己半场没有空格了）';
+        }
+        var full = e.hp >= e.hpMax - 0.01;
+        var rvLine = '✨ ' + nm(e.from) + ' 把 ' + nm(e.who) + ' 拉了回来（' +
+          (full ? '满血 ' : '') + Math.round(e.hp) + '/' + Math.round(e.hpMax) + '）';
+        if (e.adPct > 0) {
+          /* ★ 只报**真的加上了 buff 的人**（blessed），不按"应该给两个人"写 ——
+             牧师在这一秒里被打死时只有被救的人拿到，写成两个就是假信息。 */
+          var both = e.blessed && e.blessed.length >= 2;
+          rvLine += '，' + (both ? '两人' : nm(e.blessed && e.blessed[0] ? e.blessed[0] : e.who)) +
+            '攻击力 +' + Math.round(e.adPct * 100) + '%' +
+            (both ? '' : '（牧师已经阵亡，没拿到）');
+        }
+        return rvLine;
+      }
       /* ★ 冰棍。每条都写太碎，只在**攒满冰冻**那一刻由上面的 stun 写。
          这里只报「层数过半」这一个里程碑，让玩家知道快冻上了。 */
       case 'chill':
