@@ -5,11 +5,11 @@ set PAGE=
 echo.
 echo   科币战争 - 自检
 echo   ==================================================
-echo   [1] 战斗模拟器    598 项  改过 battle.js / units.js 就跑
+echo   [1] 战斗模拟器    684 项  改过 battle.js / units.js 就跑
 echo   [2] 数值平衡       12 项  改过 units/traits/items.js 就跑
 echo   [3] 关卡与无尽     23 项  改过 levels.js 就跑
-echo   [4] 游戏集成      418 项  改过 game.js / ui.js / arena.js / index.html / game.css 就跑
-echo   [5] 全部跑一遍（共 1051 项）
+echo   [4] 游戏集成      522 项  改过 game.js / ui.js / arena.js / index.html / game.css 就跑
+echo   [5] 全部跑一遍（共 1241 项）
 echo   [0] 退出
 echo.
 set /p choice=  输入序号后回车: 
