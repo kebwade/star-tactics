@@ -1211,6 +1211,254 @@
     TH.ok('3 星同时保留「还能抢救一下」（两层是叠加的，不是替换）',
       m3.indexOf('还能抢救一下') >= 0 && m3.indexOf('圣光赐福') >= 0, m3.slice(0, 300));
 
+    /* ---------- 孙笑川：天皇 / 儒雅随和 / 安排上了 ----------
+     * ★ 他 1 星**就有被动**（天皇），所以三种形态的差别是"又解锁了一层"，
+     *   而不是豆包那种"1 星只给预告"。这三条要分别钉住：
+     *     1 星 只有光环 + 一句"还差什么"
+     *     2 星 光环 + 技能回血（**不能**提前写倒戈）
+     *     3 星 三层全在
+     *   ★ 2 星那条是最容易写错的：把 3 星的"倒戈"写进 2 星文案，
+     *     玩家会为了一条不生效的规则去升星。 */
+    TH.section('孙笑川 · 被动文案');
+
+    var s1b = await pick('butcher', 1);
+    TH.ok('1 星显示「天皇」', s1b.indexOf('天皇') >= 0, s1b.slice(0, 160));
+    TH.ok('★ 1 星写明「3×3」「+20% 吸血」', s1b.indexOf('3×3') >= 0 &&
+      s1b.indexOf('+20%') >= 0 && s1b.indexOf('吸血') >= 0, s1b.slice(0, 200));
+    TH.ok('★ 1 星把"还差什么"写在同一行（2 星回血、3 星倒戈）',
+      s1b.indexOf('还差') >= 0 && s1b.indexOf('儒雅随和') >= 0 &&
+      s1b.indexOf('安排上了') >= 0, s1b.slice(0, 240));
+    TH.ok('★ 1 星还没到 2 星，所以**不能**说"技能回血已经生效"',
+      s1b.indexOf('转化为自己的治疗') < 0, s1b.slice(0, 240));
+
+    var s2b = await pick('butcher', 2);
+    TH.ok('2 星多了「儒雅随和」', s2b.indexOf('儒雅随和') >= 0, s2b.slice(0, 240));
+    TH.ok('★ 2 星写明技能伤害 100% 转治疗',
+      s2b.indexOf('100%') >= 0 && s2b.indexOf('治疗') >= 0, s2b.slice(0, 260));
+    TH.ok('★★ 2 星**不能**提「安排上了」（倒戈是 3 星的，写了就是假信息）',
+      s2b.indexOf('安排上了') < 0 || s2b.indexOf('还差') >= 0, s2b.slice(0, 300));
+    TH.ok('2 星还保留着「天皇」（三层是叠加的）', s2b.indexOf('天皇') >= 0,
+      s2b.slice(0, 160));
+
+    var s3b = await pick('butcher', 3);
+    TH.ok('3 星多了「安排上了」', s3b.indexOf('安排上了') >= 0, s3b.slice(0, 320));
+    TH.ok('★ 3 星写明「以 20% 生命倒戈成我方单位」',
+      s3b.indexOf('20%') >= 0 && s3b.indexOf('倒戈') >= 0 &&
+      s3b.indexOf('我方') >= 0, s3b.slice(0, 320));
+    TH.ok('★ 3 星写明「对有复活能力的无效」（不说的话玩家会以为能无限招安）',
+      s3b.indexOf('有复活能力') >= 0, s3b.slice(0, 340));
+    TH.ok('3 星三层全在（天皇 / 儒雅随和 / 安排上了）',
+      s3b.indexOf('天皇') >= 0 && s3b.indexOf('儒雅随和') >= 0 &&
+      s3b.indexOf('安排上了') >= 0, s3b.slice(0, 340));
+
+    /* ---------- 电棍：导电 / 麻痹 / 三相电 ---------- */
+    TH.section('电棍 · 被动文案');
+
+    var e1 = await pick('spearman', 1);
+    TH.ok('1 星显示「导电」', e1.indexOf('导电') >= 0, e1.slice(0, 160));
+    TH.ok('★ 1 星写明了核心数字：0.5 秒、3×3、25%、最多四次',
+      e1.indexOf('0.5 秒') >= 0 && e1.indexOf('3×3') >= 0 &&
+      e1.indexOf('25%') >= 0 && e1.indexOf('4 次') >= 0, e1.slice(0, 260));
+    TH.ok('★ 1 星写明"同时只能挂 1 条"（这是需求里那条限制）',
+      e1.indexOf('同时只能挂 1 条') >= 0, e1.slice(0, 260));
+    TH.ok('★ 1 星把"还差什么"写在同一行（2 星眩晕、3 星 3 条）',
+      e1.indexOf('还差') >= 0 && e1.indexOf('麻痹') >= 0 &&
+      e1.indexOf('三相电') >= 0, e1.slice(0, 300));
+    TH.ok('★ 1 星还没到 2 星，**不能**说眩晕已经生效',
+      e1.indexOf('额外击晕') < 0, e1.slice(0, 300));
+
+    var e2 = await pick('spearman', 2);
+    TH.ok('2 星多了「麻痹」', e2.indexOf('麻痹') >= 0, e2.slice(0, 260));
+    TH.ok('★ 2 星写明「额外击晕 0.5 秒」',
+      e2.indexOf('击晕') >= 0 && e2.indexOf('0.5 秒') >= 0, e2.slice(0, 300));
+    TH.ok('★ 2 星的"同时几条"还是 1（三相电是 3 星的事）',
+      e2.indexOf('同时只能挂 1 条') >= 0, e2.slice(0, 300));
+
+    var e3 = await pick('spearman', 3);
+    TH.ok('3 星多了「三相电」', e3.indexOf('三相电') >= 0, e3.slice(0, 320));
+    TH.ok('★ 3 星的"同时几条"变成 3（按星级取的表，不是写死的）',
+      e3.indexOf('同时只能挂 3 条') >= 0, e3.slice(0, 320));
+    TH.ok('3 星同时保留前两层（导电 + 麻痹）',
+      e3.indexOf('导电') >= 0 && e3.indexOf('麻痹') >= 0, e3.slice(0, 320));
+
+    /* ★★ 4 星：这是刚踩过的坑，必须钉住。
+     *   `maxAtOnce` 这张表只写到 3 星。文案层直接 `map[4]` 取到 undefined 后
+     *   兜底成 1，于是同一张卡在 3 星写着「同时能挂 3 条」，
+     *   **升到 4 星反而变成「只能挂 1 条」**，而且「三相电」那一层直接消失。
+     *   战斗引擎里是往低档取的（4 星 = 3 星融合，能力停在 3 星），
+     *   所以卡面和实际打起来的效果会互相矛盾 —— 纯数值自检发现不了。 */
+    var e4 = await pick('spearman', 4);
+    TH.ok('★ 4 星电棍的"同时几条"仍然是 3（4 星不在表里，要往低档取）',
+      e4.indexOf('同时只能挂 3 条') >= 0, e4.slice(0, 320));
+    TH.ok('★ 4 星不会把「三相电」那一层丢掉（升级不该让人变弱）',
+      e4.indexOf('三相电') >= 0, e4.slice(0, 320));
+    TH.ok('★ 4 星同时保留导电 + 麻痹（前两层也不该消失）',
+      e4.indexOf('导电') >= 0 && e4.indexOf('麻痹') >= 0, e4.slice(0, 320));
+    TH.ok('4 星不再有"还差"那一行（已经满了）',
+      e4.indexOf('还差') < 0, e4.slice(0, 320));
+
+    /* ---------- 冰冰冰：冻手冻脚 / 千里冰封 ----------
+     * ★★ 这个 kind 的两个数字都**不是百分比**（1.5 秒、门槛 2/3 星），
+     *   而 `passiveStep` 在这个 kind 上只是"这一星级有没有被动"的开关（1/1）。
+     *   照抄 frenzy / healGift 那种 ×100 的写法会显示成「冰冻 150 秒」——
+     *   数值全对、不报错，玩家看到的是一个荒谬的秒数。
+     *   所以这里把秒数、范围、以及"1 星没有被动"三件事分别钉住。 */
+    TH.section('冰冰冰 · 被动文案');
+
+    var f1 = await pick('frostmage', 1);
+    TH.ok('★ 1 星不存在"已生效"那一行，走的是升星预告',
+      f1.indexOf('被动预览') >= 0, f1.slice(0, 260));
+    TH.ok('★ 1 星的预告写明了技能现在打的是 3×3、以及 260 点伤害',
+      f1.indexOf('3×3') >= 0 && f1.indexOf('260') >= 0, f1.slice(0, 260));
+    TH.ok('★ 1 星的预告写明 2 星带 1.5 秒冰冻、3 星改成打全体',
+      f1.indexOf('1.5 秒') >= 0 && f1.indexOf('全体') >= 0, f1.slice(0, 300));
+    TH.ok('★ 1 星的预告里不能出现「冰冻 150」这种把秒数当百分比的写法',
+      f1.indexOf('150') < 0, f1.slice(0, 300));
+
+    var f2 = await pick('frostmage', 2);
+    TH.ok('2 星显示「冻手冻脚」', f2.indexOf('冻手冻脚') >= 0, f2.slice(0, 300));
+    TH.ok('★ 2 星写的是「额外冰冻 1.5 秒」，不是「150 秒」',
+      f2.indexOf('1.5 秒') >= 0 && f2.indexOf('150') < 0, f2.slice(0, 300));
+    TH.ok('★ 2 星仍然写着技能只打 3×3（打全体是 3 星才解锁的）',
+      f2.indexOf('3×3') >= 0, f2.slice(0, 320));
+    /* ★★ 「3 星会解锁什么」和「3 星已经解锁了」必须分得开。
+       两句都提到「千里冰封」，所以只查名字是查不出区别的 ——
+       查的是那句**只属于已解锁状态**的话（"不再只看目标格附近"）。 */
+    TH.ok('★ 2 星把「千里冰封」写成"还差什么"，而不是已经生效',
+      f2.indexOf('还差') >= 0 && f2.indexOf('不再只看目标格附近') < 0,
+      f2.slice(0, 340));
+
+    var f3 = await pick('frostmage', 3);
+    TH.ok('3 星多了「千里冰封」', f3.indexOf('千里冰封') >= 0, f3.slice(0, 340));
+    TH.ok('★ 3 星写明了「技能改成攻击全体敌人」',
+      f3.indexOf('全体') >= 0 && f3.indexOf('不再只看目标格附近') >= 0, f3.slice(0, 340));
+    TH.ok('★ 3 星同时保留 2 星那一层（冻手冻脚 + 1.5 秒）',
+      f3.indexOf('冻手冻脚') >= 0 && f3.indexOf('1.5 秒') >= 0, f3.slice(0, 340));
+    TH.ok('3 星不再有"还差"那一行', f3.indexOf('还差') < 0, f3.slice(0, 340));
+    TH.ok('★ 文案里不能出现 markdown 的星号（那是文档写法，会原样显示给玩家）',
+      f3.indexOf('**') < 0, f3.slice(0, 340));
+
+    var f4 = await pick('frostmage', 4);
+    TH.ok('★ 4 星不会把两层被动弄丢（升级不该让人变弱）',
+      f4.indexOf('冻手冻脚') >= 0 && f4.indexOf('千里冰封') >= 0, f4.slice(0, 340));
+    TH.ok('★ 4 星仍然写着 1.5 秒和打全体（文案和引擎同一套规则）',
+      f4.indexOf('1.5 秒') >= 0 && f4.indexOf('全体') >= 0, f4.slice(0, 340));
+
+    /* ★ emoji：冰冰冰挂的是**三个** 🧊。
+     *   三个图形按单字号的尺寸横着排，会冲出卡片被 `overflow: hidden` 切掉
+     *   （"商店卡 emoji 被切 2px"那条坑就是这么来的），所以按图形个数缩一档。
+     *   ★ 这里不靠运气等商店刷出冰冰冰 —— 直接把商店和棋盘都摆成它。 */
+    (function () {
+      var st2 = G();
+      st2.board = { '4,2': { uid: 'ice1', defId: 'frostmage', star: 1, items: [] } };
+      st2.bench = new Array(9);
+      st2.shop = ['frostmage', 'frostmage', 'frostmage', 'frostmage', 'frostmage'];
+      W.Game.refresh();
+    })();
+    await wait(90);
+    var sfb = q('#shop-row .shop-card .sc-fallback');
+    TH.ok('商店卡的 emoji 占位还在 DOM 里（立绘是叠在它上面的）', !!sfb);
+    TH.ok('★ 商店卡拿到了 sc-fallback-x3（三个冰 → CSS 缩一档）',
+      !!sfb && (' ' + sfb.className + ' ').indexOf(' sc-fallback-x3 ') >= 0,
+      sfb ? sfb.className : '—');
+    var uem = q('#player-half .u-emoji');
+    TH.ok('★ 棋盘上的棋子卡同样拿到 u-emoji-x3（用的是同一个类名助手）',
+      !!uem && (' ' + uem.className + ' ').indexOf(' u-emoji-x3 ') >= 0,
+      uem ? uem.className : '—');
+    /* ★ 反向：单个 emoji 的棋子**不能**被加上那两级类名 ——
+       照 `.length` 去数的话（'❄️'.length === 2）21 个棋子会被白缩一档。 */
+    (function () {
+      var st3 = G();
+      st3.board = { '4,2': { uid: 'bw1', defId: 'bowman', star: 1, items: [] } };
+      W.Game.refresh();
+    })();
+    await wait(90);
+    var uem2 = q('#player-half .u-emoji');
+    TH.ok('★ 单个 emoji 的棋子不会被误加多图形类名（❄️ 的 .length 是 2，不能照它判）',
+      !!uem2 && uem2.className.indexOf('-x') < 0, uem2 ? uem2.className : '—');
+
+    /* ---------- 美团袋鼠：准时送达 / 好评如潮 ----------
+     * ★★ 这个 kind 的数字有三种量纲，混起来最容易出错：
+     *     攻速加成是**百分比**（20% → ×100）、持续时间是**秒**（5，不能 ×100）、
+     *     治疗量是**生命上限的百分比**（4% → ×100）。
+     *   全都走 passiveStep 的 ×100 写法会得到「攻速 +20%、持续 500 秒」，
+     *   数值全对、不报错、玩家看到的是一个荒谬的秒数。所以逐条钉住。 */
+    TH.section('美团袋鼠 · 被动文案');
+
+    var roo1 = await pick('alchemist', 1);
+    TH.ok('★ 1 星走的是"升星预告"（他 1 星本来就没被动）',
+      roo1.indexOf('被动预览') >= 0, roo1.slice(0, 300));
+    TH.ok('★ 1 星的预告写明了技能本身：治疗外卖 / 投掷一个外卖',
+      roo1.indexOf('治疗外卖') >= 0 && roo1.indexOf('投掷一个外卖') >= 0, roo1.slice(0, 320));
+    TH.ok('★ 1 星的预告写明 2 星外卖加速 20%、5 秒',
+      roo1.indexOf('20%') >= 0 && roo1.indexOf('5 秒') >= 0, roo1.slice(0, 340));
+    TH.ok('★ 1 星的预告写明 3 星普攻治疗 3×3 内的友方',
+      roo1.indexOf('3×3') >= 0 && roo1.indexOf('普通攻击') >= 0, roo1.slice(0, 360));
+    TH.ok('★ 不能把秒数当百分比（不该出现「500 秒」）',
+      roo1.indexOf('500') < 0, roo1.slice(0, 360));
+
+    var roo2 = await pick('alchemist', 2);
+    TH.ok('2 星显示「准时送达」', roo2.indexOf('准时送达') >= 0, roo2.slice(0, 320));
+    TH.ok('★ 2 星写的是「攻速 +20%，持续 5 秒」',
+      roo2.indexOf('+20%') >= 0 && roo2.indexOf('5 秒') >= 0, roo2.slice(0, 340));
+    TH.ok('★ 2 星还没有「好评如潮」那一层（那是 3 星的事）',
+      roo2.indexOf('还差') >= 0 && roo2.indexOf('普通攻击会治疗') < 0, roo2.slice(0, 380));
+
+    var roo3 = await pick('alchemist', 3);
+    TH.ok('3 星多了「好评如潮」', roo3.indexOf('好评如潮') >= 0, roo3.slice(0, 380));
+    TH.ok('★ 3 星写明了「普通攻击会治疗被攻击敌人 3×3 内的友方」和 4% 最大生命',
+      roo3.indexOf('普通攻击会治疗') >= 0 && roo3.indexOf('3×3') >= 0 &&
+      roo3.indexOf('% 最大生命') >= 0, roo3.slice(0, 400));
+    TH.ok('★ 3 星同时保留 2 星那一层（准时送达还在）',
+      roo3.indexOf('准时送达') >= 0 && roo3.indexOf('5 秒') >= 0, roo3.slice(0, 400));
+    TH.ok('3 星不再有"还差"那一行', roo3.indexOf('还差') < 0, roo3.slice(0, 400));
+    TH.ok('★ 文案里不能出现 markdown 的星号', roo3.indexOf('**') < 0, roo3.slice(0, 400));
+
+    var roo4 = await pick('alchemist', 4);
+    TH.ok('★ 4 星不会把两层被动弄丢', 
+      roo4.indexOf('准时送达') >= 0 && roo4.indexOf('好评如潮') >= 0, roo4.slice(0, 400));
+
+    /* ---------- 东北雨姐：红薯粉丝 / 雨姐的关照 ----------
+     * ★★ 这个 kind 有两个"说错了就是假信息"的地方：
+     *   · **捆住 ≠ 眩晕**："钉在原地但还能还手"这半句不写出来，
+     *     玩家看到对面被捆住还在打，只会以为出了 bug；
+     *   · 8% 是**收件人的生命上限**，不是攻击力、也不是固定值。
+     *   另外 1 星没有任何被动（走的是升星预告），4 星不能把两层弄丢。 */
+    TH.section('东北雨姐 · 被动文案');
+
+    var yu1 = await pick('templar', 1);
+    TH.ok('★ 1 星走的是"升星预告"（他 1 星本来就没被动）',
+      yu1.indexOf('被动预览') >= 0, yu1.slice(0, 300));
+    TH.ok('★ 1 星的预告写明了技能本身（圣盾术 + 套护盾）',
+      yu1.indexOf('圣盾术') >= 0 && yu1.indexOf('护盾') >= 0, yu1.slice(0, 320));
+    TH.ok('★ 1 星的预告写明 2 星捆人 3 秒、5×5 范围',
+      yu1.indexOf('3 秒') >= 0 && yu1.indexOf('5×5') >= 0, yu1.slice(0, 360));
+    TH.ok('★ 1 星的预告写明 3 星"攻击被捆住的敌人"给最低血队友回 8%',
+      yu1.indexOf('被捆住') >= 0 && yu1.indexOf('8%') >= 0, yu1.slice(0, 400));
+
+    var yu2 = await pick('templar', 2);
+    TH.ok('2 星显示「红薯粉丝」', yu2.indexOf('红薯粉丝') >= 0, yu2.slice(0, 340));
+    TH.ok('★★ 2 星写明了「钉在原地，但还能还手」（不写玩家会以为是眩晕）',
+      yu2.indexOf('钉在原地') >= 0 && yu2.indexOf('还手') >= 0, yu2.slice(0, 400));
+    TH.ok('★ 2 星写的是 3 秒 / 5×5', 
+      yu2.indexOf('3 秒') >= 0 && yu2.indexOf('5×5') >= 0, yu2.slice(0, 400));
+    TH.ok('★ 2 星还没有「雨姐的关照」那一层（那是 3 星的事）',
+      yu2.indexOf('还差') >= 0 && yu2.indexOf('打在') < 0, yu2.slice(0, 420));
+
+    var yu3 = await pick('templar', 3);
+    TH.ok('3 星多了「雨姐的关照」', yu3.indexOf('雨姐的关照') >= 0, yu3.slice(0, 420));
+    TH.ok('★ 3 星写明了「攻击被捆住的敌人」+「血量百分比最低的队友」+ 8% 最大生命',
+      yu3.indexOf('被捆住') >= 0 && yu3.indexOf('血量百分比最低') >= 0 &&
+      yu3.indexOf('8%') >= 0, yu3.slice(0, 440));
+    TH.ok('★ 3 星同时保留 2 星那一层（红薯粉丝还在）',
+      yu3.indexOf('红薯粉丝') >= 0 && yu3.indexOf('钉在原地') >= 0, yu3.slice(0, 440));
+    TH.ok('3 星不再有"还差"那一行', yu3.indexOf('还差') < 0, yu3.slice(0, 440));
+    TH.ok('★ 文案里不能出现 markdown 的星号', yu3.indexOf('**') < 0, yu3.slice(0, 440));
+
+    var yu4 = await pick('templar', 4);
+    TH.ok('★ 4 星不会把两层被动弄丢',
+      yu4.indexOf('红薯粉丝') >= 0 && yu4.indexOf('雨姐的关照') >= 0, yu4.slice(0, 440));
+
     /* ---------- 奶龙：捧腹大笑 / 笑气护体 / 边走边笑 / 笑传四方 ----------
      * ★★ 这一组最容易写错的地方和抓娃娃、荣誉一样：
      *   laugh 的三层**没有任何百分比数字**（门槛是 2 星能移动、3 星能治疗），
@@ -1740,6 +1988,580 @@
     TH.ok('★ 复活之后血量真的回满了（渲染层拿的是事件里的 hp）',
       hpAfterRevive !== null && hpAfterRevive > 0,
       hpAfterRevive === null ? '没读到' : Math.round(hpAfterRevive));
+  }
+
+  /* ============================================================
+   * 五i、孙笑川「安排上了」在画面上看得见
+   *
+   *   规则在 simtest 里验过了。这里只问一件事：
+   *   **玩家能不能看出那个敌人已经变成自己人了。**
+   *   一张卡片从敌人变成我方，如果画面上什么都不变，
+   *   玩家会以为"它没死"是 bug —— 而需求里明确要求"复活单位卡面变灰"。
+   *
+   *   ★ 所以这条不只是断言"发了一条 convert 事件"，而是**真的去采像素**：
+   *     同一个单位、转换前 vs 转换后，卡面的**饱和度**必须掉下来。
+   *     另外拿一个**没被招安**的敌人做对照 —— 没有对照组的话，
+   *     画面本来就偏灰（背景是淡绿灰）也可能让这条假绿。
+   * ============================================================ */
+  async function testMikadoVfx() {
+    TH.section('孙笑川 · 招安表现');
+
+    /* ★★ 对照组必须是"**按规则不可能被招安**"的那种单位 ——
+       第一版我拿"没被招安到的敌人"当对照，结果这一场里孙笑川把 4 个敌**全部**招安了，
+       对照根本不存在（采出来是 -1，断言假红）。
+       现在放一个 2 星牢大：它有复活次数，按规则永远不会被招安 ——
+       对照是**结构性存在**的，不靠运气。 */
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'butcher', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'bowman', star: 1, r: 4, c: 3 },
+          { id: 'bowman', star: 1, r: 4, c: 4 },
+          { id: 'bowman', star: 1, r: 5, c: 3 },
+          { id: 'bowman', star: 1, r: 5, c: 4 },
+          { id: 'brute', star: 2, items: ['belt', 'belt', 'belt'], r: 5, c: 5 }]
+    }, 9090);
+    var conv = result.log.filter(function (e) { return e.type === 'convert'; });
+    TH.ok('这一场确实招安了（否则后面全是空断言）', conv.length > 0, conv.length + ' 个');
+    if (!conv.length) return;
+    var first = conv[0];
+    var convertedUid = first.who, convT = first.t;
+    var plainUid = null;
+    for (var i = 0; i < result.initial.units.length; i++) {
+      var u0 = result.initial.units[i];
+      if (u0.defId === 'brute') { plainUid = u0.uid; break; }
+    }
+    TH.ok('对照组（牢大）在场，而且它按规则不会被招安', !!plainUid, plainUid || '没找到');
+    TH.ok('★ 全场没有一次招安落在牢大身上（它走自己的坠机→复活）',
+      !conv.some(function (e) { return e.who === plainUid; }));
+
+    var cv2 = $('arena');
+    var CELLW = W.Arena.cell(), PITCHW = W.Arena.pitch();
+    /* 采"卡面颜色有多鲜艳"：R/G/B 三通道的极差均值。
+       灰卡的极差接近 0；有立绘的彩卡明显更大。
+       ★ 用**相对量**（前后对比）而不是绝对阈值 ——
+         背景是淡绿灰的，绝对阈值在任何一张地图上都不成立。 */
+    function satAt(r, c) {
+      var x = Math.round(c * PITCHW + CELLW / 2), y = Math.round(r * PITCHW + CELLW / 2);
+      var s = Math.max(3, Math.round(CELLW * 0.22));
+      var d = cv2.getContext('2d').getImageData(x - s, y - s, s * 2, s * 2).data;
+      var sum = 0, n = 0;
+      for (var q = 0; q < d.length; q += 4) {
+        var mx = Math.max(d[q], d[q + 1], d[q + 2]);
+        var mn = Math.min(d[q], d[q + 1], d[q + 2]);
+        sum += (mx - mn); n++;
+      }
+      return n ? sum / n : -1;
+    }
+
+    W.Arena.play(result);
+    var before = -1, after = -1, controlBefore = -1, controlAfter = -1;
+    var sawCallout = false;
+    for (var f5 = 0; f5 < 2200; f5++) {
+      W.Arena.step(1 / 30);
+      var nowT = W.Arena.time();
+      var us2 = W.Arena.units();
+      var me2 = us2[convertedUid], plain2 = plainUid ? us2[plainUid] : null;
+      // 转换**之前**（趁它还是敌人、还站着）
+      if (before < 0 && me2 && me2.alive && nowT > 0.3 && nowT < convT - 0.15) {
+        before = satAt(me2.r, me2.c);
+      }
+      if (controlBefore < 0 && plain2 && plain2.alive && nowT > 0.3 && nowT < convT - 0.15) {
+        controlBefore = satAt(plain2.r, plain2.c);
+      }
+      // 转换**之后**（等特效散一散再采，别把火花采进去）
+      if (after < 0 && nowT > convT + 0.6 && me2 && me2.alive && me2.converted) {
+        after = satAt(me2.r, me2.c);
+      }
+      if (controlAfter < 0 && nowT > convT + 0.6 && plain2 && plain2.alive) {
+        controlAfter = satAt(plain2.r, plain2.c);
+      }
+      var fl2 = W.Arena.fxList();
+      for (var k2 = 0; k2 < fl2.length; k2++) {
+        if (fl2[k2].type === 'callout' && fl2[k2].text === '安排上了') sawCallout = true;
+      }
+    }
+
+    var rr = W.Arena.units()[convertedUid];
+    TH.ok('★ 渲染层把这个单位标成了"招安"', !!rr && rr.converted === true,
+      rr ? String(rr.converted) : '没找到');
+    TH.ok('★ 而且它的阵营真的换成了我方（不然画面上还是敌人）',
+      !!rr && rr.side === first.toSide, rr ? rr.side : '—');
+    TH.ok('★ 转换时弹出「安排上了」的台词', sawCallout);
+    TH.note('卡面饱和度（R/G/B 极差）：被招安 ' + before.toFixed(1) + ' → ' +
+      after.toFixed(1) + '　　对照（没被招安）' + controlBefore.toFixed(1) + ' → ' +
+      controlAfter.toFixed(1));
+    TH.ok('★ 被招安的单位卡面**变灰了**（饱和度明显下降）',
+      before > 0 && after >= 0 && after < before * 0.75,
+      before.toFixed(1) + ' → ' + after.toFixed(1));
+    /* ★★ 对照组：没被招安的那个敌人卡面**不该**变灰。
+       没有这一条的话，"所有卡片都变灰了"（比如整个画面被什么东西盖住）
+       也会让上面那条通过。 */
+    TH.ok('★ 对照组的敌人卡面没有变灰（证明灰的是"招安"这一个，不是整屏）',
+      controlBefore > 0 && controlAfter >= 0 && controlAfter > controlBefore * 0.75,
+      controlBefore.toFixed(1) + ' → ' + controlAfter.toFixed(1));
+  }
+
+  /* ============================================================
+   * 五j、电棍的「导电」在画面上看得见
+   *
+   *   需求里明确写了「明显电流特效」，所以这一条要验的是**真的画出来了**：
+   *     · 弹射那一瞬间有一道锯齿闪电（arc），而且它的两个端点
+   *       **正好落在规则说的那两格中心**（不是随便找个位置画一条线）；
+   *     · 电流停在人身上等跳的那 0.5 秒里有一个电球（cnode）在闪；
+   *     · 卡片上有 `⚡N` 徽章反映"现在挂着几条"。
+   *   ★ 只断言"事件发了"是不够的 —— 那和"画面上什么都没有"是可以共存的。
+   * ============================================================ */
+  async function testBatonVfx() {
+    TH.section('电棍 · 电流表现');
+
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'spearman', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 3 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 4 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 5 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 5, c: 3 }]
+    }, 31415);
+    var jumps = result.log.filter(function (e) {
+      return e.type === 'current' && !e.born && !e.fizzle;
+    });
+    TH.ok('这一场电流确实弹射过（否则后面全是空断言）', jumps.length > 0,
+      jumps.length + ' 跳');
+    if (!jumps.length) return;
+    var batonUid = result.initial.units.filter(function (u) {
+      return u.defId === 'spearman';
+    })[0].uid;
+    var target = jumps[0];
+
+    W.Arena.play(result);
+    var sawArc = false, sawNode = false, arcAtRightPlace = false, arcWrong = 0;
+    var maxCurN = 0;
+    var CELLW2 = W.Arena.cell(), PITCHW2 = W.Arena.pitch();
+    /* ★★ 先把**所有**弹射的"起点格中心 → 终点格中心"算出来做成一张表。
+       第一版我只拿第一跳去比，结果 41 跳里的其它弧全对不上 ——
+       断言写成了"每一道弧都必须等于第一跳的坐标"，那当然红。
+       正确的问题是：**每一道弧是不是都落在某一次真实弹射的两格中心上**。 */
+    var expect = {};
+    jumps.forEach(function (j) {
+      var key = [j.fromC * PITCHW2 + CELLW2 / 2, j.fromR * PITCHW2 + CELLW2 / 2,
+                 j.c * PITCHW2 + CELLW2 / 2, j.r * PITCHW2 + CELLW2 / 2].join(',');
+      expect[key] = true;
+    });
+    for (var f6 = 0; f6 < 1600; f6++) {
+      W.Arena.step(1 / 30);
+      var fl3 = W.Arena.fxList();
+      for (var k3 = 0; k3 < fl3.length; k3++) {
+        if (fl3[k3].type === 'arc') {
+          sawArc = true;
+          var akey = [fl3[k3].x1, fl3[k3].y1, fl3[k3].x2, fl3[k3].y2].join(',');
+          if (expect[akey]) arcAtRightPlace = true;
+          else arcWrong++;
+        }
+        if (fl3[k3].type === 'cnode') sawNode = true;
+      }
+      var bu = W.Arena.units()[batonUid];
+      if (bu && bu.curN > maxCurN) maxCurN = bu.curN;
+    }
+
+    TH.ok('★ 弹射时画出了一道锯齿闪电（arc）', sawArc);
+    TH.ok('★ 每一道闪电的两端都落在某一次真实弹射的两格中心上',
+      arcAtRightPlace && arcWrong === 0,
+      arcWrong === 0 ? '全部对得上（共 ' + jumps.length + ' 次弹射）'
+                     : (arcWrong + ' 道对不上'));
+    TH.ok('★ 电流停在人身上等跳的那 0.5 秒里有电球在闪（cnode）', sawNode);
+    TH.ok('★ 渲染层数得出"这个电棍现在挂着几条电流"（徽章 ⚡N 的数据源）',
+      maxCurN > 0, '最多同时 ' + maxCurN + ' 条');
+
+    /* ---------- ★★ 「明显」到底有多明显：去数像素 ----------
+     *   需求里写的是「明显电流特效」，所以这里不满足于"fx 列表里有个 arc" ——
+     *   那个和"画面上其实什么都看不见"是可以共存的（画成透明、画到屏幕外、
+     *   被别的东西盖住，三种都能让上面几条全绿）。
+     *   ★ 做法：拿**最后一次**弹射的落点那一格（它后面不再接新的电球，
+     *     所以特效会干净地过期），在弹射那一瞬间和 0.7 秒后各采一次平均亮度，
+     *     比一个相对值 —— 不依赖任何绝对阈值（和「阴暗领域」那条同一个套路）。
+     */
+    /*   ★★ 选一跳"干净"的来采样。三个坑，每一个都能让采样值变成噪声：
+     *     ① 落点那一格如果 1.2 秒内又被别的电流打中，采样到的"过期后"
+     *        其实是另一道还没过期的特效；
+     *     ② 目标在 1.2 秒内死了，卡牌直接消失 —— 前后亮度差的是"人没了"
+     *        而不是"闪电没了"；
+     *     ③ 这一跳离战斗结束不足 1.2 秒：时间轴一停就不再前进，
+     *        "过期后"那一帧**永远等不到**（值停在 -1，断言假红）。
+     *   所以先按这三条给每一跳打分，拿分最高的那一跳。 */
+    var endT = result.time;
+    var deaths = result.log.filter(function (e) { return e.type === 'death'; });
+    var pick = jumps[0], pickGap = -1;
+    jumps.forEach(function (j) {
+      var prev = 0, next = endT;
+      jumps.forEach(function (k) {
+        if (k === j || k.r !== j.r || k.c !== j.c) return;
+        if (k.t < j.t && k.t > prev) prev = k.t;
+        if (k.t > j.t && k.t < next) next = k.t;
+      });
+      var gap = Math.min(j.t - prev, next - j.t, endT - j.t);
+      // 目标这一跳之后还活着（活得比采样窗口长）
+      var diesSoon = deaths.some(function (d) {
+        return d.who === j.to && d.t > j.t && d.t <= j.t + 1.2;
+      });
+      if (diesSoon) gap -= 10;
+      if (gap > pickGap) { pickGap = gap; pick = j; }
+    });
+    TH.note('亮度采样挑的是第 ' + (jumps.indexOf(pick) + 1) + '/' + jumps.length +
+      ' 跳（' + pick.t.toFixed(2) + ' 秒，落点 ' + pick.r + ',' + pick.c +
+      '），它前后各 ' + pickGap.toFixed(2) + ' 秒没被别的事打扰');
+
+    var cellW3 = W.Arena.cell(), pitchW3 = W.Arena.pitch();
+    function brightAt3(r, c) {
+      var px = Math.round(c * pitchW3 + cellW3 / 2);
+      var py = Math.round(r * pitchW3 + cellW3 / 2);
+      var s3 = Math.max(2, Math.round(cellW3 * 0.16));
+      var dd = $('arena').getContext('2d').getImageData(px - s3, py - s3, s3 * 2, s3 * 2).data;
+      var sum = 0, n = 0;
+      for (var q3 = 0; q3 < dd.length; q3 += 4) { sum += dd[q3] + dd[q3 + 1] + dd[q3 + 2]; n++; }
+      return n ? sum / n / 3 : -1;
+    }
+    W.Arena.play(result);
+    var bBefore = -1, bOn = -1, bAfter = -1;
+    for (var f7 = 0; f7 < 2400; f7++) {
+      W.Arena.step(1 / 30);
+      var nowT2 = W.Arena.time();
+      if (bBefore < 0 && nowT2 >= pick.t - 0.2 && nowT2 < pick.t - 0.04) {
+        bBefore = brightAt3(pick.r, pick.c);
+      }
+      if (bOn < 0 && nowT2 >= pick.t + 0.02 && nowT2 < pick.t + 0.2) {
+        bOn = brightAt3(pick.r, pick.c);
+      }
+      if (bAfter < 0 && nowT2 >= pick.t + 0.75) {
+        bAfter = brightAt3(pick.r, pick.c);
+      }
+      if (bBefore > 0 && bOn > 0 && bAfter > 0) break;
+    }
+    TH.note('落点那一格的平均亮度：弹射前 ' + bBefore.toFixed(1) +
+      ' → 弹射瞬间 ' + bOn.toFixed(1) + ' → 过期后 ' + bAfter.toFixed(1));
+    TH.ok('★ 弹射那一瞬间落点**明显变亮**（特效真的看得见，不是画了个透明的）',
+      bOn > 0 && bOn > Math.max(bBefore, bAfter) + 6,
+      bOn.toFixed(1) + ' vs 前 ' + bBefore.toFixed(1) + ' / 后 ' + bAfter.toFixed(1));
+    TH.note('电棍这一场：' + jumps.length + ' 跳，最多同时挂 ' + maxCurN + ' 条电流');
+  }
+
+  /* ============================================================
+   * 五j-2、冰冰冰的「冰冻」在画面上看得见，而且和嘉豪那条**分得开**
+   *
+   *   ★★ 这里要拦的是一个很具体的回归：引擎发的都是 `stun` 事件，
+   *      巧乐兹满层那条的 reason 是 `freeze`，冰冰冰技能附带的这条是 `frost`。
+   *      渲染层如果只认 `freeze`，技能冰冻就会掉进 `else` 分支 ——
+   *      玩家看到的是**金色的「哈哈」**（嘉豪「男人领域」那套），
+   *      而不是冰环 + 冰渣 + 「冰冻」两个字。
+   *      规则全对、数值全对，就是**表现张冠李戴**，纯数值自检一条都不会红。
+   *
+   *   所以这里同时在**同一个事件回调里**问两件事：
+   *     ① 有没有「冰冻」字样（而且就飘在被冻的那个人的格子上）
+   *     ② 同一瞬间**有没有「哈哈」**（有就说明走错分支了）
+   * ============================================================ */
+  async function testFrostVfx() {
+    TH.section('冰冰冰 · 冰冻表现');
+
+    /* 场面设计的三个要求（每一个都是被"断言不够硬"逼出来的）：
+       ① **要冻好几次**：只冻一次的话，"第一次对了、后面错了"这种 bug 抓不到。
+          冰冰冰带两颗蓝水晶（开局满能量）+ 攻速 0.68、法力 70 ⇒ 每约 10 秒一发，
+          所以只要它活到 20 秒就有 3 次。
+       ② **要有人在旁边一直挂冰棍**：才能验"技能冰冻**不**清空层数"。
+          张雪峰 2 星（巧乐兹）每下普攻给目标叠 1 层。
+       ③ **对面不能会眩晕**：这条最容易被忽略 —— 嘉豪那种控场会撒「哈哈」飘字，
+          而飘字要活一秒多，正好盖住这边"同一瞬间不许有哈哈"的断言，
+          变成一条**随机假红**。所以对手用山岳：只会给自己套盾，不会晕人。
+       ④ **对局要够长**：山岳 3 星血厚（还每 10 秒给自己补一层盾）、
+          攻击虽然高但要打两轮才清得完我方 —— 实测我方在 24 秒左右全灭，
+          冰冰冰正好放出 3 发。 */
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'blademaster', star: 2, items: ['belt', 'belt', 'belt'], r: 4, c: 2 },
+          { id: 'frostmage', star: 2, items: ['sapphire', 'sapphire', 'belt'], r: 4, c: 5 }],
+      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }]
+    }, 4242);
+    var frosts = result.log.filter(function (e) {
+      return e.type === 'stun' && e.reason === 'frost';
+    });
+    TH.ok('这一场技能冰冻了好几次（否则后面全是空断言）', frosts.length >= 3,
+      frosts.length + ' 次');
+    if (frosts.length < 1) return;
+    var enemyUid = null;
+    for (var ei = 0; ei < result.initial.units.length; ei++) {
+      if (result.initial.units[ei].side === 'b') { enemyUid = result.initial.units[ei].uid; break; }
+    }
+
+    var CW = W.Arena.cell(), PW = W.Arena.pitch();
+    var nFrost = 0, noCallout = 0, giggle = 0, offCell = 0;
+    var maxOff = 0, withChill = 0, chillMatch = 0, chillBad = [];
+    /* ★★ 冰棍层数的**独立模型**：只按事件流推 ——
+       `chill` 事件把层数设成 stacks，满层那条 `freeze` 把它清 0，
+       而 `frost`（技能冰冻）**什么都不该改**。
+       拿它和渲染层此刻的 `u.chill` 对比，就能精确验出
+       "技能冰冻顺手把层数清了"这个很隐蔽的 bug（顺手清是很容易写出来的，
+       因为两条冰冻的处理代码长得几乎一样）。 */
+    var modelChill = 0;
+    W.Arena.play(result, {
+      onEvent: function (e) {
+        if (e.type === 'chill' && e.to === enemyUid) { modelChill = e.stacks; return; }
+        if (e.type === 'stun' && e.to === enemyUid && e.reason === 'freeze') {
+          modelChill = 0;
+          return;
+        }
+        if (e.type !== 'stun' || e.reason !== 'frost') return;
+        nFrost++;
+        var u = W.Arena.units()[e.to];
+        var fl = W.Arena.fxList();
+        var co = null, gig = 0;
+        for (var k = 0; k < fl.length; k++) {
+          if (fl[k].type === 'callout' && fl[k].text === '冰冻') co = fl[k];
+          if (fl[k].type === 'mote' && fl[k].text === '哈哈') gig++;
+        }
+        if (gig) giggle++;
+        if (!co) { noCallout++; return; }
+        /* 冻的是谁，字就该飘在谁头上。用的是渲染层自己的插值坐标
+           （cellX 读的是 cc 不是 c —— 单位可能正滑在半路上）。 */
+        var ex = u ? u.cc * PW + CW / 2 : -9999;
+        var off = Math.abs(co.x - ex);
+        if (off > maxOff) maxOff = off;
+        if (off > 2) offCell++;
+        if (!u) return;
+        if (u.chill > 0) withChill++;
+        if (u.chill === modelChill) chillMatch++;
+        else chillBad.push('模型 ' + modelChill + ' vs 画面 ' + u.chill);
+      }
+    });
+    for (var f = 0; f < 6000 && !W.Arena.isDone(); f++) W.Arena.step(1 / 30);
+    TH.ok('回放跑到了时间轴结尾（没跑完的话上面几条会漏事件 —— 假绿）',
+      W.Arena.isDone(), fmtT(W.Arena.time()) + ' / ' + fmtT(W.Arena.total()));
+
+    TH.eq('渲染层的回调看到了每一次技能冰冻', nFrost, frosts.length);
+    TH.ok('★★ 每一次技能冰冻都弹出了「冰冻」字样（不是掉进嘉豪那条分支）',
+      noCallout === 0, noCallout ? (noCallout + ' 次没弹') : ('全部弹了（' + nFrost + ' 次）'));
+    TH.ok('★★ 而且同一瞬间**没有**「哈哈」（有就说明走错了分支 —— 冰冻画成了眩晕）',
+      giggle === 0, giggle ? (giggle + ' 次画成了哈哈') : '一次都没有');
+    TH.ok('★ 「冰冻」两个字就飘在被冻的那个人的格子上（不是飘在别人头上）',
+      offCell === 0, '最大偏差 ' + maxOff.toFixed(1) + 'px');
+    TH.ok('★ 这几发里确实有"身上还挂着冰棍"的时候（否则下面那条是空断言）',
+      withChill >= 1, nFrost + ' 次冰冻里有 ' + withChill + ' 次带着冰棍层数');
+    TH.ok('★★ 技能冰冻**不清空**冰棍层数（层数和事件流推出来的模型逐次吻合）',
+      chillBad.length === 0 && chillMatch === nFrost - noCallout,
+      chillBad.length ? chillBad.join('　') : ('逐次吻合 ' + chillMatch + ' 次'));
+  }
+
+  function fmtT(x) { return Math.round(x * 100) / 100 + 's'; }
+
+  /* ============================================================
+   * 五j-3、美团袋鼠的外卖在画面上看得见
+   *
+   *   规则和数值在 simtest 里验过了。这里问三件事：
+   *     ① 技能那一下有没有「投掷一个外卖」的台词（不然玩家只看到绿字）
+   *     ② 3 星普攻送的外卖有没有画出来 —— 而且是画在**队友**身上，
+   *        不是画在被打的敌人身上（圆心在敌人、收件人是队友，很容易画反）
+   *     ③ 2 星那份攻速加成有没有落到**被奶的那个人**的卡片上
+   *        （渲染层以前**完全没有**处理 `buff` 事件 —— 双刃舞者的
+   *         「疾风连斩」放完画面上什么都不发生）
+   * ============================================================ */
+  async function testDeliveryVfx() {
+    TH.section('美团袋鼠 · 外卖表现');
+
+    /* 场面和 simtest 一致：三个带大果的肉盾（永远有缺口可回）+ 对面两个豆包。
+       第一次走位之前全场静止，所以几何断言可以对着初始坐标来。 */
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'alchemist', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 3 },
+          { id: 'stoneguard', star: 1, items: ['swiftboots', 'belt', 'belt'], r: 3, c: 2 },
+          { id: 'stoneguard', star: 1, items: ['swiftboots', 'belt', 'belt'], r: 3, c: 3 },
+          { id: 'stoneguard', star: 1, items: ['swiftboots', 'belt', 'belt'], r: 3, c: 7 }],
+      b: [{ id: 'acolyte', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 2 },
+          { id: 'acolyte', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 7 }]
+    }, 31337);
+
+    var rooUid = null, rooPos = null;
+    var allyPos = {};
+    result.initial.units.forEach(function (u) {
+      if (u.defId === 'alchemist') { rooUid = u.uid; rooPos = { r: u.r, c: u.c }; }
+      else if (u.side === 'a') allyPos[u.uid] = { r: u.r, c: u.c };
+    });
+    var meals = result.log.filter(function (e) {
+      return e.type === 'heal' && e.reason === 'delivery';
+    });
+    var buffs = result.log.filter(function (e) {
+      return e.type === 'buff' && e.reason === 'delivery';
+    });
+    var casts = result.log.filter(function (e) {
+      return e.type === 'cast' && e.from === rooUid;
+    });
+    TH.ok('这一场既送过外卖也放过技能（否则后面全是空断言）',
+      meals.length > 0 && casts.length > 0,
+      meals.length + ' 单 / ' + casts.length + ' 次技能');
+
+    var CW = W.Arena.cell(), PW = W.Arena.pitch();
+    var sawCallout = false, calloutAtRoo = false;
+    var healNumsOnAlly = 0, healNumsOnEnemy = 0, warmRingOnAlly = 0;
+    var buffRingOnAlly = 0, buffOnRoo = 0;
+    var buffTracked = [], buffTrackerWrong = 0;
+    var ON_CELL = [];
+
+    W.Arena.play(result, {
+      onEvent: function (e) {
+        if (e.type === 'cast' && e.callout) {
+          /* 台词挂在**施法者自己**的卡牌上方（这是它的台词，不是受击反馈） */
+          var us = W.Arena.units()[e.from];
+          if (us) {
+            var fx1 = W.Arena.fxList();
+            for (var i = 0; i < fx1.length; i++) {
+              if (fx1[i].type === 'callout' && fx1[i].text === e.callout) {
+                sawCallout = true;
+                if (Math.abs(fx1[i].x - (us.cc * PW + CW / 2)) < 2) calloutAtRoo = true;
+              }
+            }
+          }
+          return;
+        }
+        if (e.type === 'buff' && e.reason === 'delivery') {
+          var ub = W.Arena.units()[e.who];
+          /* ★ 渲染层必须真的把这段加成记下来 —— 卡片上那枚 🛵+20% 徽章
+             读的就是这两个字段。不记的话徽章永远不出现。 */
+          if (ub && Math.abs((ub.asBuffPct || 0) - e.amount) < 1e-9 &&
+              ub.asBuffUntil >= e.until - 1e-9) {
+            buffTracked.push(e.who);
+          } else {
+            buffTrackerWrong++;
+          }
+          if (e.who === rooUid) buffOnRoo++;
+          return;
+        }
+        if (e.type !== 'heal' || e.reason !== 'delivery') return;
+        var u = W.Arena.units()[e.to];
+        if (!u) return;
+        var ax = u.cc * PW + CW / 2, ay = u.rr * PW + CW / 2;
+        var numY = ay - W.Arena.cell() * 0.42;      // 回血数字画在头顶
+        var fl = W.Arena.fxList();
+        for (var k = 0; k < fl.length; k++) {
+          var f = fl[k];
+          if (f.type === 'num' && f.kind === 'heal' && Math.abs(f.x - ax) < 2 &&
+              Math.abs(f.y - numY) < 3) {
+            healNumsOnAlly++;
+          }
+          if (f.type === 'ring' && f.color === 'rgba(255,168,72,.85)' &&
+              Math.abs(f.x - ax) < 2) warmRingOnAlly++;
+        }
+        if (!allyPos[e.to]) healNumsOnEnemy++;
+      }
+    });
+
+    /* 播到「第一次走位之前」就够了 —— 那之后几何会变，
+       而我们这里不打算重建位置。 */
+    var firstMoveT = Infinity;
+    for (var q = 0; q < result.log.length; q++) {
+      if (result.log[q].type === 'move') { firstMoveT = result.log[q].t; break; }
+    }
+    for (var f2 = 0; f2 < 6000; f2++) {
+      W.Arena.step(1 / 30);
+      if (W.Arena.time() >= firstMoveT) break;
+      if (W.Arena.isDone()) break;
+    }
+
+    TH.ok('★ 放技能时弹出了「投掷一个外卖」的台词', sawCallout,
+      sawCallout ? '有' : '没有');
+    TH.ok('★ 而且台词是挂在美团袋鼠自己头上的', calloutAtRoo);
+    TH.eq('★ 外卖没有送到敌人身上（收件人全是自己人）', healNumsOnEnemy, 0);
+    TH.ok('★ 每一口外卖都在队友身上画了绿色回血数字（不是只有规则在跑）',
+      healNumsOnAlly > 0, healNumsOnAlly + ' 个回血数字');
+    TH.ok('★ 外卖那一口带**暖橙色**的环（和奶妈那口绿环分得开）',
+      warmRingOnAlly > 0, warmRingOnAlly + ' 个橙环');
+    TH.ok('★ 渲染层记下了攻速加成（卡片上那枚 🛵+20% 徽章的数据来源）',
+      buffTracked.length > 0 && buffTrackerWrong === 0,
+      buffTracked.length + ' 次记录正确 / ' + buffTrackerWrong + ' 次不对');
+    TH.eq('★ 而且加成从来没有记到袋鼠自己头上（外卖是送给别人的）', buffOnRoo, 0);
+    TH.note('美团袋鼠这一场（第一次走位前）：外卖 ' + meals.length + ' 单，' +
+      '回血数字 ' + healNumsOnAlly + ' 个、橙环 ' + warmRingOnAlly + ' 个，' +
+      '攻速加成 ' + buffs.length + ' 次');
+  }
+
+  /* ============================================================
+   * 五j-4、东北雨姐的「红薯粉丝」在画面上看得见
+   *
+   *   ★★ 这一条要拦的是最误导人的那种错：把 root 画成 stun。
+   *      规则层两套字段、两个事件类型，但如果渲染层把 root 丢进 stun 分支，
+   *      玩家看到的就是**金色的「哈哈」**（嘉豪那套），而且"被捆住还能还手"
+   *      这件事在画面上彻底消失 —— 规则全对、数值全对，就是表现张冠李戴。
+   *      所以这里同时在**同一个回调里**问两件事：
+   *        ① 有没有「捆住」两个字（而且就在被捆的那个人头上）
+   *        ② 同一瞬间**有没有「哈哈」**（有就说明走错分支了）
+   *   ★ 另外验一下渲染层真的把 rootUntil 记下来了 ——
+   *     卡片上那枚 🍜Ns 徽章读的就是它（不记的话"它为什么站着不动"没人解释）。
+   * ============================================================ */
+  async function testNoodleVfx() {
+    TH.section('东北雨姐 · 红薯粉丝表现');
+
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'templar', star: 3, items: ['sapphire', 'sapphire', 'belt'], r: 3, c: 3 },
+          { id: 'falconer', star: 1, items: ['swiftboots', 'belt', 'belt'], r: 2, c: 7 }],
+      b: [{ id: 'stoneguard', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 },
+          { id: 'stoneguard', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 1 },
+          { id: 'stoneguard', star: 3, items: ['belt', 'belt', 'belt'], r: 5, c: 7 }]
+    }, 60607);
+    var roots = result.log.filter(function (e) { return e.type === 'root'; });
+    var noodleHeals = result.log.filter(function (e) {
+      return e.type === 'heal' && e.reason === 'noodle';
+    });
+    TH.ok('这一场既捆过人、也回上过血（否则后面全是空断言）',
+      roots.length > 0 && noodleHeals.length > 0,
+      roots.length + ' 条 root / ' + noodleHeals.length + ' 口回血');
+
+    var CW = W.Arena.cell(), PW = W.Arena.pitch();
+    var nRoot = 0, noCallout = 0, giggle = 0, offCell = 0, maxOff = 0;
+    var tracked = 0, trackBad = 0;
+    var noodleNums = 0, noodleMotes = 0;
+    W.Arena.play(result, {
+      onEvent: function (e) {
+        if (e.type === 'root') {
+          nRoot++;
+          var ru = W.Arena.units()[e.to];
+          var fl0 = W.Arena.fxList();
+          var co0 = null, gig0 = 0;
+          for (var k0 = 0; k0 < fl0.length; k0++) {
+            if (fl0[k0].type === 'callout' && fl0[k0].text === '捆住') co0 = fl0[k0];
+            if (fl0[k0].type === 'mote' && fl0[k0].text === '哈哈') gig0++;
+          }
+          if (gig0) giggle++;
+          if (!co0) { noCallout++; return; }
+          var ex0 = ru ? ru.cc * PW + CW / 2 : -9999;
+          var off0 = Math.abs(co0.x - ex0);
+          if (off0 > maxOff) maxOff = off0;
+          if (off0 > 2) offCell++;
+          /* ★ 渲染层必须把"捆到什么时候"记下来 —— 徽章读的就是这个字段。 */
+          if (ru && Math.abs((ru.rootUntil || -1) - e.until) < 1e-9) tracked++;
+          else trackBad++;
+          return;
+        }
+        if (e.type === 'heal' && e.reason === 'noodle') {
+          var hu = W.Arena.units()[e.to];
+          if (!hu) return;
+          var hx = hu.cc * PW + CW / 2, hy = hu.rr * PW + CW / 2;
+          var fl2 = W.Arena.fxList();
+          for (var k2 = 0; k2 < fl2.length; k2++) {
+            var f2 = fl2[k2];
+            if (f2.type === 'num' && f2.kind === 'heal' && Math.abs(f2.x - hx) < 2) noodleNums++;
+            if (f2.type === 'mote' && f2.text === '🍠' && Math.abs(f2.x - hx) < 2) noodleMotes++;
+          }
+        }
+      }
+    });
+    for (var q = 0; q < 6000 && !W.Arena.isDone(); q++) W.Arena.step(1 / 30);
+
+    TH.ok('★ 回放跑到了结尾（没跑完会漏事件 —— 假绿）', W.Arena.isDone());
+    TH.eq('渲染层的回调看到了每一条捆人事件', nRoot, roots.length);
+    TH.ok('★★ 每一次捆人都弹出了「捆住」字样（不是掉进眩晕那条分支）',
+      noCallout === 0, noCallout ? (noCallout + ' 次没弹') : ('全部弹了（' + nRoot + ' 次）'));
+    TH.ok('★★ 而且同一瞬间**没有**「哈哈」（有就说明 root 被画成了 stun）',
+      giggle === 0, giggle ? (giggle + ' 次画成了哈哈') : '一次都没有');
+    TH.ok('★ 「捆住」两个字就飘在被捆的那个人的格子上',
+      offCell === 0, '最大偏差 ' + maxOff.toFixed(1) + 'px');
+    TH.ok('★ 渲染层记下了 rootUntil（卡片上 🍜Ns 徽章的数据来源）',
+      tracked > 0 && trackBad === 0, tracked + ' 次记对 / ' + trackBad + ' 次不对');
+    TH.ok('★ 打被捆住的人回的那口血画了绿色数字', noodleNums > 0, noodleNums + ' 个');
+    TH.ok('★ 而且冒了一颗 🍠（三条被动都在冒绿字，只有图标能说清是谁给的）',
+      noodleMotes > 0, noodleMotes + ' 颗');
+    TH.note('东北雨姐这一场：' + roots.length + ' 条 root、' + noodleHeals.length +
+      ' 口回血（画面上 ' + noodleNums + ' 个数字 / ' + noodleMotes + ' 颗 🍠）');
   }
 
   /* ============================================================
@@ -3089,6 +3911,11 @@
         await testDuckVfx();
         await testZhangVfx();
         await testMedicVfx();
+        await testMikadoVfx();
+        await testBatonVfx();
+        await testFrostVfx();
+        await testDeliveryVfx();
+        await testNoodleVfx();
         await testLaughVfx();
         await testDomainVfx();
         await testYangVfx();
