@@ -55,7 +55,24 @@
     { id: 'spellbook', name: '秘法之书', emoji: '📖', mods: { apPct: 0.30 }, desc: '+30% 法术强度' },
     { id: 'dragonscale', name: '龙鳞甲', emoji: '🐲', mods: { armor: 45 }, desc: '+45 护甲' },
     { id: 'voidcloak', name: '虚空斗篷', emoji: '🧿', mods: { mr: 45 }, desc: '+45 魔抗' },
-    { id: 'belt', name: '巨人腰带', emoji: '🎗️', mods: { hp: 280 }, desc: '+280 生命' },
+    /* ★ 原名「巨人腰带」，改名「剧毒火龙果」（2026-10）。
+     *
+     *   除了原来的 +280 生命之外，多一条**范围毒**：
+     *   装备者身边 3×3 内**所有单位**（不分敌我，**连自己也算**）
+     *   每秒受到「装备角色 60% 攻击力」的伤害。
+     *
+     *   ★ 字段名仍然叫 'belt'（id 不变）—— 不跟显示名字走，
+     *     改了要动 units.js 的阵容、levels.js 的 20 多处出装、以及一堆自检场景。
+     *   ★ `grants` 而不是 `mods`：这是一条**行为**（每秒一跳的范围伤害），
+     *     不是面板数字，相加没有意义（见本文件末尾 resolveItemGrants 的说明）。
+     *   ★ 图标是图片：art/items/belt.png（文件名跟 id 走，不跟名字走）。
+     *   ★ 伤害在引擎里按**装备角色当时的攻击力**现算，
+     *     所以中途加上去的攻击力（龙鳞甲不算、巨力之刃算）会同步反映在毒上。
+     */
+    { id: 'belt', name: '剧毒火龙果', emoji: '🐉', mods: { hp: 280 },
+      grants: { poisonAura: { radius: 1, adPct: 0.60, interval: 1 } },
+      desc: '+280 生命；自身 3×3 范围内所有单位（不分敌我，含自己）' +
+            '每秒受到装备角色 60% 攻击力的伤害' },
     { id: 'sapphire', name: '蓝水晶', emoji: '💎', mods: { manaStart: 35 }, desc: '开局 +35 法力' },
     { id: 'huntereye', name: '猎手之眼', emoji: '👁️', mods: { critChance: 0.30 }, desc: '+30% 暴击率' },
     { id: 'infinity', name: '无尽之刃', emoji: '⚔️', mods: { critMult: 0.50 }, desc: '+50% 暴击伤害' },
@@ -112,13 +129,24 @@
    *   不该被冻成冰雕（见 battle.js 里那段初始化）。
    */
   ST.resolveItemGrants = function (itemIds) {
-    var out = { chill: null, burnMaxPct: 0 };
+    var out = { chill: null, burnMaxPct: 0, poison: null };
     if (!itemIds) return out;
     for (var i = 0; i < itemIds.length; i++) {
       var item = ST.ITEM_BY_ID[itemIds[i]];
       var g = item && item.grants;
       if (!g) continue;
       if (g.burnMaxPct > out.burnMaxPct) out.burnMaxPct = g.burnMaxPct;
+      /* ★ 「剧毒火龙果」的范围毒：**取强不叠加** ——
+         带两颗果子不该变成每秒两跳（那和"范围伤害"的直觉不符，
+         而且会让"堆同一个装备"变成唯一的正确打法）。 */
+      if (g.poisonAura) {
+        var pa = g.poisonAura;
+        if (!out.poison || (pa.adPct || 0) > (out.poison.adPct || 0)) {
+          out.poison = { radius: (pa.radius > 0) ? pa.radius : 1,
+                         adPct: pa.adPct || 0,
+                         interval: (pa.interval > 0) ? pa.interval : 1 };
+        }
+      }
       if (g.chill) {
         if (!out.chill) {
           out.chill = { perHit: g.chill.perHit, perStack: g.chill.perStack,
