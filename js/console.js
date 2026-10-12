@@ -143,7 +143,7 @@
 
     var starBox = document.createElement('span');
     starBox.className = 'stars';
-    for (var s = 1; s <= 3; s++) {
+    for (var s = 1; s <= ST.MAX_STAR; s++) {
       var sb = document.createElement('button');
       sb.textContent = s + '★';
       if (unit.star === s) sb.className = 'on';
