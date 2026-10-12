@@ -1293,6 +1293,17 @@ button { font: inherit; color: inherit; }
      #app 和 body 仍然是 overflow: hidden，滚的是场景内部。 */
   .scene { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
 
+  /* ---------- 立绘占位 emoji：跟着卡片宽度走，别被切掉 ---------- */
+  /* ★ 实测：商店卡在 390 宽的手机上只有 66px 宽，而 emoji 是**固定 50px**
+     （来自 max-height:880 那一档），算上 emoji 自身的边距正好宽 67px ——
+     比卡片宽 2px，于是被 `overflow: hidden` 切掉一点。
+     24 个棋子里有 12 个还没立绘，所以这条是**能看见**的。
+     改成跟 `--shop-card` 走之后，卡片变小 emoji 跟着变小，永远不会切。 */
+  .sc-fallback { font-size: calc(var(--shop-card) * 0.60); }
+
+  /* 手指点得着的那两条在文件末尾的 `(hover: none) and (pointer: coarse)` 里 ——
+     放在那儿才能连 iPad 一起覆盖到。 */
+
   /* ---------- 封面 ---------- */
   .cover-inner { padding: 16px; gap: 18px; }
   .cover-menu { width: min(400px, calc(100vw - 32px)); }
@@ -1326,26 +1337,74 @@ button { font: inherit; color: inherit; }
   .big-btn .bb-text em { font-size: 10.5px; }
   .big-btn .bb-cost { top: 6px; right: 8px; font-size: 11px; padding: 1px 7px; }
 
-  /* ---------- 准备区：棋盘在最上面，两条侧栏折到下面 ---------- */
-  .prep-main {
-    display: flex; flex-direction: column; gap: 10px;
-    padding: 10px 20px; flex: none;
+  /* ---------- HUD：手机上按**优先级让位**，而不是把所有东西一起缩小 ---------- */
+  /* ★★ 实测（390×844）：`.hud-left` 会被挤成 **6px** ——
+     `hud-stats`(231px) + `hud-right`(101px) 把 374px 占满了，于是
+     「‹ 回封面」只剩 **7px 宽**（根本点不到）、关卡名被切成 16px（看不见）。
+     处理办法是让最不重要的一项先让位，而不是把每项都缩小一点 ——
+     全都缩小的结果是**每一样都难点、都看不清**。
+     让位的是等级 ⭐（含经验条）：商店那颗「买经验」按钮上已经写着
+     "升到 3 级还差 2"和一条进度条，信息是重复的。 */
+  .hud-stat.lvl { display: none; }
+  .hud-left { flex: 1 1 auto; min-width: 84px; }
+  /* ★ 关卡名「第一关 · 热身」要 73px，而 hud-left 只剩 84px（里面还有 28px 的
+     「‹」按钮）→ 名字被省略号切掉。所以再把剩下两项挤一点，
+     把省下来的**全部**还给左边：血量条 34→26、内边距 6→5。
+     实测这样 hud-left 能拿到 ~117px，名字就完整了。 */
+  .hud-stat { padding: 2px 5px; gap: 3px; }
+  .hud-stat .hs-bar { width: 26px; }
+  .hud-stage-name { font-size: 11px; }
+  .hud-field { font-size: 10.5px; padding: 2px 6px; }
+  /* ★ 「上场」这两个字在手机上纯属占地方（数字才是有用的），
+     省下来的 20px 全部还给左边的关卡名。 */
+  .hud-field .hf-label { display: none; }
+
+  /* ---------- 准备区：摊平成**一条可排序的列** ---------- */
+  /* ★★ 原来两条侧栏是折到棋盘**下面**的整块容器（先是「情报/选中/装备」，
+     再是「战报/开战」），而备战池排在它们后面。实测 390×844：
+       开战按钮在 T=919、备战池在 T=1026，而视口只有 844 ——
+       玩家每回合都要先滚动 100~200px 才点得到开战、才够得着备战池。
+     而「情报」「战报」这两块是**可以滚下去再看**的信息类内容。
+     ★ 做法：把中间区和两条侧栏**摊平**（`display: contents`），
+       让棋盘 / 备战池 / 选中信息 / 装备 / 开战 / 情报 / 战报
+       都变成场景这条 flex 列的直接子元素，再用 order 排优先级。
+       摊平之后 `.prep-main` 的 padding/gap 就不存在了，
+       所以每个子元素自己带边距（20px 横向，和商店/备战池对齐）。 */
+  .prep-main, .prep-side { display: contents; }
+  .board-center, .intel-strip, .sel-panel, .item-panel, .log-panel, .action-bar {
+    margin: 0 20px 10px;
+    flex: none;                    /* ★ 必须显式写：原来有 `.prep-side > * { flex: 1 1 168px }`，
+                                      摊平后那条会把这些块当成 flex 项、把**高度**撑到 168px */
   }
-  .board-center { order: -1; flex: none; }
+  /* 顺序 = 使用频率：
+     棋盘 → 备战池（拖拽就发生在这一对之间，必须挨着）
+     → 选中信息 → 装备 → 开战 → 情报 → 战报（信息类，滚下去看） */
+  .board-center { order: 1; margin-top: 10px; }
+  .prep-bench   { order: 2; }
+  .sel-panel    { order: 3; }
+  .item-panel   { order: 4; }
+  .action-bar   { order: 5; }
+  .intel-strip  { order: 6; }
+  .log-panel    { order: 7; }
   .board-label { font-size: 10px; }
   .board-label::before, .board-label::after { width: 16px; }
   .board-midline > span { font-size: 9px; padding: 0 6px; }
-
-  .prep-side {
-    max-width: none; width: 100%; flex: none;
-    flex-direction: row; flex-wrap: wrap; gap: 10px;
-  }
-  .prep-side.left, .prep-side.right { justify-self: stretch; }
-  .prep-side > * { flex: 1 1 168px; min-width: 0; }
   .panel-head { font-size: 12px; padding: 7px 10px; }
   .mini-log { max-height: 140px; }
   .intel-strip .ec-hint { display: none; }   /* 长文本在手机上占太多高度 */
-  .action-bar { flex: 1 1 100%; }
+
+  /* ---------- 开战：**吸在场景底部**，永远点得到 ---------- */
+  /* ★ 即使排到了备战池后面，矮屏（360×640 时内容总高约 820px）仍然会把它推出视口。
+     所以让这一条吸底 —— 不管滚到哪儿，开战都在手边。
+     ★★ 吸底的那一条必须**不透明**：原来的 `--panel-soft` + `backdrop-filter`
+        是半透明的，滚动时下面的内容会透出来，按钮上的字会读不清。 */
+  .action-bar {
+    position: sticky; bottom: 0; z-index: 6;
+    background: var(--bg-bot); backdrop-filter: none;
+    padding: 8px 12px 10px; gap: 0;
+  }
+  /* 手机上这行提示要占两行 40px，而开战按钮才是重点 —— 让位 */
+  .action-bar .hint { display: none; }
   .btn-fight { width: 100%; min-height: 52px; font-size: 16px; }
 
   /* ---------- 备战池：9 格按宽度均分 ---------- */
@@ -1380,6 +1439,53 @@ button { font: inherit; color: inherit; }
   .result-box { width: calc(100vw - 24px); max-height: calc(100vh - 24px); padding: 16px; }
   .result-acts { flex-wrap: wrap; }
   .result-acts .btn { flex: 1 1 120px; }
+}
+
+/* ============================================================
+ * 手指点得着（窄屏 **或** 触屏设备）
+ *
+ * ★★ 为什么不能只写在上面那个 `max-width: 700px` 里，也不能只写在
+ *    `(hover:none) and (pointer:coarse)` 里：
+ *      · 只写在宽度里 → **iPad 竖屏宽 768px，漏掉了**，而它同样是手指操作；
+ *      · 只写在触屏里 → 无头浏览器（鼠标设备）不匹配这条查询，
+ *        **自检量不到这个改动到底生效了没有**（实测就是这么漏掉的：
+ *        同一份 CSS 在前一次量到 btn-lock=68x32、后一次又变回 64x25）。
+ *    所以写成"窄屏 **或** 触屏"的并集：两种设备都覆盖，而且自检能量到。
+ * ============================================================ */
+@media (max-width: 700px),
+       (max-height: 520px),
+       (hover: none) and (pointer: coarse) {
+  /* 实测短边 <34px 的有「锁定」按钮(64×25) 和播放条上的 ×1/×2 倍速(31px 高) */
+  .shop-head .btn-sm { min-height: 32px; padding: 5px 12px; }
+  .play-bar .spd { min-height: 34px; }
+}
+
+/* 矮屏：开战按钮**不吸底，提到前面去**
+ *
+ * ★★ 为什么不能一路吸底：吸底的那一条永远占着视口最下面 72px，
+ *    而矮屏的内容在 scrollTop=0 时正好排到那里 ——
+ *    实测 360×640 上「选中信息条」在 T566~600、吸底条在 T562~633，
+ *    **整条被盖住**（320×568 同样）。选一个棋子看它的属性，结果什么都看不到。
+ *    这属于"为了修一个问题制造了另一个问题"。
+ *
+ * ★ 所以按高度分两档：
+ *     高屏（≥700px）：吸底 —— 拇指够得着，而且内容排得下、不会盖住谁；
+ *     矮屏（<700px）：排到 HUD / 商店之后、棋盘之前（order: 0）——
+ *                     开战永远在第一屏，而且**谁都不挡**。
+ *   横屏手机（844×390）也走这一条：那里内容总高约 800px、视口只有 390px，
+ *   吸底的话按钮正好压在棋盘上（实测棋盘 T328~492、按钮 T321~373）。
+ */
+@media (max-width: 700px) and (max-height: 700px),
+       (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  .action-bar { position: static; order: 0; margin-top: 8px; }
+}
+
+/* 320~360px 的老/小机器：连「上场 0/2」都留不住了。
+   ★ 让位顺序是**关卡名 > 上场人数**：关卡名是"我在打第几关"，
+     每时每刻都要看；上场人数只在"上不去第 N 个"那一刻有用，
+     而那一下本来就会弹一句提示，棋盘上的人也数得出来。 */
+@media (max-width: 360px) {
+  .hud-field { display: none; }
 }
 
 /* 触屏：去掉点击高亮和双击缩放，拖拽交给 pointer 事件 */
