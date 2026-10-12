@@ -74,16 +74,16 @@
 
 【1 费】stoneguard.png 奶龙 / bowman.png 荣誉 / pyromancer.png 羊帆
         wolfrider.png 狼王 / acolyte.png 豆包 / dagger.png 愤怒的普通人
-        spearman.png 长枪兵 / vine.png 嘉豪
+        spearman.png 电棍 / vine.png 嘉豪
 
-【2 费】crossbow.png 弩手 / ironwall.png 100元的鸭子 / frostmage.png 冰霜法师
-        twinblade.png 双刃舞者 / falconer.png 猎鹰手 / templar.png 圣殿骑士
+【2 费】crossbow.png 弩手 / ironwall.png 100元的鸭子 / frostmage.png 冰冰冰
+        twinblade.png 双刃舞者 / falconer.png 猎鹰手 / templar.png 东北雨姐
 
-【3 费】alchemist.png 炼金师 / brute.png 牢大 / windcaller.png 楚生疑犯
+【3 费】alchemist.png 美团袋鼠 / brute.png 牢大 / windcaller.png 楚生疑犯
         medic.png 老牧师
 
 【4 费·稀有】abyss.png 深渊祭司 / deadeye.png Dank1ng
-             butcher.png 血月屠夫 / earthwarden.png 大地守护
+             butcher.png 孙笑川 / earthwarden.png 大地守护
 
 【5 费·传说】titan.png 山岳 / blademaster.png 张雪峰
              （这两张最值得精修 —— 5 费只有 7 级 12%、8 级 20% 才刷得到）
