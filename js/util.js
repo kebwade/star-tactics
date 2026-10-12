@@ -33,6 +33,47 @@
 
   function round1(v) { return Math.round(v * 10) / 10; }
   function round2(v) { return Math.round(v * 100) / 100; }
+
+  /**
+   * 一串 emoji 里有**几个图形**（不是几个 UTF-16 码元）。
+   *
+   * ★★ 为什么不能直接看 `.length`：一个 emoji 在 JS 里往往不止一个码元 ——
+   *    `'❄️'.length === 2`（雪花 + 变体选择符 U+FE0F）、
+   *    `'🧊'.length === 2`（代理对）、`'👨‍👩‍👦'.length === 8`（ZWJ 串起来的一家人）。
+   *    照 `.length` 判，单个 ❄️ 会被当成两个，字号直接缩错档。
+   *
+   * 规则：先扔掉**修饰符**（变体选择符 U+FE0F、零宽连接符 U+200D、
+   * 肤色修饰 U+1F3FB~U+1F3FF），再按**码点**数。
+   * 这是给"字号缩放"用的近似值，不追求 Unicode 级别的精确。
+   */
+  function emojiCount(s) {
+    s = String(s == null ? '' : s)
+      .replace(/[\uFE0F\u200D]/g, '')
+      .replace(/[\uD83C][\uDFFB-\uDFFF]/g, '');
+    // 手写码点计数：不用 Array.from，保持和这个文件的 ES5 风格一致
+    var n = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+        var d = s.charCodeAt(i + 1);
+        if (d >= 0xDC00 && d <= 0xDFFF) { i++; n++; continue; }
+      }
+      if (c !== 0x20 && c !== 0x0A) n++;   // 空格不算一个图形
+    }
+    return n;
+  }
+
+  /**
+   * 一个 emoji 在给定字号下该缩多小 —— 让 n 个 emoji 横着排也进得去。
+   * 1 个 1.0、2 个 0.72、3 个及以上 1.75/n（3 个 → 0.58）。
+   */
+  function emojiScale(n, one) {
+    one = one || 1;
+    if (n <= 1) return one;
+    if (n === 2) return one * 0.72;
+    return one * (1.75 / n);
+  }
+
   /** 千分位，用于报告输出 */
   function fmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
   function pad(s, n, ch) {
@@ -156,6 +197,7 @@
     clamp: clamp, lerp: lerp, dist: dist, dist2: dist2,
     cheb: cheb, manhattan: manhattan,
     round1: round1, round2: round2, fmt: fmt, pad: pad, padEnd: padEnd,
+    emojiCount: emojiCount, emojiScale: emojiScale,
     clone: clone, deepEqual: deepEqual, addMods: addMods
   };
   ST.makeRng = makeRng;
