@@ -223,9 +223,21 @@
            ★ ocMax === 0 表示这一版没设上限（旧数据），画徽章时要按"没上限"处理。 */
         oc: u.ocStart || 0, ocOver: false, ocFlash: 0, ocBurnFlash: 0,
         ocMax: u.ocMaxAs || 0, ocCapped: false,
+        /* 攻速增益（双刃舞者的「疾风连斩」/ 美团袋鼠 2 星的「准时送达」）。
+           ★ 它和「超频」是**两条不同的东西**：oc 是自己越打越快、
+             永久累积；这两个是别人给的一段限时加成，到期自己失效。
+             所以徽章也必须分开画（🛵 而不是 ⚡），否则玩家以为张雪峰又叠了一层。 */
+        asBuffPct: 0, asBuffUntil: -1, asBuffFlash: 0,
+        /* 东北雨姐「红薯粉丝」：被捆到什么时候（rootUntil）+ 一次性闪光。
+           ★ rootUntil 用 -1 表示"没被捆"，和 stunUntil / asBuffUntil 同一套约定。 */
+        rootUntil: -1, rootFlash: 0,
         /* 「和成天下5000精品大果」的自燃：卡片上要一直挂一个 🌰 徽章 ——
            带上它的人每秒都在掉血，不标出来的话玩家只会觉得"这张卡莫名其妙在死"。 */
         burnMaxPct: u.burnMaxPct || 0, burnFlash: 0,
+        /* 孙笑川 3 星「安排上了」招安过来的单位 → 卡面变灰（见 drawUnit） */
+        converted: false,
+        /* 电棍：现在挂着几条电流（「三相电」最多 3 条，玩家得能数出来） */
+        curN: 0,
         ocBerserkName: u.ocBerserkName || '狂暴',
         ocOverFlash: 0,
         /* 「巧乐兹」的冰棍层数（挂在自己身上） */
@@ -289,7 +301,16 @@
         sz = Math.round(e.size);
       }
       out.push({ type: e.type, text: e.text, kind: e.kind, size: sz, life: e.life,
-                 color: e.color, x: e.x, y: e.y, age: e.age, vy: e.vy });
+                 color: e.color, x: e.x, y: e.y, age: e.age, vy: e.vy,
+                 /* ★ 线段类的特效（曳光 / 光束 / 闪电）还有两端坐标。
+                    以前不导出它们，于是自检**根本没法验"这条线画在哪"** ——
+                    我为此白查了一轮：断言里读到的四个坐标全是 undefined，
+                    看起来像"287 道闪电都画错了"，其实是字段压根没暴露。
+                    ★ 只在有值的时候带上，避免给别的特效塞一堆 undefined。 */
+                 x1: (e.x1 === undefined ? undefined : e.x1),
+                 y1: (e.y1 === undefined ? undefined : e.y1),
+                 x2: (e.x2 === undefined ? undefined : e.x2),
+                 y2: (e.y2 === undefined ? undefined : e.y2) });
     }
     return out;
   };
@@ -406,6 +427,26 @@
       type: 'beam', x1: x1, y1: y1, x2: x2, y2: y2,
       color: color, age: 0, life: life || 1
     });
+  }
+
+  /* ---------- 电棍的电流 ----------
+   * ★★ 需求里明确写了「明显电流特效」，所以这两条都不做成"一条亮线"：
+   *   真正的闪电是**折线**、而且每帧都在抖；直线看起来像激光。
+   */
+  /** 一道锯齿闪电（两点之间）。折线的偏移用 Math.random —— 渲染层允许随机
+      （引擎层才禁止），每帧重画就自动得到"噼啪"的感觉。 */
+  function addArc(x1, y1, x2, y2) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'arc', x1: x1, y1: y1, x2: x2, y2: y2, age: 0, life: 0.26 });
+  }
+
+  /** 电流"停在某个人身上等跳"的那 0.5 秒：一团噼啪的蓝白电球。
+      ★ 它必须**持续可见** —— 否则玩家只看到"啪"一下，
+        读不出"0.5 秒之后还会再跳一次"。
+      ★ life 直接取规则里的延迟：光球消失的那一帧，电流正好跳走。 */
+  function addCurrentNode(x, y, dur) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'cnode', x: x, y: y, age: 0, life: dur || 0.5 });
   }
 
   /** 枪口闪光：从枪口炸开的一圈光环，只在开枪那一瞬间出现 */
@@ -698,7 +739,6 @@
             src.lungeDy = d.dy;
           }
         }
-        if (e.type !== 'damage' && A.onEvent) A.onEvent(e);
         break;
 
       case 'heal':
@@ -709,14 +749,69 @@
              偏暖的绿 + 小一号字体。它是「被动在生效」，
              和奶妈主动奶一口应该看得出来不是一回事。 */
           var passiveHeal = (e.reason === 'passive');
+          /* ★ 美团袋鼠 3 星「好评如潮」：这一口是**外卖送到**的。
+             一次普攻会同时冒出好几口（圈里每个自己人各一口），
+             所以给一个暖橙色的环 —— 混战里"这几口是同一单"一眼可辨。 */
+          var delivHeal = (e.reason === 'delivery');
+          /* ★ 东北雨姐 3 星「雨姐的关照」：打被捆住的人换来的那一大口。
+             冒一颗 🍠 上去 —— 三件装备/三条被动都在冒绿字，
+             只有图标能说清"这一口是谁给的"。 */
+          var noodleHeal = (e.reason === 'noodle');
           addNum(cellX(u), cellY(u) - CELL * 0.42, '+' + Math.round(e.amount),
                  passiveHeal ? 'healPassive' : 'heal', 1);
           addRing(cellX(u), cellY(u),
-                  passiveHeal ? 'rgba(170,205,110,.8)' : 'rgba(90,190,120,.75)',
+                  passiveHeal ? 'rgba(170,205,110,.8)'
+                              : (delivHeal ? 'rgba(255,168,72,.85)'
+                                           : (noodleHeal ? 'rgba(214,140,70,.9)'
+                                                         : 'rgba(90,190,120,.75)')),
                   CELL * (passiveHeal ? 0.42 : 0.55), 0.5);
+          if (noodleHeal) {
+            addMote(cellX(u), cellY(u) - CELL * 0.5, '🍠', '#ffe0b8', CELL * 0.34, 1.1);
+          }
         }
-        if (A.onEvent) A.onEvent(e);
         break;
+
+      /* ★★ 东北雨姐 2 星「红薯粉丝」：被捆住的敌人**钉在原地但还能打**。
+       *
+       *   ★ 这个状态必须有一个持续可见的标记：画面上它只是"站着不动"，
+       *     而"站着不动"在混战里和"卡住了 / 发呆 / 没目标"长得一模一样 ——
+       *     不说清楚，玩家只会以为寻路出 bug 了。
+       *   ★ 表现走"粉丝"的意象：一圈琥珀色的环 + 几根垂下来的粉丝 +
+       *     「捆住」两个字；另外卡片上挂一枚 🍜 徽章（带剩余秒数）。
+       *   ★ 和眩晕分开画（眩晕是金色环 + 哈哈 / 冰系那套）：这是**第三类**控制。 */
+      case 'root': {
+        var ru = pb.units[e.to];
+        if (ru) {
+          ru.rootUntil = e.until;
+          ru.rootFlash = 1;
+          var rx2 = cellX(ru), ry2 = cellY(ru);
+          addRing(rx2, ry2, 'rgba(226,166,86,.9)', CELL * 0.66, 0.5);
+          addRing(rx2, ry2, 'rgba(255,224,170,.7)', CELL * 0.4, 0.35);
+          addSparks(rx2, ry2, 7, '#e8b46a', 140);
+          addCallout(rx2, ry2 - (CELL + 10) / 2 - CELL * 0.34, '捆住', '#e8b46a');
+        }
+        break;
+      }
+
+      /* ★★ 攻速增益（双刃舞者「疾风连斩」/ 美团袋鼠 2 星「准时送达」）。
+       *
+       *   ★ 这条事件**渲染层以前根本没有处理** —— 双刃舞者放完技能，
+       *     画面上一个像素都不变，玩家只能从"它怎么突然打得快了"去猜。
+       *     规则层一直在正常发事件，是表现层漏了一整个类型。
+       *   ★ 效果要挂 5 秒，而这一下特效是瞬时的，所以卡片上再挂一枚
+       *     常驻徽章（🛵+20%）—— 和「幻觉」那条的处理方式是同一个道理。 */
+      case 'buff': {
+        var bu = pb.units[e.who];
+        if (bu) {
+          bu.asBuffPct = e.amount;
+          bu.asBuffUntil = e.until;
+          bu.asBuffFlash = 1;
+          var bux = cellX(bu), buy = cellY(bu);
+          addRing(bux, buy, 'rgba(255,178,92,.85)', CELL * 0.62, 0.45);
+          addSparks(bux, buy, 6, '#ffcf8a', 140);
+        }
+        break;
+      }
 
       case 'shield':
         u = pb.units[e.to];
@@ -748,7 +843,6 @@
           addEyeLaser(ccx - eyeDx, eyeY, ax, ay, e.dur);
           addEyeLaser(ccx + eyeDx, eyeY, ax, ay, e.dur);
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -883,7 +977,6 @@
           }
           addShake(5);
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -911,7 +1004,6 @@
                        e.callout, '#ffd24d');
           }
         }
-        if (A.onEvent) A.onEvent(e);
         break;
 
       /* ★ 牢大「坠机」的三段演出。
@@ -976,7 +1068,6 @@
                      '我回来了', '#ffd24d');
           addShake(9);
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -1041,7 +1132,68 @@
                        '救不回来了', '#a89c86');
           }
         }
-        if (A.onEvent) A.onEvent(e);
+        break;
+      }
+
+      /* ★★ 孙笑川 3 星「安排上了」：被打死的敌人**倒戈**成我方单位。
+       *
+       *   ★ 渲染层必须跟着做三件事，少一件画面上就是错的：
+       *     ① `side` 真的换掉 —— 否则它还会被当成敌人（渐显、阵营色都错）；
+       *     ② `converted = true` —— 卡面变灰，一眼看出"这不是我原本的人"；
+       *     ③ 一撮灰白火花 + 台词，让"它换边了"这件事被看到。
+       *   ★ 位置直接读事件里的 r/c，不自己算 freeCellNear ——
+       *     规则层已经决定了它站在哪，渲染层重算只会算出别的格子。 */
+      case 'convert': {
+        var cu = pb.units[e.who];
+        if (cu) {
+          cu.side = e.toSide;
+          cu.converted = true;
+          cu.alive = true; cu.hp = e.hp; cu.shield = 0;
+          cu.r = e.r; cu.c = e.c; cu.rr = e.r; cu.cc = e.c;
+          cu.flash = 1;
+          cu.target = null;
+          addRing(cellX(cu), cellY(cu), 'rgba(206,214,206,.95)', CELL * 1.7, 0.6);
+          addSparks(cellX(cu), cellY(cu), 20, '#cfd6cf', 220);
+          addPillar(cellX(cu), cellY(cu));
+          addCallout(cellX(cu), cellY(cu) - (CELL + 10) / 2 - CELL * 0.34,
+                     '安排上了', '#b9c4b9');
+          addShake(9);
+        }
+        break;
+      }
+
+      /* ★★ 电棍「导电」：电流的出生 / 弹射 / 消散。
+       *
+       *   ★ 三种情形共用这一个事件类型，靠 born / fizzle 区分：
+       *       born   在被打中的人身上放一颗电球（它要**停 0.5 秒**才跳）
+       *       跳     从上一格拉一道锯齿闪电到新目标，并在新目标上再放一颗
+       *       fizzle 没地方跳了 → 散掉（**不画闪电**，只抹掉计数）
+       *   ★ `curN` 是"这个电棍现在挂着几条电流"，画成常驻徽章：
+       *     3 星的「三相电」就是"同时最多 3 条"，玩家得能看出现在有几条。
+       */
+      case 'current': {
+        var own = pb.units[e.from];
+        if (e.born) {
+          if (own) own.curN = (own.curN || 0) + 1;
+          addCurrentNode(cellX(pb.units[e.to] || { r: e.r, c: e.c }),
+                         cellY(pb.units[e.to] || { r: e.r, c: e.c }), e.delay);
+          addSparks(cellX(pb.units[e.to] || { r: e.r, c: e.c }),
+                    cellY(pb.units[e.to] || { r: e.r, c: e.c }), 6, '#8fd0ff', 90);
+        } else if (e.fizzle) {
+          if (own) own.curN = Math.max(0, (own.curN || 1) - 1);
+        } else {
+          /* 弹射：从 (fromR,fromC) 拉到 (r,c) —— 两端都用自己的格子算屏幕坐标，
+             不依赖单位的当前渲染位置，所以"人刚走开"也不会把闪电画歪。 */
+          var ax1 = e.fromC * PITCH + CELL / 2, ay1 = e.fromR * PITCH + CELL / 2;
+          var ax2 = e.c * PITCH + CELL / 2, ay2 = e.r * PITCH + CELL / 2;
+          addArc(ax1, ay1, ax2, ay2);
+          addSparks(ax2, ay2, 10, '#bfe4ff', 150);
+          addRing(ax2, ay2, 'rgba(150,210,255,.85)', CELL * 0.75, 0.35);
+          // 还有下一跳 → 在新目标身上再放一颗电球
+          if (e.left > 0) addCurrentNode(ax2, ay2, e.delay);
+          else if (own) own.curN = Math.max(0, (own.curN || 1) - 1);
+          if (e.stunned) addMote(ax2, ay2 - CELL * 0.34, '💫', '#ffd98a', 1, 0.6);
+        }
         break;
       }
 
@@ -1081,7 +1233,6 @@
           addRing(cellX(kfe), cellY(kfe), 'rgba(210,228,255,.9)', CELL * 1.1, 0.45);
           addShake(4);
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -1106,7 +1257,6 @@
             addRing(ex2, ey2, 'rgba(150,170,190,.75)', CELL * 1.2, 0.5);
           }
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -1174,7 +1324,6 @@
             addShake(7);
           }
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -1214,18 +1363,21 @@
             addSparks(cellX(st2), cellY(st2), 6, '#9fb0bd', 130);
           }
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
       case 'stun':
         u = pb.units[e.to];
         if (u) {
-          /* ★ 冰冻（巧乐兹满层）走同一条 stun 事件，但表现要更重 ——
-             它是攒了 10 层换来的 3 秒硬控，不是随手一个眩晕。 */
-          var isFreeze = (e.reason === 'freeze');
+          /* ★★ 两个来源走同一条 stun 事件，但**表现都是"冻住"**：
+           *     `freeze` = 巧乐兹攒满 10 层换来的 3 秒硬控；
+           *     `frost`  = 冰冰冰 2 星「冻手冻脚」技能附带的 1.5 秒。
+           *   所以两者共用这一套冰系特效（冰环 + 白环 + 冰渣 + 「冰冻」字样）。
+           *   ★ 但**只有满层那个清空冰棍层数** —— 技能冰冻和冰棍是两条规则，
+           *     顺手清一下的话，"3 星巧乐兹 + 冰冰冰"这种组合会把层数白吃掉。 */
+          var isFreeze = (e.reason === 'freeze' || e.reason === 'frost');
           if (isFreeze) {
-            u.chill = 0;                       // 层数被清空
+            if (e.reason === 'freeze') u.chill = 0;   // 层数被清空
             addRing(cellX(u), cellY(u), 'rgba(150,220,255,.95)', CELL * 1.15, 0.55);
             addRing(cellX(u), cellY(u), 'rgba(255,255,255,.9)', CELL * 0.7, 0.4);
             addSparks(cellX(u), cellY(u), 16, '#cdeeff', 220);
@@ -1253,6 +1405,13 @@
                       CELL * 0.6);
           }
         }
+        /* ★★ 这一行以前是**漏掉**的（别的 case 都有，只有 stun 没有）。
+         *   后果很隐蔽：`A.onEvent` 是渲染层把事件转给外面（战报 ticker、
+         *   音效、以及自检）的唯一出口 —— 少了这一步，
+         *   **所有眩晕都不会出现在战报里**，而 `describeEvent` 里那几个
+         *   stun 分支（巧乐兹冰冻 / 男人领域 / 羊巅峰）全成了死代码。
+         *   ★ 是「冰冰冰技能冰冻」那条自检把它照出来的：
+         *     规则完全正确，只是"回调一次都没被叫过"。 */
         break;
 
       /* ★ 星级被动「越打越快」。
@@ -1297,7 +1456,6 @@
           addNum(gx, gy - CELL * 0.66, e.good ? '增伤' : '减伤',
                  e.good ? 'giftGood' : 'giftBad', 1);
         }
-        if (A.onEvent) A.onEvent(e);
         break;
       }
 
@@ -1311,7 +1469,6 @@
           addShake(9);
           pb.hitstop = 0.075;            // 击杀顿帧，最有「重量」的一下
         }
-        if (A.onEvent) A.onEvent(e);
         break;
 
       /* ★ 队友换位（被堵死的近战和前方队友交换位置）。
@@ -1337,6 +1494,12 @@
           if (!uu) continue;
           uu.hp = row[1]; uu.shield = row[2]; uu.mana = row[3];
           uu.r = row[4]; uu.c = row[5]; uu.alive = !!row[6];
+          /* ★ 第 8/9 位是后加的（招安：卡面变灰 + 换阵营）。
+             不读它们的话，往后拖一下"灰卡"就没了、阵营也退回原来那一方。
+             ★ 用 `!== undefined` 而不是直接读：万一碰到旧格式的快照，
+               不能把 converted 清成 false、也不能把 side 改成 b。 */
+          if (row[7] !== undefined) uu.converted = !!row[7];
+          if (row[8] !== undefined) uu.side = row[8] ? 'a' : 'b';
         }
         break;
 
@@ -1347,6 +1510,25 @@
       default:
         break;
     }
+
+    /* ============================================================
+     * ★★ 事件**统一在这里**转发给外面（战报 ticker / 音效 / 自检）。
+     *
+     *   原来是"哪个 case 想起来了就自己叫一次"，结果 30 个 case 里
+     *   有 14 个忘了写 —— 那些事件规则全对、特效也画了，但
+     *   **战报里永远不出现**，`game.js` 的 describeEvent 里对应的文案
+     *   全成了死代码。而且这种漏一点都不显眼：玩家只会觉得
+     *   "战报怎么这么稀"。
+     *
+     *   ★ 是「冰冰冰的技能冰冻」那条自检把它照出来的（它靠 onEvent
+     *     回调精确对齐每一次冰冻，结果一次都没被叫到）。
+     *   ★ 收成一处之后，新增事件类型**不可能**再漏 —— 除非有人
+     *     特意在这里加过滤条件。
+     *
+     *   ★ `damage` 是唯一的例外：它和 attack / skill 是同一次结算的
+     *     两个事件，两个都转发的话战报里同一件事会写两行。
+     * ============================================================ */
+    if (e.type !== 'damage' && A.onEvent) A.onEvent(e);
   }
 
   /* ============================================================
@@ -1398,6 +1580,8 @@
       if (u.buffFlash > 0) u.buffFlash = Math.max(0, u.buffFlash - dt * 3.2);
       if (u.guardFlash > 0) u.guardFlash = Math.max(0, u.guardFlash - dt * 3.2);
       if (u.ocFlash > 0) u.ocFlash = Math.max(0, u.ocFlash - dt * 3.2);
+      if (u.asBuffFlash > 0) u.asBuffFlash = Math.max(0, u.asBuffFlash - dt * 3.2);
+      if (u.rootFlash > 0) u.rootFlash = Math.max(0, u.rootFlash - dt * 3.2);
       if (u.ocBurnFlash > 0) u.ocBurnFlash = Math.max(0, u.ocBurnFlash - dt * 3.2);
       if (u.ocOverFlash > 0) u.ocOverFlash = Math.max(0, u.ocOverFlash - dt * 3.2);
       if (u.burnFlash > 0) u.burnFlash = Math.max(0, u.burnFlash - dt * 3.2);
@@ -1407,6 +1591,9 @@
       if (u.manaFlash > 0) u.manaFlash = Math.max(0, u.manaFlash - dt * 3.2);
       // 伤害改动到期：靠时间戳自然失效，不需要事件来通知
       if (u.buffMul !== 1 && state.t >= u.buffUntil) { u.buffMul = 1; u.buffUntil = -1; }
+      /* 攻速增益到期同样靠比时间戳（不需要"结束"事件）——
+         和 buffUntil / laughUntil / chill 同一套约定。 */
+      if (u.asBuffPct > 0 && state.t >= u.asBuffUntil) { u.asBuffPct = 0; u.asBuffUntil = -1; }
       /* 大笑也会靠时间戳自然结束。★ 不需要 laughEnd 事件 ——
          时长写在 laughUntil 里，谁都能自己算出来还剩几秒。
          事件只负责"开始笑"这一下。 */
@@ -1913,6 +2100,60 @@
         ctx.arc(kx + Math.cos(kAng) * kR, ky + Math.sin(kAng) * kR, 2.6, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+      } else if (e.type === 'arc') {
+        /* ★ 锯齿闪电：外晕 + 白热芯两层，每帧重新生成折线。
+           ★ 偏移量乘 `sin(t·π)`：两头收拢、中间最散 ——
+             这样起点和终点**精确落在两个人身上**，不会"从旁边冒出来"。
+           ★ 蓝色外晕 + 白热芯，和红色的自燃、金色的治疗一眼分得开。 */
+        var aFade = Math.sin(Math.min(1, p) * Math.PI);
+        var adx = e.x2 - e.x1, ady = e.y2 - e.y1;
+        var alen = Math.sqrt(adx * adx + ady * ady) || 1;
+        var anx = -ady / alen, any = adx / alen;
+        var segs = 7;
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        for (var ap = 0; ap < 2; ap++) {
+          var amp = (ap === 0 ? CELL * 0.30 : CELL * 0.13);
+          ctx.globalAlpha = Math.min(1, aFade * (ap === 0 ? 0.45 : 0.95));
+          ctx.strokeStyle = (ap === 0 ? '#5aa6ff' : '#ffffff');
+          ctx.lineWidth = (ap === 0 ? 7 : 2.6);
+          ctx.beginPath();
+          ctx.moveTo(e.x1, e.y1);
+          for (var sg = 1; sg < segs; sg++) {
+            var sgT = sg / segs;
+            var off = (Math.random() - 0.5) * amp * 2 * Math.sin(sgT * Math.PI);
+            ctx.lineTo(e.x1 + adx * sgT + anx * off, e.y1 + ady * sgT + any * off);
+          }
+          ctx.lineTo(e.x2, e.y2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      } else if (e.type === 'cnode') {
+        /* ★ 电流停在人身上等待的那 0.5 秒：一团高频抖动的蓝白电球。
+           形状用 8 根长短不一的放射刺 —— 比一个圆点更像"电"。 */
+        var cLeft = Math.max(0, 1 - p);
+        var cPulse = 0.55 + 0.45 * Math.sin(e.age * 24);
+        var cR = CELL * (0.16 + 0.10 * cPulse);
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, (0.35 + 0.65 * cLeft) * cPulse);
+        ctx.strokeStyle = '#8fd0ff';
+        ctx.lineWidth = 2.2;
+        ctx.lineCap = 'round';
+        for (var sp = 0; sp < 8; sp++) {
+          var spA = sp / 8 * Math.PI * 2 + e.age * 3;
+          var spL = cR * (1.5 + Math.random() * 1.5);
+          ctx.beginPath();
+          ctx.moveTo(e.x + Math.cos(spA) * cR, e.y + Math.sin(spA) * cR);
+          ctx.lineTo(e.x + Math.cos(spA) * spL, e.y + Math.sin(spA) * spL);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = Math.min(1, 0.9 * (0.4 + 0.6 * cLeft));
+        ctx.fillStyle = '#eaf6ff';
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, cR * 0.85, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       } else if (e.type === 'beam') {
         /* ★ 祷告光束：两头淡、中间实，粗细恒定，微微呼吸。
            和上面那条蓄力激光是**刻意相反**的读法 —— 那条在"涨"，这条在"守"。
@@ -2274,6 +2515,14 @@
      *   读起来就是"它现在不在这里"。配合 🌑 徽章和"打不动"的格挡音效，
      *   玩家能立刻明白为什么对面一群人愣着不动。 */
     if (u.shadow) ctx.globalAlpha *= 0.42;
+    /* ★★ 「安排上了」招安过来的单位：**卡面变灰**。
+       两种手段叠着用，因为它们各有各的失效场景：
+         · `ctx.filter` 是真正的"去色"，最像"灰卡"，但个别老浏览器不支持
+           （不支持时会被**静默忽略**，什么都不发生）；
+         · 一层半透明灰幕在哪儿都有效，但只是"蒙了灰"。
+       两个一起上：最差也是"蒙了灰"，最好是真的黑白。 */
+    var greyed = !!u.converted;
+    if (greyed) ctx.filter = 'grayscale(1) brightness(.94)';
 
     // 影子贴地（不跟着突进走）
     ctx.beginPath();
@@ -2358,7 +2607,13 @@
       ctx.fillRect(dx, dy, cw, ch);
       ctx.restore();
     } else {
-      ctx.font = Math.round(ch * 0.42) + 'px "Segoe UI Emoji", "Segoe UI", sans-serif';
+      /* ★★ 一个棋子可以挂**多个** emoji（冰冰冰 = 🧊🧊🧊）。
+       *   按单字号的尺寸横着排三个，会直接冲出卡片 —— 所以按图形个数缩档。
+       *   ★ 数的是"图形个数"而不是 `.length`：`'❄️'.length` 是 2，
+       *     照 length 判会把单个雪花也当成两个（见 util.js 的 emojiCount）。 */
+      var emN = ST.U.emojiCount(u.emoji);
+      ctx.font = Math.round(ch * 0.42 * ST.U.emojiScale(emN)) +
+        'px "Segoe UI Emoji", "Segoe UI", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(u.emoji, x, y - ch * 0.09);
@@ -2498,6 +2753,20 @@
      * ★ 两条各自占一行、从上往下叠：目前没有棋子同时有这两种，
      *   但写成叠加的就不用担心以后哪张卡两样都占。
      */
+    /* ★ 招安过来的灰幕盖在**卡片正文**上（立绘 / 名字 / 血条）。
+       放在徽章之前是有意的：徽章要留给玩家读（还剩几次挡、还剩几层冰棍），
+       一起蒙灰会看不清。
+       ★ 盖完把 filter 复原，免得把下面的徽章也一起吃掉。 */
+    if (greyed) {
+      ctx.filter = 'none';
+      ctx.save();
+      ctx.globalAlpha = (ctx.globalAlpha) * 0.24;
+      ctx.fillStyle = '#5c635c';
+      roundRect(dx, dy, cw, ch, 10);
+      ctx.fill();
+      ctx.restore();
+    }
+
     var sbadgeY = dy + Math.round(bR * 2) + 5;
     var sbadgeFont = '900 ' + Math.round(cw * 0.145) + 'px "Segoe UI", "Microsoft YaHei", sans-serif';
     var sbadgeLine = Math.round(cw * 0.20);
@@ -2522,6 +2791,20 @@
       stateBadge('🛡' + u.guardLeft, u.guardFlash > 0 ? '#7ef0d8' : '#8fd8f0', u.guardFlash);
     }
 
+    /* ★ 电棍的电流条数徽章：`⚡2`。
+       3 星的「三相电」就是"同时最多 3 条"—— 不显示条数的话，
+       玩家永远不知道自己现在挂了几条、还能不能再挂。 */
+    if (u.curN > 0) {
+      stateBadge('⚡' + u.curN, '#a9d8ff', 0);
+    }
+
+    /* ★ 「安排上了」招安过来的单位：常驻一个灰旗徽章。
+       灰幕/filter 是"看上去灰"，但一块灰卡片也可能被读成"它快死了" ——
+       挂个旗子才说得清"它现在是我方的"。 */
+    if (u.converted) {
+      stateBadge('🏳招安', '#cfd6cf', u.flash > 0 ? 1 : 0);
+    }
+
     /* ★ 「和成天下5000精品大果」的自燃徽章：`🌰-6%/s`。
        带它的人每秒都在掉上限的 6%，**这是常驻状态**（不是触发一下），
        不常驻显示的话玩家只会看到一张卡的血莫名其妙一路往下掉。
@@ -2529,6 +2812,25 @@
     if (u.burnMaxPct > 0) {
       stateBadge('🌰-' + Math.round(u.burnMaxPct * 100) + '%/s',
         u.burnFlash > 0 ? '#ffe0b8' : '#e0a86a', u.burnFlash);
+    }
+
+    /* ★★ 东北雨姐「红薯粉丝」：被捆住的敌人**只能挨打不能跑**。
+     *   这枚徽章是"它为什么站着不动"的**唯一**解释 ——
+     *   不带秒数的话，玩家看到的是"这张卡发呆了三秒"。
+     *   ★ 图标和眩晕那套分得开：眩晕是金色的环 + 哈哈，捆住是琥珀色的 🍜。 */
+    if (u.rootUntil >= 0 && state.t < u.rootUntil) {
+      stateBadge('🍜' + Math.max(0, u.rootUntil - state.t).toFixed(1) + 's',
+        u.rootFlash > 0 ? '#ffe0b0' : '#e8b46a', u.rootFlash);
+    }
+
+    /* ★★ 攻速增益（双刃舞者的「疾风连斩」/ 美团袋鼠 2 星的「准时送达」）。
+     *   挂 5 秒的一个状态，而"它现在打得快了"在画面上**完全看不出来** ——
+     *   徽章是唯一能说明"这 5 秒里它为什么变快"的东西。
+     *   ★ 图标用 🛵 而不是 ⚡：⚡ 已经是张雪峰「超频」的自增攻速了，
+     *     两个都是攻速加成、都会显示百分比，混用会让玩家以为是同一件事。 */
+    if (u.asBuffPct > 0 && state.t < u.asBuffUntil) {
+      stateBadge('🛵+' + Math.round(u.asBuffPct * 100) + '%',
+        u.asBuffFlash > 0 ? '#ffe0b0' : '#ffb45a', u.asBuffFlash);
     }
 
     /* ★ 张雪峰的超频攻速。越过阈值之后变成红色 ——
