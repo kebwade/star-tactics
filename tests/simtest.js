@@ -467,6 +467,11 @@
     var downUntil = {}, crashCount = {}, reviveCount = {};   // 牢大：倒下 / 坠机 / 复活的次数
     var blockCount = {}, lastBlockT = {}, lastBlockFrom = {};  // 鸭子「抓娃娃」
     var ocLast = {}, ocOver = {};                             // 张雪峰：上次叠到多少 / 是否已超频
+    var ocCapped = {};                                        // 张雪峰：是否已经顶到攻速上限
+    var ritesUsed = {};                                       // 老牧师：哪个牧师已经用过被动了
+    var ritesPending = {};                                    // 老牧师：谁正在被祷告（等人站起来）
+    var ritesReviveCount = {};                                // 老牧师：谁被救了几次
+    var ritesByPriest = {};                                   // 老牧师：每个牧师救了几个人
     var chillStacks = {}, chillPending = {};                   // 张雪峰：冰棍层数 / 刚满层待冰冻
     var stunCastN = {};                                        // 嘉豪：一次施法已经发出了几条眩晕
     var peakStunArmedAt = {};                                  // 羊帆：巅峰一击 / 自爆发生的时刻
@@ -1050,26 +1055,59 @@
           break;
         }
 
-        /* ★ 张雪峰「超频」：每次普攻叠攻速，没有上限，只涨不跌。
-         *   越过阈值那一下额外带 justOver 标记（自毁开闸 + 3 星加攻击力）。 */
+        /* ★ 张雪峰「超频」：每次普攻叠攻速，只涨不跌。
+         *   2026-10 之后多了两条规则，这里都要独立算一遍：
+         *     ① 进入狂暴之后单次叠加量**翻倍**（ocPerHit → ocPerHitBerserk）
+         *     ② 加成有硬上限 ocMaxAs，顶到之后**不再写事件**
+         *   ★ 「该叠多少」用的是**叠加之前**的 ocOver 状态 ——
+         *     和 battle.js 里"用叠加之前的 ocOn 决定 step"必须同一个口径，
+         *     否则这条断言本身就在用另一套规则验规则。 */
         case 'ocas': {
           var ou = init[e.who];
           if (!ou) { bad(tag + ' 未知单位超频 ' + e.who); break; }
           if (!(ou.ocStart > 0)) bad(tag + ' 这个棋子没有超频被动，却出现了 ocas ' + e.who);
           if (!alive[e.who]) bad(tag + ' 已死亡的棋子还在叠攻速 ' + e.who);
+          if (ocCapped[e.who]) {
+            bad(tag + ' 已经顶到攻速上限了，还在继续写 ocas 事件 ' + e.who);
+          }
+          var oMax = ou.ocMaxAs || 0;
+          if (oMax > 0 && e.pct > oMax + 1e-6) {
+            bad(tag + ' 攻速加成冲破了上限 ' + oMax + '：' + e.pct);
+          }
+          if (e.capped) {
+            if (!(oMax > 0)) bad(tag + ' 标了 capped，但这个棋子根本没有上限');
+            else if (Math.abs(e.pct - oMax) > 1e-6) {
+              bad(tag + ' 标了 capped，pct 却不是上限：' + e.pct + ' ≠ ' + oMax);
+            }
+            if (Math.abs((e.step || 0) - (ocOver[e.who] ? (ou.ocPerHitBerserk || 0)
+                                                         : (ou.ocPerHit || 0))) > 1e-6) {
+              bad(tag + ' capped 那一条的 step 不对: ' + e.step);
+            }
+            ocCapped[e.who] = true;
+          }
           var oPrev = ocLast[e.who];
           if (oPrev !== undefined) {
             if (e.pct < oPrev - 1e-6) {
-              bad(tag + ' 超频攻速回落了（说好没有上限、只涨不跌）: ' + oPrev + ' → ' + e.pct);
+              bad(tag + ' 超频攻速回落了（只涨不跌）: ' + oPrev + ' → ' + e.pct);
             }
-            if (Math.abs((e.pct - oPrev) - (ou.ocPerHit || 0)) > 1e-6) {
-              bad(tag + ' 每次普攻应该 +' + ou.ocPerHit + '（' + oPrev + ' → ' + e.pct + '）');
+            var wantStep = ocOver[e.who] ? (ou.ocPerHitBerserk || 0) : (ou.ocPerHit || 0);
+            var wantPct = oPrev + wantStep;
+            if (oMax > 0 && wantPct > oMax) wantPct = oMax;
+            if (Math.abs(e.pct - wantPct) > 1e-6) {
+              bad(tag + ' 这一击该叠到 ' + U.round2(wantPct) + '（狂暴中=' +
+                  (ocOver[e.who] ? '是' : '否') + '，单次 +' + wantStep +
+                  '），实际 ' + e.pct);
             }
-          } else if (Math.abs(e.pct - (ou.ocStart + ou.ocPerHit)) > 1e-6) {
-            bad(tag + ' 第一次叠攻速之后应该是 ' + (ou.ocStart + ou.ocPerHit) + '，实际 ' + e.pct);
+            /* ★ 事件自己报的 step 也要对得上，不能只是 pct 对 ——
+               渲染层和战报都用 step 说话（"翻倍到 +4%"），它错就是给玩家看错。 */
+            if (Math.abs((e.step || 0) - wantStep) > 1e-6) {
+              bad(tag + ' 事件里的 step 是 ' + e.step + '，实际该叠 ' + wantStep);
+            }
+          } else if (Math.abs(e.pct - ((ou.ocStart || 0) + (ou.ocPerHit || 0))) > 1e-6) {
+            bad(tag + ' 第一次叠攻速之后应该是 ' + ((ou.ocStart || 0) + (ou.ocPerHit || 0)) +
+                '，实际 ' + e.pct);
           }
-          // over 一旦打开就不能关回去
-          if (ocOver[e.who] && !e.over) bad(tag + ' 超频标记被关回去了 ' + e.who);
+          if (!e.over && ocOver[e.who]) bad(tag + ' 超频标记被关回去了 ' + e.who);
           if (e.over) {
             if (!ocOver[e.who]) {
               // 第一次打开：必须是刚刚越过阈值
@@ -1089,7 +1127,8 @@
           var ca2 = init[e.from], cv2 = init[e.to];
           if (!ca2 || !cv2) { bad(tag + ' 冰棍指向未知单位 ' + e.from + '/' + e.to); break; }
           if (!(ca2.chillMax > 0)) {
-            bad(tag + ' 这个棋子没有「巧乐兹」（2 星才有），却给人上了冰棍 ' + e.from);
+            bad(tag + ' 这个棋子既没有「巧乐兹」（2 星才有）也没带那颗大果，' +
+                '却给人上了寒冰 ' + e.from);
           }
           if (cv2.side === ca2.side) bad(tag + ' 给队友上了冰棍');
           if (!alive[e.to]) bad(tag + ' 给已经死了的单位上冰棍');
@@ -1098,32 +1137,67 @@
             bad(tag + ' 冰棍层数超过上限却没触发冰冻: ' + e.stacks + ' > ' + ca2.chillMax);
           }
           var cPrev = chillStacks[e.to] || 0;
-          var wantStacks = (cPrev >= ca2.chillMax) ? 1 : cPrev + 1;
+          var wantStacks = cPrev + 1;
           if (e.stacks !== wantStacks) {
             bad(tag + ' 冰棍层数不连续：上一条是 ' + cPrev + '，这条应该是 ' +
                 wantStacks + '，实际 ' + e.stacks);
           }
           if (Math.abs(e.perStack - ca2.chillPerStack) > 1e-9) bad(tag + ' 每层减速比例和棋子不符');
-          chillStacks[e.to] = e.stacks;
+          /* ★★ 满层这一下必须把校验器自己的模型也**清零** ——
+           *   引擎在满层时是"先写事件（stacks = 满）、再把 dst.chillStacks 清 0"，
+           *   所以校验器要把 10 记成 0，而不是记成 10。
+           *   原来记的是 10，下面那条 `冰冻之后冰棍层数没有清空` 就永远会红 ——
+           *   它一直没红，只是因为**改这颗大果之前，80 场随机对局里根本没冻上过人**
+           *   （巧乐兹要 2 星张雪峰打同一个人 10 下）。装备一给寒冰，冻人变常见，
+           *   这条潜伏的错误模型立刻暴露。
+           *   ★ 教训：**"一直绿"不等于"验过了"** —— 空转的断言和不存在是一样的。 */
+          chillStacks[e.to] = (e.stacks >= ca2.chillMax) ? 0 : e.stacks;
           if (e.stacks >= ca2.chillMax) chillPending[e.to] = e.t;
           break;
         }
 
-        /* ★ 超频自毁：每秒失去当前生命的一部分。 */
+        /* ★★ 自燃有两种来源，**公式完全不同**，必须分开对账：
+         *     超频（张雪峰）：每秒失去**当前**生命的 44% —— 指数衰减、越掉越慢
+         *     果子（这颗大果）：每秒失去**上限**的 6%   —— 线性，固定 16.7 秒后必死
+         *   ★ 只按其中一条对账的话，另一条会被判成"公式错了"。
+         *   ★★ 而两个计时器是**独立**的：同一个张雪峰既超频又带果子时，
+         *     同一 tick 里会有两条 selfburn。所以"每秒一次"这条也必须
+         *     **按来源分别记时刻** —— 否则会误报"自毁比每秒一次更频繁"。
+         *     这是"两条独立规则共用一个事件类型"的必然代价，写清楚免得下次踩。 */
         case 'selfburn': {
           var sb = init[e.who];
-          if (!sb) { bad(tag + ' 未知单位自毁 ' + e.who); break; }
-          if (!(sb.ocBurnPct > 0)) bad(tag + ' 这个棋子没有超频被动，却出现了 selfburn');
-          if (!alive[e.who]) bad(tag + ' 已死亡的棋子还在自毁 ' + e.who);
-          if (!(e.amount > 0)) bad(tag + ' 自毁量非正: ' + e.amount);
-          if (!(e.hpAfter >= 0)) bad(tag + ' 自毁之后血量非法: ' + e.hpAfter);
-          if (e.hpAfter > lastHp[e.who] + 0.02) bad(tag + ' 自毁之后血量反而上升');
-          /* 每秒一次：同一单位两次自毁的间隔必须是 1 秒左右 */
-          var sbPrev = lastBurnT[e.who];
-          if (sbPrev !== undefined && (e.t - sbPrev) < 1 - 1e-6) {
-            bad(tag + ' 自毁比每秒一次更频繁（上一次 ' + sbPrev + '，这次 ' + e.t + '）');
+          if (!sb) { bad(tag + ' 未知单位自燃 ' + e.who); break; }
+          var byItem = e.reason === 'item';
+          if (byItem) {
+            if (!(sb.burnMaxPct > 0)) {
+              bad(tag + ' 这个棋子没带「和成天下5000精品大果」，却在自燃 ' + e.who);
+            }
+          } else if (!(sb.ocBurnPct > 0)) {
+            bad(tag + ' 这个棋子没有超频被动，却出现了 selfburn ' + e.who);
           }
-          lastBurnT[e.who] = e.t;
+          if (!alive[e.who]) bad(tag + ' 已死亡的棋子还在自燃 ' + e.who);
+          if (!(e.amount > 0)) bad(tag + ' 自燃量非正: ' + e.amount);
+          if (!(e.hpAfter >= 0)) bad(tag + ' 自燃之后血量非法: ' + e.hpAfter);
+          if (e.hpAfter > lastHp[e.who] + 0.02) bad(tag + ' 自燃之后血量反而上升');
+          // 按**来源**对账这一下的量
+          var burnBefore = U.round2(e.hpAfter + e.amount);
+          var burnWant = byItem
+            ? Math.max(0.01, U.round2(e.hpMax * sb.burnMaxPct))
+            : Math.max(0.01, U.round2(burnBefore * sb.ocBurnPct));
+          burnWant = Math.min(burnWant, burnBefore);
+          if (Math.abs(e.amount - burnWant) > 0.05) {
+            bad(tag + (byItem
+              ? ' 果子自燃应该 = 上限 × ' + sb.burnMaxPct
+              : ' 超频自燃应该 = 当前生命 × ' + sb.ocBurnPct) +
+              '：期望 ' + U.round2(burnWant) + ' 实际 ' + e.amount);
+          }
+          // 每秒一次：按来源分别记上次时刻
+          var burnKey = e.who + (byItem ? '#item' : '#oc');
+          var sbPrev = lastBurnT[burnKey];
+          if (sbPrev !== undefined && (e.t - sbPrev) < 1 - 1e-6) {
+            bad(tag + ' 自燃比每秒一次更频繁（上一次 ' + sbPrev + '，这次 ' + e.t + '）');
+          }
+          lastBurnT[burnKey] = e.t;
           lastHp[e.who] = e.hpAfter;
           break;
         }
@@ -1482,6 +1556,111 @@
             bad(tag + ' 耍刀没有紧跟在同一 tick 的骷髅之后 ' + e.who);
           }
           knifeN[e.who] = (knifeN[e.who] || 0) + 1;
+          break;
+        }
+
+        /* ★★ 老牧师「临终祷告」：倒下 → 1 秒祷告 → 满血站起来。
+         *
+         *   和上面牢大的 revive 是**两件事**，所以是两个事件类型、两套断言：
+         *     revive     自己爬起来（坠机被动，救自己）
+         *     reviveAlly 别人把他拉起来（临终祷告，救队友）
+         *   混成一个类型的话，「老牧师救不了自己」这条规则根本验不出来。
+         */
+        case 'lastRites': {
+          var pu = init[e.from], au2 = init[e.to];
+          if (!pu) { bad(tag + ' 未知单位做祷告 ' + e.from); break; }
+          if (!au2) { bad(tag + ' 祷告指向未知单位 ' + e.to); break; }
+          if (!pu.ritesOn) {
+            bad(tag + ' 这个棋子没有「临终祷告」被动，却在做祷告 ' + e.from);
+          }
+          if (e.from === e.to) bad(tag + ' 老牧师在给自己做临终祷告（说好救不了自己）');
+          if (pu.side !== au2.side) bad(tag + ' 给敌人做祷告');
+          if (!alive[e.from]) bad(tag + ' 已经阵亡的老牧师还在做祷告 ' + e.from);
+          if (alive[e.to]) bad(tag + ' 给还活着的单位做祷告 ' + e.to);
+          /* ★ 一场战斗只救一个人 —— 这条是这张卡的强度上限，必须钉住 */
+          if (ritesUsed[e.from]) {
+            bad(tag + ' 这个老牧师已经用过被动，又祷告了一次 ' + e.from);
+          }
+          ritesUsed[e.from] = true;
+          if (ritesPending[e.to]) bad(tag + ' 同一个人被祷告了两次 ' + e.to);
+          if (!(e.delay > 0)) bad(tag + ' 祷告延迟非正: ' + e.delay);
+          if (Math.abs(e.until - (e.t + e.delay)) > 0.002) {
+            bad(tag + ' 祷告的结束时刻不等于 t + delay（' + e.until + ' vs ' +
+                U.round2(e.t + e.delay) + '）');
+          }
+          ritesPending[e.to] = { until: e.until, from: e.from,
+                                 hpPct: e.hpPct, adPct: e.adPct };
+          break;
+        }
+
+        case 'reviveAlly': {
+          var au3 = init[e.who];
+          var pp = ritesPending[e.who];
+          if (!au3) { bad(tag + ' 未知单位被救 ' + e.who); break; }
+          if (!pp) bad(tag + ' 没祷告就直接把人救起来了 ' + e.who);
+          /* ★★ 「一场只救一个人」是**对老牧师**的约束，不是对被救的人的。
+           *   第一版这里写成了"同一个人不能被救两次"，跑随机对局立刻红了 ——
+           *   但引擎是对的：场上有**两个老牧师**时，两个人各自有一次机会，
+           *   同一个队友先被 A 救、再倒、再被 B 救，完全合法。
+           *   ★ 又一次"断言比规则更严"：写断言时问的是"谁的一次性资源"，
+           *     答案在**施法者**（e.from）身上，不在受害者身上。 */
+          ritesByPriest[e.from] = (ritesByPriest[e.from] || 0) + 1;
+          if (ritesByPriest[e.from] > 1) {
+            bad(tag + ' 同一个老牧师救了两个人（一场只能救一个）：' + e.from);
+          }
+          if (!e.ok) {
+            /* 自己半场被占满 → 救不回来。允许发生，但必须真的是"死人没起来"，
+               而且这一条不能悄悄把 alive 改了。 */
+            if (alive[e.who]) bad(tag + ' 还活着却报「救不回来」 ' + e.who);
+            ritesPending[e.who] = null;
+            break;
+          }
+          if (alive[e.who]) bad(tag + ' 棋子还活着却在被救 ' + e.who);
+          if (!(e.hp > 0)) bad(tag + ' 救回来时血量非正');
+          if (e.hp > e.hpMax + 0.02) bad(tag + ' 救回来时血量超过上限');
+          if (e.side !== au3.side) bad(tag + ' 救回到对面阵营去了');
+          if (ST.Battle.sideOfRow(e.r) !== au3.side) bad(tag + ' 救回来的位置不在自己半场');
+          var rdest2 = e.r + ',' + e.c;
+          if (cellOf[rdest2] && cellOf[rdest2] !== e.who) {
+            bad(tag + ' 救回来占了一个有人的格子 ' + rdest2);
+          }
+          if (curPos[e.who]) delete cellOf[curPos[e.who].r + ',' + curPos[e.who].c];
+          cellOf[rdest2] = e.who;
+          curPos[e.who] = { r: e.r, c: e.c };
+          alive[e.who] = true;
+          diedCount[e.who]--;              // ★ 又活过来了，不再算在这个头上
+          lastHp[e.who] = e.hp;            // ★ 不更新的话，复活后第一次受伤会被判成「血量上升」
+          lastShield[e.who] = 0;
+          ritesReviveCount[e.who] = (ritesReviveCount[e.who] || 0) + 1;
+          /* ★ 不在这里限制"同一个人被救两次"—— 见上面的说明。 */
+          /* ★ 血量按**数据**算（reviveHpPct），不写死满血 ——
+             哪天改成半血复活，这条断言要跟着数据走，不能变成假信息。 */
+          if (pp && pp.hpPct > 0) {
+            var wantHp = e.hpMax * pp.hpPct;
+            if (Math.abs(e.hp - wantHp) > 1.5) {
+              bad(tag + ' 救回来的血量应该是 maxHp × ' + pp.hpPct + ' = ' +
+                  U.round2(wantHp) + '，实际 ' + e.hp);
+            }
+          }
+          /* ★ 3 星「圣光赐福」：被救的人 + 老牧师各 +20%。
+             用**事件自己报的名单**对账（blessed），而不是"应该给两个人" ——
+             老牧师在这一秒里被打死时只有一个人拿到，那是合法的。 */
+          if (pp && pp.adPct > 0) {
+            if (!(e.blessed && e.blessed.length >= 1)) {
+              bad(tag + ' 有攻击力加成却一个人都没写进 blessed');
+            } else {
+              if (e.blessed.indexOf(e.who) < 0) {
+                bad(tag + ' 被救的人自己没拿到攻击力加成');
+              }
+              if (e.blessed.indexOf(e.from) >= 0 && !alive[e.from]) {
+                bad(tag + ' 给已经阵亡的老牧师发了攻击力加成');
+              }
+              if (e.blessed.indexOf(e.from) < 0 && alive[e.from]) {
+                bad(tag + ' 老牧师活着却没拿到攻击力加成（说好两个人都加）');
+              }
+            }
+          }
+          ritesPending[e.who] = null;
           break;
         }
 
@@ -2987,11 +3166,12 @@
   /* ============================================================
    * 5c7. 张雪峰（原「剑圣」/ blademaster）
    *
-   *   1 星「你快不过我你信吗」：开局攻速/移速 +100%，每次普攻再 +2%，
-   *        攻速加成到 +200% 之后每秒失去当前生命的 44%；普攻变 3×3
+   *   1 星「你快不过我你信吗」：开局攻速 +60%、移速 +100%，每次普攻再 +2%，
+   *        攻速加成到 +100% 进入**狂暴**（= 每秒失去当前生命的 44%），
+   *        狂暴里每次普攻叠的攻速**翻倍（+4%）**；加成上限 +200%
    *   2 星「巧乐兹」：每次普攻给打到的敌人 +1 层冰棍（每层 -5% 攻速/移速），
    *        满 10 层冰冻 3 秒并清空
-   *   3 星「雪毙」：越过 +200% 之后攻击力 +78%
+   *   3 星「雪毙」：进入狂暴之后攻击力 +78%
    * ============================================================ */
   TH.section('张雪峰 · 超频 / 巧乐兹 / 雪毙');
 
@@ -3003,11 +3183,20 @@
   TH.eq('被动名字按星级叠加',
     [ST.passiveName(ZHANG, 1), ST.passiveName(ZHANG, 2), ST.passiveName(ZHANG, 3)].join('/'),
     '你快不过我你信吗/你快不过我你信吗 + 巧乐兹/你快不过我你信吗 + 巧乐兹 + 雪毙');
-  TH.eq('★ 开局攻速加成 +100%', ZHANG.passive.ocAsStart, 1.00);
-  TH.eq('★ 开局移速加成 +100%', ZHANG.passive.ocMoveStart, 1.00);
+  TH.eq('★ 开局攻速加成 +60%（削弱过，原 100%）', ZHANG.passive.ocAsStart, 0.60);
+  TH.eq('★ 开局移速加成 +100%（没跟着削）', ZHANG.passive.ocMoveStart, 1.00);
   TH.eq('★ 每次普攻 +2% 攻速', ZHANG.passive.ocPerHit, 0.02);
-  TH.eq('★ 阈值是 +200%', ZHANG.passive.ocThreshold, 2.00);
+  TH.eq('★ 狂暴线的攻速加成是 +100%', ZHANG.passive.ocThreshold, 1.00);
+  TH.eq('★ 进入狂暴后单次叠加翻倍（×2）', ZHANG.passive.ocBerserkMul, 2);
+  TH.eq('★ 攻速加成有 +200% 的硬上限', ZHANG.passive.ocMaxAs, 2.00);
   TH.eq('★ 越线后每秒失去当前生命的 44%', ZHANG.passive.ocBurnPct, 0.44);
+  /* ★ 「狂暴」和「自毁」是同一件事 —— 代码里只有一个 ocOn 标记和一个
+     ocBurnPct。这条断言是防"以后有人把它拆成两个状态"：
+     拆了的话烧血的速度和触发条件就会各说各话。 */
+  TH.eq('★ 狂暴和自毁共用同一个门槛（没有第二个阈值字段）',
+    ['ocBurnAt', 'ocBerserkAt', 'ocFrenzyAt'].filter(function (k) {
+      return ZHANG.passive[k] !== undefined;
+    }).length, 0);
   TH.eq('★ 普攻范围的半径是 1（3×3）', ZHANG.passive.ocAoeRadius, 1);
   TH.eq('★ 但只有 3 星才有范围 —— 1/2 星是单体', ZHANG.passive.ocAoeAt, 3);
   TH.eq('冰棍每层 -5%、满 10 层、冻 3 秒',
@@ -3021,7 +3210,7 @@
    *  ★ 场景是刻意配的，配了两轮才对：
    *     · 陪练必须是 3 星山岳 + 三腰带 —— 6672 血，才撑得住张雪峰那 200 点 DPS
    *       （换任何一个别的棋子，13 秒就被砍死，战斗压根走不到阈值）
-   *     · 但 3 星山岳打人很痛，所以龙鳞甲撑护甲、再加一个战地医师回血，
+   *     · 但 3 星山岳打人很痛，所以龙鳞甲撑护甲、再加一个老牧师回血，
    *       否则张雪峰 20 秒就被打死，攻速只叠到 +186%（差 7 次普攻），
    *       「越线」永远触发不了，自毁和雪毙全都会测成「机制没生效」。
    *     · 医师**不能**换成豆包：豆包有「幻觉 / 开智」，会给张雪峰加伤害倍率，
@@ -3062,25 +3251,37 @@
     return out;
   }
 
-  // ① 开局攻速/移速 +100%，而且普攻真的比没被动时快一倍
+  // ① 开局攻速 +60%、移速 +100%，而且普攻真的比没被动时快
   (function () {
     var r = zhangFight(1);
     var me = r.initial.units.filter(function (u) { return u.defId === 'blademaster'; })[0];
-    TH.ok('★ 开局身上就带着 +100% 攻速', Math.abs(me.ocStart - 1.0) < 1e-9, me.ocStart);
+    TH.ok('★ 开局身上就带着 +60% 攻速', Math.abs(me.ocStart - 0.60) < 1e-9, me.ocStart);
+    TH.ok('★ 快照里带出了狂暴的倍率和上限（校验器才能自己算）',
+      Math.abs(me.ocPerHitBerserk - 0.04) < 1e-9 && Math.abs(me.ocMaxAs - 2.00) < 1e-9,
+      me.ocPerHitBerserk + '/' + me.ocMaxAs);
     var first = eventsOf(r, 'ocas', 'a0')[0];
-    TH.ok('第一次普攻之后叠到 +102%', !!first && Math.abs(first.pct - 1.02) < 1e-6,
+    TH.ok('第一次普攻之后叠到 +62%', !!first && Math.abs(first.pct - 0.62) < 1e-6,
       first ? first.pct : '没有 ocas 事件');
-    // 前 3 次普攻的间隔应该明显短于「基础攻速 0.88」对应的 1.14 秒
+    TH.ok('★ 这一击的 step 是 +2%（还没进狂暴）',
+      !!first && Math.abs(first.step - 0.02) < 1e-9, first ? first.step : '—');
+    /* 前几次普攻的间隔应该明显短于「基础攻速 0.88」对应的 1.14 秒。
+       ★ 但也不能按"翻倍"去估：+60% 加成下每击是 1 / (0.88 × 1.6) ≈ 0.71 秒，
+         只有 +100% 才是 0.57 秒。这条断言就是来区分这两者的 ——
+         削弱之后如果这里还按旧版 0.57 秒去判，就会把"没削"当成通过。 */
     var at = [];
     for (var i = 0; i < r.log.length && at.length < 4; i++) {
       if (r.log[i].type === 'attack' && r.log[i].from === 'a0') at.push(r.log[i].t);
     }
-    TH.ok('★ 开局出手间隔约为基础攻速的一半（+100% 攻速真的生效了）',
-      at.length >= 3 && (at[1] - at[0]) < 1.14 * 0.72,
-      at.length >= 3 ? ('间隔 ' + U.round2(at[1] - at[0]) + 's（基础要 1.14s）') : '普攻次数不够');
+    var gap = (at.length >= 3) ? (at[1] - at[0]) : null;
+    TH.ok('★ 开局出手间隔约 0.71s（+60% 攻速，不是 +100% 的 0.57s）',
+      gap !== null && gap > 0.60 && gap < 1.14 * 0.72,
+      gap === null ? '普攻次数不够' : ('间隔 ' + U.round2(gap) + 's（基础 1.14s，+100% 要 0.57s）'));
   })();
 
-  // ② 每次普攻 +2%，一直叠到越过 +200% 才打开超频（然后开始自毁）
+  /* ② 叠攻速的完整曲线：每击 +2% 叠到 +100% 进狂暴，之后每击 +4%。
+     ★ 这是这次削弱的核心，所以逐击都核对，而不是只看首尾。
+     ★ 1 星这个场景只叠得到 +136%（29 次普攻，48 秒时阵亡），**封顶**那一段
+       够不着 —— 那一段放到 ⑥ 里用 3 星 + 吸血验（他能活到 47 秒）。 */
   (function () {
     var r = zhangFight(1);
     var ocs = eventsOf(r, 'ocas', 'a0');
@@ -3088,20 +3289,41 @@
     var lastPct = ocs.length ? ocs[ocs.length - 1].pct : 0;
     var dur = r.log.length ? r.log[r.log.length - 1].t : 0;
     var meDie = r.log.filter(function (e) { return e.type === 'death' && e.who === 'a0'; }).length;
-    TH.note('张雪峰 1 星 60 秒里：普攻 ' + atkCount + ' 次，攻速叠到 +' +
-      Math.round(lastPct * 100) + '%，对局 ' + U.round2(dur) + 's，自己阵亡 ' + meDie + ' 次');
+    TH.note('张雪峰 1 星：普攻 ' + atkCount + ' 次，攻速叠到 +' +
+      Math.round(lastPct * 100) + '%，ocas ' + ocs.length + ' 条，对局 ' +
+      U.round2(dur) + 's，自己阵亡 ' + meDie + ' 次');
     TH.ok('整场叠了很多次攻速', ocs.length > 10, ocs.length + ' 次');
-    var seqOk = true, justOverCount = 0, overBefore = 0;
+
+    /* ★ 逐击核对增量：该叠多少取决于**叠加之前**是不是已经在狂暴里 ——
+       和 battle.js 里"用叠加之前的 ocOn 决定 step"必须同一个口径。
+       进狂暴的那一击自己算 +2%（它是"最后一下普通叠加"）。 */
+    var seqBad = [], justOverCount = 0, justOverHits = -1, overBefore = 0, breach = 0;
     for (var i = 0; i < ocs.length; i++) {
-      if (i > 0 && Math.abs((ocs[i].pct - ocs[i - 1].pct) - 0.02) > 1e-6) seqOk = false;
-      if (ocs[i].justOver) justOverCount++;
-      if (ocs[i].over && ocs[i].pct < 2.0 - 1e-6) overBefore++;
+      if (ocs[i].justOver) { justOverCount++; justOverHits = ocs[i].hits; }
+      if (ocs[i].over && ocs[i].pct < 1.00 - 1e-6) overBefore++;
+      if (ocs[i].pct > 2.00 + 1e-6) breach++;
+      if (i === 0) {
+        if (Math.abs(ocs[i].pct - 0.62) > 1e-6) seqBad.push('#1 = ' + ocs[i].pct);
+        continue;
+      }
+      var wantStep = ocs[i - 1].over ? 0.04 : 0.02;
+      if (Math.abs((ocs[i].pct - ocs[i - 1].pct) - wantStep) > 1e-6) {
+        seqBad.push('#' + ocs[i].hits + ' ' + ocs[i - 1].pct + '→' + ocs[i].pct);
+      }
+      if (Math.abs(ocs[i].step - wantStep) > 1e-9) {
+        seqBad.push('#' + ocs[i].hits + ' step=' + ocs[i].step + '（该 ' + wantStep + '）');
+      }
     }
-    TH.ok('★ 每次普攻正好 +2%，一次不差', seqOk,
-      ocs.length ? ('最后一次 ' + ocs[ocs.length - 1].pct) : '');
-    TH.ok('★ 「越线」只发生一次（不会反复触发）', justOverCount <= 1,
-      justOverCount + ' 次');
-    TH.eq('★ 超频标记绝不会在 +200% 之前打开', overBefore, 0);
+    TH.ok('★ 狂暴前每击 +2%、进狂暴后每击 +4%，一次不差', seqBad.length === 0,
+      seqBad.length ? seqBad.slice(0, 4).join(' / ') : (ocs.length + ' 条全部吻合'));
+    TH.ok('★ 「越线」只发生一次（不会反复触发）', justOverCount === 1, justOverCount + ' 次');
+    TH.eq('★ 进狂暴正好是第 20 次普攻（+60% 到 +100% 要 20 次）', justOverHits, 20);
+    var joEv = null;
+    for (var j = 0; j < ocs.length; j++) if (ocs[j].justOver) joEv = ocs[j];
+    TH.eq('★ 进狂暴那一击自己算的是 +2%（不是 +4%）',
+      joEv ? Math.round(joEv.step * 100) : -1, 2);
+    TH.eq('★ 超频标记绝不会在 +100% 之前打开', overBefore, 0);
+    TH.eq('★ 攻速加成一次都没冲破 +200% 的上限', breach, 0);
 
     // 自毁必须**只在**越线之后发生
     var burns = eventsOf(r, 'selfburn', 'a0');
@@ -3123,11 +3345,42 @@
       }
     }
     TH.ok('★ 每次自毁 = 当前生命 × 44%', ok, sample || (burns.length + ' 次全部吻合'));
-    var gapsOk = true;
-    for (var m = 2; m < burns.length; m++) {
-      if (Math.abs((burns[m].t - burns[m - 1].t) - 1) > 0.05) gapsOk = false;
+    /* ★★ "每秒一次"必须**按生死分段**验，不能一路比到底。
+     *
+     *   2026-10 加了老牧师之后这条断言红了 —— 但引擎没坏：
+     *   这个场景里带着一个 3 星医师（现在是老牧师），
+     *   张雪峰把自己烧死之后**被牧师满血救了起来**，于是自毁序列变成
+     *   "烧 7 秒 → 死 → 1 秒祷告 → 满血复活 → 接着烧"，
+     *   中间那一段间隔当然不是 1 秒。
+     *
+     *   ★ 这条正好是一个**新机制改变了老断言的适用前提**的例子：
+     *     断言写的是"自毁是每秒一次"，而真实规则是"**活着的时候**每秒一次"。
+     *     所以现在按 a0 的 death / reviveAlly 把序列切成若干段，段内才比间隔。 */
+    var lifeSpans = [[]], spanBreaks = 0;
+    for (var b2 = 0; b2 < r.log.length; b2++) {
+      var le = r.log[b2];
+      var meDeath = (le.type === 'death' && le.who === 'a0');
+      var meBack = (le.type === 'reviveAlly' && le.who === 'a0' && le.ok);
+      if (meDeath || meBack) { lifeSpans.push([]); spanBreaks++; continue; }
+      if (le.type === 'selfburn' && le.who === 'a0') {
+        lifeSpans[lifeSpans.length - 1].push(le);
+      }
     }
-    TH.ok('★ 自毁是每秒一次', gapsOk, burns.length + ' 次');
+    var gapsOk = true, gapSample = '';
+    for (var sp = 0; sp < lifeSpans.length; sp++) {
+      for (var m = 1; m < lifeSpans[sp].length; m++) {
+        var gap = lifeSpans[sp][m].t - lifeSpans[sp][m - 1].t;
+        if (Math.abs(gap - 1) > 0.05) {
+          gapsOk = false;
+          gapSample = '第 ' + (sp + 1) + ' 段间隔 ' + U.round2(gap) + 's';
+        }
+      }
+    }
+    TH.ok('★ 活着的时候自毁是每秒一次（按生死分段比，复活会另起一段）', gapsOk,
+      burns.length + ' 次自毁 / ' + spanBreaks + ' 个生死断点' + (gapSample ? '：' + gapSample : ''));
+    TH.note('张雪峰这个场景里自己阵亡 ' + meDie + ' 次、被老牧师救回来 ' +
+      (r.log.filter(function (e) { return e.type === 'reviveAlly' && e.who === 'a0' && e.ok; }).length) +
+      ' 次 —— 自毁 + 复活会多赚一条血，这是新机制带来的联动，不是 bug');
   })();
 
   /* ③ 普攻范围：**1/2 星是单体，3 星才是 3×3**。
@@ -3234,6 +3487,283 @@
     var ad2 = 0;
     for (var m = 0; m < ocs2.length; m++) if (ocs2[m].justOver) ad2 = ocs2[m].adBonus;
     TH.eq('★ 2 星没有雪毙（越线之后攻击力加成仍是 0）', ad2, 0);
+  })();
+
+  /* ⑥ 攻速上限 +200%：必须真的封顶，而且封顶之后**出手频率停在那一档**。
+   *
+   *   ★ 场景是探出来的，不是猜的。要验封顶就得让张雪峰活到第 45 次普攻，
+   *     而他从第 20 次起每秒烧自己 44% 的当前生命 —— 唯一扛得住的办法是吸血：
+   *     · 3 星 + 血饮剑：攻击力够高，20% 吸血能反过来盖过自毁。
+   *       实测 狂暴 @12.73s（第 20 击）、封顶 @24.37s、对局 47.1s、自己没死。
+   *     · 1 星同样配置：攻击力不够，12 秒就没了，连狂暴都进不去。
+   *   ★ 所以这条断言**只能钉在 3 星 + 吸血这一档**上 ——
+   *     同一套数字在 1 星身上是不成立的，写成"任意星级都能叠满"就是假信息。 */
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'blademaster', star: 3, items: ['bloodthirst', 'giantblade', 'belt'], r: 4, c: 3 },
+          { id: 'medic', star: 3, items: ['sapphire', 'sapphire', 'sapphire'], r: 6, c: 6 }],
+      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
+          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 3 },
+          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 0 },
+          { id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 2, c: 7 }]
+    }, 313131);
+    var ocs = eventsOf(r, 'ocas', 'a0');
+    var dur = r.log.length ? r.log[r.log.length - 1].t : 0;
+    var last = ocs.length ? ocs[ocs.length - 1] : null;
+    var capIdx = -1;
+    for (var i = 0; i < ocs.length; i++) if (ocs[i].capped) { capIdx = i; break; }
+    TH.note('张雪峰 3 星 + 血饮剑：ocas ' + ocs.length + ' 条，最后 +' +
+      (last ? Math.round(last.pct * 100) : 0) + '%，对局 ' + U.round2(dur) + 's');
+    TH.ok('★ 叠到了 +200% 上限', capIdx >= 0,
+      capIdx < 0 ? ('只到 +' + (last ? Math.round(last.pct * 100) : 0) + '%（活不到第 45 击？）') : '');
+    if (capIdx >= 0) {
+      TH.ok('★ 封顶那一条的 pct 正好是 2.00（不会过冲）',
+        Math.abs(ocs[capIdx].pct - 2.00) < 1e-9, ocs[capIdx].pct);
+      TH.eq('★ 封顶之后不再写 ocas 事件（不然事件流会白白膨胀）',
+        ocs.length - 1 - capIdx, 0);
+      TH.eq('★ 整条曲线正好 45 条（20 条叠到狂暴 + 25 条叠到封顶）', ocs.length, 45);
+      /* ★ 端到端：封顶之后数字不再涨，但**出手频率必须真的停在 +200% 那一档**。
+         只验"数字不变"是不够的 —— 万一封顶的实现顺手把攻速也冻在原地，
+         数字照样不变，而那是个更严重的 bug。
+         基础攻速 0.88 × (1 + 2.00) = 2.64 次/秒。 */
+      var atkCount = 0, atkAfter = 0;
+      for (var k = 0; k < r.log.length; k++) {
+        var e = r.log[k];
+        if (e.type !== 'attack' || e.from !== 'a0') continue;
+        atkCount++;
+        if (e.t > ocs[capIdx].t) atkAfter++;
+      }
+      var span = dur - ocs[capIdx].t;
+      var rate = span > 1 ? atkAfter / span : 0;
+      TH.ok('★ 封顶之后出手频率停在 +200% 对应的 2.64 次/秒',
+        rate > 2.3 && rate < 2.95,
+        U.round2(rate) + ' 次/秒（理论 2.64）—— 封顶后 ' + atkAfter + ' 次 / ' +
+        U.round2(span) + 's，全程普攻 ' + atkCount + ' 次');
+    }
+  })();
+
+  /* ============================================================
+   * 5c8. 老牧师（原「战地医师」/ medic）
+   *
+   *   1 星：没有被动，只有技能「圣愈术」（治疗血最少的队友）
+   *   2 星「还能抢救一下」：每场战斗一次，第一个阵亡的队友**满血**站起来
+   *   3 星「圣光赐福」：复活那一刻，老牧师和被救的人**攻击力都 +20%**
+   *
+   *   ★★ 这一套最容易搞错的是"**一次性资源属于谁**"：
+   *      「一场只能救一个」是对**老牧师**的约束，不是对被救的人 ——
+   *      场上有两个老牧师时两个人各救一个，同一个队友也可以被救两次。
+   * ============================================================ */
+  TH.section('老牧师 · 临终祷告');
+
+  var MEDIC = ST.UNIT_BY_ID.medic;
+  TH.eq('单位已改名为老牧师', MEDIC.name, '老牧师');
+  TH.eq('id 仍然是 medic（levels.js 的阵容 + art/medic.png 都按 id 索引）',
+    MEDIC.id, 'medic');
+  TH.eq('被动类型是临终祷告', ST.passiveKind(MEDIC), 'lastRites');
+  TH.eq('★ 1 星没有被动（被动从 2 星才开始）', ST.passiveName(MEDIC, 1), null);
+  TH.eq('2 星被动名', ST.passiveName(MEDIC, 2), '还能抢救一下');
+  TH.eq('3 星被动名（两个名字叠在一起）', ST.passiveName(MEDIC, 3), '还能抢救一下 + 圣光赐福');
+  TH.eq('★ 2 星起才能救队友', MEDIC.passive.reviveAt, 2);
+  TH.eq('★ 满血拉回来', MEDIC.passive.reviveHpPct, 1.00);
+  TH.eq('★ 祷告 1 秒后站起来', MEDIC.passive.reviveDelay, 1.0);
+  TH.eq('★ 3 星起给攻击力加成', MEDIC.passive.adBuffAt, 3);
+  TH.eq('★ 加成是 +20%', MEDIC.passive.adBuffPct, 0.20);
+  TH.eq('技能名跟着身份换掉了（战地救护 → 圣愈术）', MEDIC.skill.name, '圣愈术');
+  TH.eq('★ 但技能机制一个字没动（还是治疗血最少的队友）',
+    MEDIC.skill.kind + '/' + MEDIC.skill.target + '/' + MEDIC.skill.amount,
+    'heal/lowest/620');
+
+  /** 老牧师（后排角落 + 三条腰带撑血）+ N 个脆皮队友 vs 一个 3 星山岳。
+   *  ★ 场景的目的很具体：**让队友死在老牧师前面**。
+   *    所以脆皮队友顶在最前面正对山岳，老牧师缩在后排角上。
+   *
+   *  ★★ 坐标必须按**半场**给：**side 'a' 是 0~3 行，side 'b' 是 4~7 行**。
+   *    （一开始我按"a 是下面半场"写了 r=7/r=4，结果引擎**静默地自动布阵**了：
+   *      诊断里读到 a0:medic@0,3、a1:bowman@0,4 —— 我的前排/后排意图全丢了，
+   *      于是老牧师反而站得离敌人更近、先死了，「队友先倒下」这个前提根本没成立，
+   *      断言全绿空转。★ 坐标给错半场**不会报错**，只会被自动摆到别处 ——
+   *      所以这类场景一定要把初始位置打出来核对，不能只看断言过没过。） */
+  function ritesFight(priestStar, allyCount, seed) {
+    var a = [{ id: 'medic', star: priestStar, items: ['belt', 'belt', 'belt'], r: 0, c: 0 }];
+    if (allyCount >= 1) a.push({ id: 'bowman', star: 1, r: 3, c: 3 });
+    if (allyCount >= 2) a.push({ id: 'bowman', star: 1, r: 3, c: 4 });
+    return ST.Battle.battle({
+      a: a,
+      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, seed || 424242);
+  }
+
+  // ① 2 星：第一个阵亡的队友被满血拉回来
+  (function () {
+    var r = ritesFight(2, 1);
+    var rites = eventsOf(r, 'lastRites');
+    var saved = eventsOf(r, 'reviveAlly');
+    var okSaved = saved.filter(function (e) { return e.ok; });
+    var deaths = r.log.filter(function (e) { return e.type === 'death'; });
+    /* ★ 把初始位置打出来：坐标给错半场时引擎会**静默自动布阵**，
+       不打出来就看不出"前排/后排"的意图其实没生效。 */
+    TH.note('诊断：初始单位 = ' + r.initial.units.map(function (u) {
+      return u.uid + ':' + u.defId + '@' + u.r + ',' + u.c + '(' + u.side + ')';
+    }).join(' '));
+    TH.note('老牧师 2 星 + 1 个脆皮队友：阵亡顺序 [' +
+      deaths.map(function (e) { return e.who; }).join(' → ') + ']，祷告 ' + rites.length +
+      ' 次，救活 ' + okSaved.length + ' 次');
+    TH.eq('★ 2 星会为倒下的队友祷告', rites.length, 1);
+    TH.eq('★ 祷告之后人真的站起来了', okSaved.length, 1);
+    if (rites.length && okSaved.length) {
+      var ev0 = rites[0], sv0 = okSaved[0];
+      TH.eq('祷告的对象就是那个被救的人', ev0.to, sv0.who);
+      TH.ok('★ 施法者是老牧师本人、而且是**别人**（救不了自己）',
+        ev0.from === 'a0' && ev0.to !== ev0.from, ev0.from + ' → ' + ev0.to);
+      TH.ok('★ 被救的是**第一个**阵亡的队友（不是随便哪个）',
+        deaths.length > 0 && deaths[0].who === sv0.who,
+        '第一个阵亡 ' + (deaths.length ? deaths[0].who : '—') + '，被救 ' + sv0.who);
+      TH.ok('★ 满血站起来', Math.abs(sv0.hp - sv0.hpMax) < 0.02,
+        sv0.hp + '/' + sv0.hpMax);
+      TH.ok('★ 站起来的位置在自己半场',
+        ST.Battle.sideOfRow(sv0.r) === 'a', '(' + sv0.r + ',' + sv0.c + ')');
+      // 祷告确实隔了 1 秒才结算（不是当场拉起来）
+      TH.ok('★ 祷告和复活之间隔了约 1 秒（不是当场拉起来）',
+        Math.abs((sv0.t - ev0.t) - 1) < 0.06,
+        U.round2(sv0.t - ev0.t) + 's');
+      TH.eq('★ 2 星没有攻击力加成（那是 3 星的事）', ev0.adPct, 0);
+    }
+  })();
+
+  // ② 1 星：完全没有被动
+  (function () {
+    var r = ritesFight(1, 1);
+    TH.eq('★ 1 星不会为人祷告', eventsOf(r, 'lastRites').length, 0);
+    TH.eq('★ 1 星也不会有人被救回来', eventsOf(r, 'reviveAlly').length, 0);
+  })();
+
+  // ③ 2 星：一场战斗只救**一个**（第二个队友倒下时不再触发）
+  (function () {
+    var r = ritesFight(2, 2);
+    var rites = eventsOf(r, 'lastRites');
+    var okSaved = eventsOf(r, 'reviveAlly').filter(function (e) { return e.ok; });
+    var aDeaths = r.log.filter(function (e) {
+      return e.type === 'death' && e.who.indexOf('a') === 0;
+    });
+    TH.note('老牧师 2 星 + 2 个脆皮队友：A 方阵亡 ' + aDeaths.length + ' 个，祷告 ' +
+      rites.length + ' 次，救活 ' + okSaved.length + ' 次');
+    TH.ok('这一场确实死了不止一个队友（否则下面全是空断言）', aDeaths.length >= 2,
+      aDeaths.length + ' 个');
+    TH.eq('★ 一场战斗只祷告一次（第二次阵亡不再触发）', rites.length, 1);
+    TH.eq('★ 所以也只救回来一个', okSaved.length, 1);
+  })();
+
+  /** ④ 专用场景：**被救的人复活前后都打得到人**（否则伤害倍率采不到样本）。
+   *  ★ 配置是探出来的，不是猜的：山岳 3 星**不带装备** + 弓 3 星 ——
+   *    实测复活 @9.8s、复活前普攻 2 次、复活后 2 次、倍率 1 → 1.2、对局 51 秒。
+   *  ★ 反例记在这里免得重试：换成"3 星山岳 + 三腰带 / 1 星弓"就采不到 ——
+   *    脆皮队友在打出第一下之前就被秒了（死前攻=0、复活后攻=0）。 */
+  function ritesDamageFight(priestStar) {
+    return ST.Battle.battle({
+      a: [{ id: 'medic', star: priestStar, items: ['belt', 'belt', 'belt'], r: 0, c: 0 },
+          { id: 'bowman', star: 3, r: 3, c: 3 }],
+      b: [{ id: 'titan', star: 3, r: 4, c: 3 }]
+    }, 424242);
+  }
+
+  // ④ 3 星：复活时老牧师和被救的人各拿 +20% 攻击力
+  (function () {
+    var r = ritesDamageFight(3);
+    var okSaved = eventsOf(r, 'reviveAlly').filter(function (e) { return e.ok; });
+    TH.ok('3 星也救回来了', okSaved.length === 1, okSaved.length + ' 次');
+    if (!okSaved.length) return;
+    var sv = okSaved[0];
+    TH.eq('★ 3 星的复活事件带上了 +20% 的加成值', sv.adPct, 0.20);
+    TH.ok('★ 名单里有被救的人自己', sv.blessed.indexOf(sv.who) >= 0,
+      JSON.stringify(sv.blessed));
+    TH.ok('★ 名单里有老牧师（他活着，说好两个人都加）',
+      sv.blessed.indexOf(sv.from) >= 0, JSON.stringify(sv.blessed));
+
+    /* ★ 端到端：不只看事件里写了什么，还要看**伤害真的涨了**。
+       用 raw ÷ (ad × ramp) 反推攻击力倍率 —— 和雪毙那条是同一套办法。
+       ★ 量的是**被救的队友**：他倒下之前打过、站起来之后还会打，
+         而老牧师有可能一直没进射程（那就会采不到样本）。 */
+    var me = r.initial.units.filter(function (u) { return u.uid === sv.who; })[0];
+    var before = null, after = null, nB = 0, nA = 0;
+    for (var i = 0; i < r.log.length; i++) {
+      var e = r.log[i];
+      if (e.type !== 'attack' || e.from !== sv.who || e.crit) continue;
+      var mul = e.raw / (me.ad * e.ramp);
+      if (e.t < sv.t) { nB++; if (before === null) before = mul; }
+      if (e.t > sv.t + 0.05) { nA++; if (after === null) after = mul; }
+    }
+    TH.ok('★ 复活前后都采到了普攻样本（否则下面两条是空断言）',
+      before !== null && after !== null,
+      '复活前 ' + nB + ' 次 / 复活后 ' + nA + ' 次');
+    TH.ok('★ 复活前攻击力倍率是 1', before !== null && Math.abs(before - 1) < 0.03,
+      before === null ? '没采到' : U.round2(before));
+    TH.ok('★ 复活后攻击力倍率变成 1.20（+20% 真的生效了）',
+      after !== null && Math.abs(after - 1.20) < 0.03,
+      after === null ? '没采到' : U.round2(after));
+
+    // 2 星不该有这个加成
+    var r2 = ritesFight(2, 1);
+    var sv2 = eventsOf(r2, 'reviveAlly').filter(function (e) { return e.ok; })[0];
+    TH.eq('★ 2 星救回来的人没有攻击力加成', sv2 ? sv2.adPct : -1, 0);
+    TH.eq('★ 2 星的名单是空的（没发 buff 就不该写名字）',
+      sv2 ? sv2.blessed.length : -1, 0);
+  })();
+
+  // ⑤ 老牧师救不了自己：他自己第一个倒下时，整套被动完全不动
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'medic', star: 2, r: 3, c: 3 },     // ★ 故意顶在最前面，会先被打死
+          { id: 'bowman', star: 1, r: 0, c: 0 }],
+      b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, 515151);
+    var aDeaths = r.log.filter(function (e) {
+      return e.type === 'death' && e.who.indexOf('a') === 0;
+    });
+    TH.ok('这一场老牧师确实是先倒下的那个（否则这条没验到）',
+      aDeaths.length > 0 && aDeaths[0].who === 'a0',
+      'A 方阵亡顺序 [' + aDeaths.map(function (e) { return e.who; }).join(' → ') + ']');
+    TH.eq('★ 老牧师自己倒下时不触犯祷告（他救不了自己）',
+      eventsOf(r, 'lastRites').length, 0);
+    TH.eq('★ 队友后来倒下也没人救（老牧师已经死了）',
+      eventsOf(r, 'reviveAlly').length, 0);
+  })();
+
+  /* ⑥ 「祷告没做完的时候这一方不算输」—— 这是 anyPending 唯一需要
+   *    主循环配合的地方，也是最容易漏的一条：
+   *    如果漏了，最后一个人被救回来之前这一方就先被判全灭，
+   *    于是"救援"永远只在人多的时候有效。
+   *    ★ 要验它必须凑出一个很窄的场面：**被祷告的人先倒、
+   *      老牧师在他站起来之前也倒**。所以这里扫若干个 seed 去找这个场面，
+   *      找不到就如实报"没采到"（不假装通过）。 */
+  (function () {
+    var found = 0, okCount = 0, sample = '';
+    for (var s = 1; s <= 60 && found < 3; s++) {
+      var r = ST.Battle.battle({
+        a: [{ id: 'medic', star: 2, r: 3, c: 2 },
+            { id: 'bowman', star: 1, r: 3, c: 3 }],
+        b: [{ id: 'titan', star: 3, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+      }, 9000 + s);
+      var last = eventsOf(r, 'lastRites')[0];
+      if (!last) continue;
+      var priestDied = r.log.filter(function (e) {
+        return e.type === 'death' && e.who === last.from;
+      }).length;
+      if (!priestDied) continue;
+      found++;
+      var sv = eventsOf(r, 'reviveAlly').filter(function (e) {
+        return e.who === last.to && e.ok;
+      })[0];
+      if (sv) okCount++;
+      if (!sample) sample = 'seed ' + (9000 + s) + '：' + last.from + ' 在祷告期间阵亡，' +
+        (sv ? ('被救的人仍然在 ' + U.round2(sv.t) + 's 站了起来') : '被救的人没站起来');
+    }
+    TH.note('「牧师祷告途中阵亡」的场面：扫了 60 个 seed 找到 ' + found +
+      ' 个（其中 ' + okCount + ' 个仍然救活了）' + (sample ? '　' + sample : ''));
+    if (found) {
+      TH.eq('★ 老牧师在祷告途中阵亡时，祷告照样走完（人还是站起来了）', okCount, found);
+    } else {
+      TH.note('没凑出这个场面 —— 这条这次没验到，不是通过');
+    }
   })();
 
   /* ============================================================
@@ -3416,7 +3946,7 @@
 
   /* ---------- 这一节用到的几个场景与工具 ---------- */
 
-  /* 陪练是**战地医师**，而且是特意挑的：
+  /* 陪练是**老牧师**，而且是特意挑的：
      · 它的技能只给自己回血（kind: 'heal'），所以打过来的**每一下都是普攻**，
        算 dmg / raw 的时候不会被技能伤害混进来；
      · 它回血比奶龙打得快，所以它**永远死不了** —— 对局一定跑满 60 秒，
@@ -3481,10 +4011,10 @@
     if (!a || !b) return 99;
     return Math.max(Math.abs(a.r - b.r), Math.abs(a.c - b.c));
   }
-  /* 3 星「笑传四方」：奶龙身边左右各站一个队友，正面三个战地医师压过来。
+  /* 3 星「笑传四方」：奶龙身边左右各站一个队友，正面三个老牧师压过来。
      ★ 这么摆有两个理由，都是踩过坑才定下来的：
        ① 「谁挨打」不由测试说了算（索敌只看距离），所以队友必须紧挨着奶龙；
-       ② 陪练**必须是战地医师**：它只给自己人回血、输出又低（74 攻 / 0.68 攻速），
+       ② 陪练**必须是老牧师**：它只给自己人回血、输出又低（74 攻 / 0.68 攻速），
           于是敌人永远死不了 → 对局一定跑满 60 秒 → 奶龙一定笑得出 4 次。
           换成匕首客（技能 240 伤害 + 被动越打越快）会在 9 秒内被打完，
           奶龙根本活不到第一次大笑，"3 星会治疗队友"就测成了 0 条。
@@ -3590,7 +4120,7 @@
   })();
 
   /* ② 「-80%」必须真的发生在伤害计算里。
-        ★ 做法：只看**普攻**（陪练是战地医师，它的技能只给自己回血，
+        ★ 做法：只看**普攻**（陪练是老牧师，它的技能只给自己回血，
           所以打过来的每一下都是 attack），然后算 dmg / raw。
           raw 是"出手方本来能打多少"，所以 dmg / raw = 减抗系数 × (1 - 大笑减伤)。
           同一个陪练、同一套护甲，窗口内外的减抗系数是同一个数，
@@ -3696,7 +4226,7 @@
   /* ⑤ 「不能移动」是真的不能动，而不是"碰巧不需要动"。
         ★ 这条要靠**同一场里、同一个棋子**的对比：
            大笑窗口内移动 0 次（1 星），窗口外移动 > 0 次。
-          陪练只有一只站桩的战地医师 —— 奶龙一辈子也打不死它，
+          陪练只有一只站桩的老牧师 —— 奶龙一辈子也打不死它，
           所以走位只发生在开局接近的那两秒（窗口之外）。
           窗口之内如果还有位移，那就一定是"大笑没冻住它"。 */
   (function () {
@@ -3835,7 +4365,7 @@
     [ST.passiveName(JIA, 2), ST.passiveName(JIA, 3)].join(' / '),
     '两个男人 / 两个男人 + 三个男人');
 
-  /* 陪练用三个战地医师：
+  /* 陪练用三个老牧师：
      · 它们只给自己人回血（不回血给"要被控的人"，也不影响 嘉豪），
        而且输出很低 —— 战斗能跑很久，嘉豪放得出好几次技能；
      · 三个都站在嘉豪正前方，所以 1/2/3 星分别能挑到 1/2/3 个人。 */
@@ -4040,7 +4570,7 @@
   TH.eq('★ 攻击速度是原来的 20%（-80%）', YANG.as, 0.132);
   TH.eq('★ 移动速度 -80%', YANG.slowMove, 0.80);
 
-  /* 陪练统一用战地医师：
+  /* 陪练统一用老牧师：
      · 输出低（74 攻 / 0.68 攻速），所以羊帆活得够久、放得出技能；
      · 只给自己人回血，不会污染羊帆的伤害；
      · 星级由参数控制 —— 想要"羊帆死得快"就给 3 星医师（每下 200+）。 */
@@ -4182,7 +4712,7 @@
   })();
 
   /* ⑤ 3 星「巅峰谢幕」：倒下 → 1 秒 → 自爆，伤害 = 攻击力 ×20 + 震晕 3 秒。
-        ★ 场景是配出来的：陪练用 3 星战地医师 + 三腰带（4080 血）——
+        ★ 场景是配出来的：陪练用 3 星老牧师 + 三腰带（4080 血）——
           它们输出够高（能在几秒内打死羊帆），血又够厚（吃下自爆还活着），
           活下来才有"被震晕"这件事可验。 */
   (function () {
@@ -4364,10 +4894,14 @@
   /* ③ ★★ 2 星的「同伙掩护」：**圈里的队友**少受 30%，圈外的照吃满。
         ★ 只验"有减伤"是不够的 —— 那和"全队减伤"分不开。
           所以要比**同一批挨打样本**在圈内 / 圈外两组。
-        ★★ 陪练必须是**打不死也杀不死人**的那种：这里用战地医师
+        ★★ 陪练必须是**打不死也杀不死人**的那种：这里用老牧师
           （只给自己回血、输出很低）—— 对局能跑满 60 秒，
           圈内圈外两段都采得到足够的样本。
-          第一版用荣誉当陪练，它 3 下就把人打死了，一个圈内样本都没有。 */
+          第一版用荣誉当陪练，它 3 下就把人打死了，一个圈内样本都没有。
+        ★★ 而且必须用 **1 星**老牧师。2026-10 之后老牧师 2 星起带「临终祷告」
+          （每场把第一个阵亡的队友满血拉回来），拿 2/3 星的他当陪练，
+          场面就不再是"打不死也杀不死人"了 —— 他会把队友救活、把对局拖长。
+          全项目的陪练统一都是 1 星，就是为了避开这个被动。 */
   (function () {
     function cutFight(star) {
       return ST.Battle.battle({
@@ -4622,7 +5156,7 @@
   function dankFight(star, seed) {
     return ST.Battle.battle({
       a: [{ id: 'deadeye', star: star, items: ['sapphire', 'belt', 'belt'], r: 3, c: 3 },
-          // 陪跑的战地医师：打不出伤害（不会抢人头），血量厚（不会触发空悲切）
+          // 陪跑的老牧师：打不出伤害（不会抢人头），血量厚（不会触发空悲切）
           { id: 'medic', star: 1, items: ['belt', 'belt', 'belt'], r: 3, c: 5 }],
       b: [{ id: 'dagger', star: 1, items: ['belt'], r: 4, c: 3 },
           { id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 4 }]
@@ -5220,7 +5754,12 @@
   TH.eq('龙鳞甲 +45 护甲', firstUnitOf(single([{ id: 'bowman', items: ['dragonscale'] }]), 'a').armor, 18 + 45);
   TH.eq('虚空斗篷 +45 魔抗', firstUnitOf(single([{ id: 'bowman', items: ['voidcloak'] }]), 'a').mr, 20 + 45);
   TH.eq('巨力之刃 +25% 攻击力', firstUnitOf(single([{ id: 'bowman', items: ['giantblade'] }]), 'a').ad, U.round2(BOW_AD * 1.25));
-  TH.eq('疾风之靴 +22% 攻速', firstUnitOf(single([{ id: 'bowman', items: ['swiftboots'] }]), 'a').as, U.round2(BOW_AS * 1.22));
+  /* ★ 攻速这条改成**从装备数据里取值**，不写死 1.22 ——
+     这颗大果从 +22% 改到 +30% 的时候，写死的算式红了，
+     但那和"装备机制对不对"毫无关系（第 55 行坑位是同一条教训）。 */
+  TH.eq('和成天下5000精品大果 +30% 攻速',
+    firstUnitOf(single([{ id: 'bowman', items: ['swiftboots'] }]), 'a').as,
+    U.round2(BOW_AS * (1 + ST.ITEM_BY_ID.swiftboots.mods.asPct)));
   TH.eq('秘法之书 +30% 法术强度', firstUnitOf(single([{ id: 'bowman', items: ['spellbook'] }]), 'a').ap, 1.3);
   TH.eq('蓝水晶 开局 +35 法力', firstUnitOf(single([{ id: 'bowman', items: ['sapphire'] }]), 'a').mana, 35);
   TH.eq('猎手之眼 +30% 暴击率', firstUnitOf(single([{ id: 'bowman', items: ['huntereye'] }]), 'a').critChance, 0.45);
@@ -5239,6 +5778,217 @@
   }, 23);
   var stealEvents = rSteal.log.filter(function (e) { return e.type === 'heal' && e.reason === 'lifesteal'; });
   TH.ok('血饮剑会吸血', stealEvents.length > 0, '吸血事件 ' + stealEvents.length + ' 条');
+
+  /* ============================================================
+   * 11b. 「和成天下5000精品大果」—— 全游戏第一件**有行为**的装备
+   *
+   *   +30% 攻速；普攻给敌人叠「寒冰」；**每秒失去 6% 生命上限**。
+   *
+   *   ★★ 自燃和「超频自毁」是两条独立规则，公式也不同：
+   *        超频（张雪峰）：当前生命 × 44%  → 指数衰减，越掉越慢
+   *        大果（这件装备）：生命上限 × 6%  → 线性，固定 16.7 秒后必死
+   *      所以下面最锋利的那条断言是"**每一秒掉的一样多**" ——
+   *      指数衰减下第 4 秒的量会比第 1 秒小一大截，线性则完全相等。
+   * ============================================================ */
+  TH.section('和成天下5000精品大果 · 攻速 + 寒冰 + 自燃');
+
+  var BIGFRUIT = ST.ITEM_BY_ID.swiftboots;
+  TH.eq('装备已改名为「和成天下5000精品大果」', BIGFRUIT.name, '和成天下5000精品大果');
+  TH.eq('id 仍然是 swiftboots（levels.js 的阵容 + art/items/swiftboots.png 都按 id 索引）',
+    BIGFRUIT.id, 'swiftboots');
+  TH.eq('★ 攻速 +30%（原来是 +22%）', BIGFRUIT.mods.asPct, 0.30);
+  TH.ok('★ 行为写在 grants 里，**没有混进 mods**（mods 只放面板数字）',
+    !!BIGFRUIT.grants && BIGFRUIT.mods.burnMaxPct === undefined &&
+    BIGFRUIT.mods.chill === undefined,
+    'mods = [' + Object.keys(BIGFRUIT.mods).join(',') + ']　grants = [' +
+    Object.keys(BIGFRUIT.grants).join(',') + ']');
+  TH.eq('★ 每秒失去 6% 生命上限', BIGFRUIT.grants.burnMaxPct, 0.06);
+  TH.eq('★ 寒冰的参数和张雪峰的「巧乐兹」逐项一致（每层 -5% / 满 10 层 / 冻 3 秒）',
+    [BIGFRUIT.grants.chill.perHit, BIGFRUIT.grants.chill.perStack,
+     BIGFRUIT.grants.chill.max, BIGFRUIT.grants.chill.freezeDur].join('/'),
+    '1/0.05/10/3');
+  TH.ok('★ 描述里写明了代价（不写的话玩家只会觉得"这装备在杀我"）',
+    BIGFRUIT.desc.indexOf('6%') >= 0 && BIGFRUIT.desc.indexOf('生命上限') >= 0 &&
+    BIGFRUIT.desc.indexOf('30%') >= 0, BIGFRUIT.desc);
+
+  // grants 的合并规则：取强，不相加
+  (function () {
+    var g1 = ST.resolveItemGrants(['swiftboots']);
+    var g3 = ST.resolveItemGrants(['swiftboots', 'swiftboots', 'swiftboots']);
+    TH.eq('★ 带 3 颗果子仍然是每秒 6%（取强，不相加）', g3.burnMaxPct, 0.06);
+    TH.eq('★ 寒冰每击层数也不叠加（相加的话每击 3 层、5 下就冻一次）',
+      g3.chill.perHit, g1.chill.perHit);
+    TH.eq('没带果子就没有自燃', ST.resolveItemGrants(['belt']).burnMaxPct, 0);
+    TH.eq('没带果子就没有寒冰', ST.resolveItemGrants(['belt']).chill, null);
+  })();
+
+  /* 场景：带上大果的 3 星医师 vs 1 星山岳（三条腰带）。
+     ★ 为什么这么配：
+       · 戴的人得**活得够久**才量得到自燃 —— 医师 3★ + 两条腰带有 3800 血，
+         而且它会给自己回血；
+       · 对手得**又硬又不痛** —— 1 星山岳 3000 血、输出很低，
+         既撑得住 17 秒、又不会先把戴的人打死（那样自燃就量不全了）；
+       · 戴的人还要**打得够多下**才验得到寒冰满层 —— 医师 0.68 攻速 ×1.30 ≈ 0.88，
+         17 秒里打得出十几下。 */
+  function fruitFight(withItem) {
+    return ST.Battle.battle({
+      a: [{ id: 'medic', star: 3,
+            items: withItem ? ['swiftboots', 'belt', 'belt'] : ['belt', 'belt'], r: 0, c: 0 }],
+      b: [{ id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 4 }]
+    }, 31337);
+  }
+
+  (function () {
+    var r = fruitFight(true);
+    var me = r.initial.units.filter(function (u) { return u.side === 'a'; })[0];
+    TH.ok('★ 带上它的人身上带着自燃参数', me && Math.abs(me.burnMaxPct - 0.06) < 1e-9,
+      me ? me.burnMaxPct : '没找到');
+    TH.ok('★ 也带着寒冰参数（这就是"第一件有行为的装备"）',
+      me && me.chillMax > 0 && Math.abs(me.chillPerStack - 0.05) < 1e-9,
+      me ? (me.chillMax + ' 层 / 每层 ' + me.chillPerStack) : '没找到');
+
+    var burns = r.log.filter(function (e) {
+      return e.type === 'selfburn' && e.reason === 'item' && e.who === me.uid;
+    });
+    TH.ok('★ 每秒都在自燃（至少采到 3 下）', burns.length >= 3, burns.length + ' 次');
+
+    // ① 每一次都正好是「上限 × 6%」
+    var amtBad = 0, amtWant = U.round2(me.maxHp * 0.06);
+    for (var i = 0; i < burns.length; i++) {
+      // 最后一下可能被剩余血量截断
+      if (Math.abs(burns[i].amount - amtWant) > 0.05 &&
+          Math.abs(burns[i].amount - (burns[i].hpAfter + burns[i].amount)) > 0.05) {
+        amtBad++;
+      }
+    }
+    TH.eq('★ 每一次自燃都正好是「生命上限 × 6%」＝ ' + amtWant, amtBad, 0);
+
+    // ② ★★ 线性（不是指数）：第 1 下和第 4 下必须**一样多**
+    if (burns.length >= 4) {
+      TH.ok('★★ 是**线性**掉血：第 1 下和第 4 下掉的一样多（指数衰减会越掉越少）',
+        Math.abs(burns[0].amount - burns[3].amount) < 0.05,
+        '第1下 ' + burns[0].amount + '　第4下 ' + burns[3].amount);
+    }
+
+    // ③ 每秒一次
+    var gapBad = 0;
+    for (var g = 1; g < burns.length; g++) {
+      if (Math.abs((burns[g].t - burns[g - 1].t) - 1) > 0.05) gapBad++;
+    }
+    TH.eq('★ 自燃是每秒一次', gapBad, 0);
+
+    // ④ 普攻真的在给人上寒冰，而且攒满 10 层会冻上
+    var chills = r.log.filter(function (e) {
+      return e.type === 'chill' && e.from === me.uid;
+    });
+    var freezes = r.log.filter(function (e) {
+      return e.type === 'stun' && e.reason === 'freeze' && e.from === me.uid;
+    });
+    TH.ok('★ 装备的寒冰是真的在叠（不是只写在文案里）', chills.length > 0,
+      chills.length + ' 层');
+    TH.ok('★ 攒满 10 层会冻住对手', freezes.length > 0, freezes.length + ' 次冰冻');
+    TH.note('大果这一场：自燃 ' + burns.length + ' 次、寒冰 ' + chills.length +
+      ' 层、冰冻 ' + freezes.length + ' 次');
+  })();
+
+  /* ★ 「定时炸弹」这条只能断言成**上界**，不能断言成等式。
+     ★★ 前两版都配错了，两次都是"把上界当成了等式"：
+        ① 第一版戴的人是医师 —— **它会给自己回血**，自燃 228/秒、
+           每 10 秒奶自己 620，于是 16.7 秒被拖成了 20 秒；
+        ② 第二版换成不回血的射手 —— 但对手（1 星山岳）的输出不是零，
+           自燃 131/秒 再加上挨打的 ~70/秒，12 秒就没了。
+     真相是：**「每秒掉 6% 上限」是扣血速度，不是死亡时刻**。
+       死亡时刻 = 上限 ÷ (扣血速度 + 挨打速度 − 治疗速度)，
+     所以唯一成立的说法是：**不被治疗的话，它绝不会活过 16.67 秒**（只会更早）。
+     这条同时也是"炸弹真的是炸弹"的证据 —— 没有它的话，玩家会以为
+     这件装备只是"慢慢掉血"，而实际上它是**有硬上限的一次性资源**。 */
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'bowman', star: 3, items: ['swiftboots', 'belt', 'belt'], r: 0, c: 0 }],
+      b: [{ id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 4 }]
+    }, 606);
+    var me = r.initial.units.filter(function (u) { return u.side === 'a'; })[0];
+    var death = r.log.filter(function (e) {
+      return e.type === 'death' && e.who === me.uid;
+    })[0];
+    var life = 1 / me.burnMaxPct;
+    TH.ok('★ 不回血的场合下，带上它**绝不会活过** 1÷6% ≈ ' + U.round2(life) +
+      ' 秒（只会更早，因为还会挨打）',
+      !!death && death.t <= life + 0.5,
+      death ? ('实际活了 ' + U.round2(death.t) + 's（血量 ' + me.maxHp +
+               '；额外挨打只会让它更早）') : '它没死');
+    var nB = r.log.filter(function (e) {
+      return e.type === 'selfburn' && e.reason === 'item' && e.who === me.uid;
+    }).length;
+    TH.note('不回血的场面：' + nB + ' 次自燃、' + U.round2(death ? death.t : 0) +
+      's 阵亡（纯自燃的理论上界是 16.67s）');
+  })();
+
+  // 对照组：不带这颗果子就完全没有这两件事
+  (function () {
+    var r = fruitFight(false);
+    var me = r.initial.units.filter(function (u) { return u.side === 'a'; })[0];
+    TH.eq('★ 不戴它就没有自燃参数', me.burnMaxPct, 0);
+    TH.eq('★ 不戴它就没有寒冰（1 星医师本来也没有被动）', me.chillMax, 0);
+    TH.eq('★ 也没有任何 selfburn 事件',
+      r.log.filter(function (e) { return e.type === 'selfburn'; }).length, 0);
+    TH.eq('★ 也没有任何 chill 事件',
+      r.log.filter(function (e) { return e.type === 'chill'; }).length, 0);
+  })();
+
+  /* ⑥ 两条自燃可以**同时**挂在同一个人身上，而且各走各的 1 秒计时器。
+     ★ 这是"两条独立规则共用一个事件类型"最容易出错的地方：
+       如果计时器共用一个字段，那两条就会互相推迟，变成每 2 秒才掉一次。
+     ★★ 场景要挑得让两条都跑起来：
+        张雪峰要打满 20 次普攻才进狂暴（带果子后 ≈ 11 秒），
+        而果子自己 16.7 秒就把他烧死 —— 所以对手必须**又硬又不痛**。
+        第一版用了两个 3 星山岳（各三腰带），它们 8 秒就把他打死了，
+        超频那一条一次都没触发（果子 8 次 / 超频 0 次）。
+        换成两个 **1 星**山岳：6128 总血量撑得住、输出只有 ~140/秒，
+        他就能活到 11 秒进狂暴、再被果子烧到 16.7 秒。 */
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'blademaster', star: 1, items: ['swiftboots', 'belt', 'belt'], r: 0, c: 0 }],
+      b: [{ id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 3 },
+          { id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 6 }]
+    }, 8181);
+    var me = r.initial.units.filter(function (u) { return u.side === 'a'; })[0];
+    var itemBurns = r.log.filter(function (e) {
+      return e.type === 'selfburn' && e.reason === 'item' && e.who === me.uid;
+    });
+    var ocBurns = r.log.filter(function (e) {
+      return e.type === 'selfburn' && e.reason === 'overclock' && e.who === me.uid;
+    });
+    TH.ok('这一场两条自燃都发生了（否则下面没得验）',
+      itemBurns.length > 0 && ocBurns.length > 0,
+      '果子 ' + itemBurns.length + ' 次 / 超频 ' + ocBurns.length + ' 次');
+    // 两条各自的间隔都必须是 1 秒 —— 共用计时器的话会变成 2 秒
+    function maxGap(list) {
+      var worst = 0;
+      for (var i = 1; i < list.length; i++) {
+        worst = Math.max(worst, Math.abs((list[i].t - list[i - 1].t) - 1));
+      }
+      return worst;
+    }
+    TH.ok('★ 果子那条仍然是每秒一次（没被超频那条推迟）',
+      itemBurns.length < 2 || maxGap(itemBurns) < 0.05, maxGap(itemBurns));
+    /* ★★ 反过来这一边**验不全**，如实记下来：
+       超频是 44%/秒 的**当前**生命衰减，进狂暴之后一两秒就把人烧死了，
+       所以通常只采到 1 次 —— 而"两条各自的间隔都是 1 秒"需要每边至少 2 次。
+       ★ 这一场只验到了"果子那一边在超频开始后仍然是每秒一次"（上面那条），
+         也就是"共用计时器会被推迟"的一半反例。
+         **不写成"两条都验了"** —— 那是假信息。
+         要两边都采到，得让他在狂暴之后还能活 3 秒以上（需要更高的血量）。 */
+    if (ocBurns.length >= 2) {
+      TH.ok('★ 超频那条也仍然是每秒一次（两条是独立计时器）',
+        maxGap(ocBurns) < 0.05, maxGap(ocBurns));
+    } else {
+      TH.note('超频这条只采到 ' + ocBurns.length + ' 次（44%/秒 的指数衰减一两秒就烧死了），' +
+        '所以"两条各自 1 秒"这一场**只验到了一半**，不算通过');
+    }
+    TH.note('张雪峰同时带果子：两条自燃各 ' + itemBurns.length + ' / ' +
+      ocBurns.length + ' 次，互不干扰');
+  })();
 
   /* ★ 圣杯：验的是「治疗量」。
      ★★ 这里踩过一个坑：原来的写法是「medic 3★ 单挑靶子，比总治疗量」，
@@ -5283,6 +6033,50 @@
   TH.eq('3 星生命 = 3.24 倍', s3.maxHp, Math.round(500 * 3.24));
   TH.eq('2 星攻击力 = 1.8 倍', s2.ad, U.round2(BOW_AD * 1.8));
   TH.eq('3 星攻击力 = 3.24 倍', s3.ad, U.round2(BOW_AD * 3.24));
+
+  /* ---------- 4 星（2026-10 加的一档：3 个 3 星合成） ----------
+   * ★ 这一档的风险不在数值，而在**被动会不会悄悄丢掉**：
+   *   所有被动的门槛只写到 3 星（`perHit: {1:…,2:…,3:…}`），
+   *   4 星查进去是 undefined。`passiveStep` 不夹紧的话会返回 0，
+   *   于是 `passiveName` 变 null（界面被动那一行整行消失）、
+   *   `frenzyStep` / `guardLeft` / `snipeSureLeft` 全变 0 ——
+   *   面板还是高的，只是被动没了，**而且不报任何错**。
+   *   所以下面这一组是"全棋子扫描"，不是抽查。 */
+  var s4 = firstUnitOf(single([{ id: 'bowman', star: 4 }]), 'a');
+  TH.eq('★ 4 星生命 = 5.832 倍（每星 ×1.8 再乘一次）',
+    s4.maxHp, Math.round(500 * 5.832));
+  TH.eq('★ 4 星攻击力 = 5.832 倍', s4.ad, U.round2(BOW_AD * 5.832));
+  TH.ok('★ 星级倍率表长度对得上上限',
+    ST.STAR_SCALE.length === ST.MAX_STAR + 1, ST.STAR_SCALE.length + ' 项');
+  TH.eq('★ 星级上限是 4', ST.MAX_STAR, 4);
+
+  (function () {
+    var stepBad = [], nameBad = [], extraBad = [];
+    for (var i = 0; i < ST.UNITS.length; i++) {
+      var d = ST.UNITS[i];
+      if (!ST.passiveKind(d)) continue;               // 没有被动的棋子不参与
+      var n3 = ST.passiveName(d, 3), n4 = ST.passiveName(d, 4);
+      var p3 = ST.passiveStep(d, 3), p4 = ST.passiveStep(d, 4);
+      if (n4 !== n3) nameBad.push(d.id + '「' + n3 + '」→「' + n4 + '」');
+      if (p4 !== p3) stepBad.push(d.id + ' ' + p3 + '→' + p4);
+      /* ★ 反向也要验：被动从 2 星才开始的棋子（豆包/老牧师/牢大…），
+         1 星**必须仍然是"没有被动"**。夹紧逻辑写错成"无条件回退到最高档"
+         的话，这些棋子的 1 星会凭空多出一条被动，
+         界面那一行「升星预告」也会跟着消失 —— 那是另一种坏法。 */
+      if (ST.passiveStep(d, 2) > 0 && ST.passiveStep(d, 1) === 0 &&
+          ST.passiveName(d, 1) !== null) {
+        extraBad.push(d.id);
+      }
+    }
+    TH.eq('★ 全棋子扫描：4 星的被动名字和 3 星完全一致（一个都没丢）',
+      nameBad.length, 0);
+    if (nameBad.length) TH.note('丢被动的：' + nameBad.join(' / '));
+    TH.eq('★ 全棋子扫描：4 星的被动数值和 3 星完全一致', stepBad.length, 0);
+    if (stepBad.length) TH.note('数值变了的：' + stepBad.join(' / '));
+    TH.eq('★ 1 星本来就没有被动的棋子，4 星这一档没让它们多出被动来',
+      extraBad.length, 0);
+    if (extraBad.length) TH.note('多出被动的：' + extraBad.join(' / '));
+  })();
 
   /* ============================================================
    * 11. 强弱关系
