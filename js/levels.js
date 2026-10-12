@@ -152,7 +152,7 @@
       // 5 费棋子的「稀有」体现在数值上就是这么猛，配关卡时必须留出余量。
       //
       // ★ 走位改成 0.3 秒一格之后，这一关从 +2% 掉到 −5%（打不过），
-      //   所以又撤掉了血月屠夫。原因很直接：**慢速走位对「站桩肉墙」有利** ——
+      //   所以又撤掉了孙笑川（那时还叫「血月屠夫」）。原因很直接：**慢速走位对「站桩肉墙」有利** ——
       //   进攻方要多走 1 秒才能贴上来，这段时间墙上的人白打。
       //   这关的定位本来就是「一堵墙」，所以削它的输出来换平衡，而不是削血量。
       comp: [
@@ -291,7 +291,12 @@
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
         { id: 'stoneguard', star: 3, items: ['belt'] }, { id: 'ironwall', star: 2 },
-        { id: 'templar', star: 2 }, { id: 'spearman', star: 3 },
+        /* ★ 东北雨姐（原圣殿骑士）加强之后（生命 +50%、攻击 +30%），
+           这一关的余量从 +6% 掉到 **−2%**（参考阵容直接打不过了）。
+           处置和 22 关那次一样：**只动敌人，不动她的数值** ——
+           把这一关的她从 2 星降到 1 星（3.24 倍面板 → 1 倍）。
+           削弱棋子的意图不能靠偷偷把数值加回去抵消。 */
+        { id: 'templar', star: 1 }, { id: 'spearman', star: 3 },
         { id: 'medic', star: 2, items: ['holygrail'] },
         { id: 'earthwarden', star: 2, items: ['belt'] },
         { id: 'crossbow', star: 2, items: ['huntereye'] }
@@ -319,7 +324,9 @@
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
         { id: 'earthwarden', star: 3, items: ['holygrail'] },
         { id: 'stoneguard', star: 3, items: ['belt'] }, { id: 'ironwall', star: 3 },
-        { id: 'templar', star: 2 }, { id: 'medic', star: 3, items: ['sapphire'] },
+        /* ★ 同上：东北雨姐加强之后这一关从 +5% 掉到 **−3%**，
+           同样只把她从 2 星降到 1 星（其余一个字没动）。 */
+        { id: 'templar', star: 1 }, { id: 'medic', star: 3, items: ['sapphire'] },
         { id: 'spearman', star: 3 }, { id: 'acolyte', star: 2 }
       ],
       clearGold: 25, drop: 'holygrail'
