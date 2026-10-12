@@ -144,11 +144,40 @@
     return (pa && pa.kind) ? pa : null;
   }
 
+  /**
+   * 从一张"按星级索引"的表里取值：星级**超出表里写到的最高一档**时，按最高一档算。
+   *
+   * ★★ 4 星（2026-10 加的）让这条成为必须：`perHit` / `names` 都只写到 3 星，
+   *    4 星查进去是 `undefined`。不夹紧的话有两处会静默出错：
+   *      · `passiveStep` 返回 0 → `passiveName` 返回 null → **界面整行被动消失**，
+   *        而且 `frenzyStep` / `guardLeft` / `snipeSureLeft` 一起变成 0；
+   *      · `names` 查不到 → 名字退化成通用的「被动」，
+   *        玩家看到的是光秃秃一个「被动」，数值全对但完全看不懂。
+   *    两种都不报任何错，所以只能靠这条守卫 + 全棋子扫描的自检兜住。
+   *
+   * ★ 夹紧只对"**高于**最高一档"生效，**低于最低一档仍然返回 undefined** ——
+   *   这一半同样重要：豆包 / 老牧师 / 牢大的表都是从 2 星开始写的，
+   *   1 星本来就该"没有被动"。无条件回退到最高档的话，
+   *   这些棋子的 1 星会凭空多出一条被动、界面那行「升星预告」也会消失。
+   */
+  function starLookup(map, star) {
+    if (!map) return undefined;
+    var v = map[star];
+    if (v !== undefined && v !== null) return v;
+    var maxK = 0, any = false;
+    for (var kk in map) {
+      var kn = parseInt(kk, 10);
+      if (!isNaN(kn) && kn > maxK) { maxK = kn; any = true; }
+    }
+    if (any && star > maxK) return map[maxK];
+    return undefined;
+  }
+
   /** 这一星级每次触发给多少（frenzy 是攻速增量，hurtHeal 是回血比例）；没有就是 0 */
   function passiveStep(def, star) {
     var pa = passiveOf(def);
     if (!pa) return 0;
-    var v = pa.perHit && pa.perHit[star];
+    var v = starLookup(pa.perHit, star);
     return (typeof v === 'number' && v > 0) ? v : 0;
   }
 
@@ -171,7 +200,8 @@
     var pa = passiveOf(def);
     if (!pa) return null;
     if (!passiveStep(def, star)) return null;
-    var n = pa.names && pa.names[star];
+    // ★ names 也要走同一套"超出就按最高一档算"，不然 4 星会显示成光秃秃的「被动」
+    var n = starLookup(pa.names, star);
     if (!n) return '被动';
     return (n instanceof Array) ? n.join(' + ') : n;
   }
@@ -652,14 +682,26 @@
           guardMax: (pv && pv.kind === 'clawGuard') ? passiveStep(def, p.star) : 0,
           guarded: 0,
           /* ---------- 张雪峰「超频」 ----------
-             ocAsPct  攻速加成（开局 ocAsStart，每次普攻 +ocPerHit，**无上限**）
+             ocAsPct  攻速加成。开局 ocAsStart，每次普攻叠 ocPerHit；
+                      ★ 进入狂暴之后每次叠 ocPerHitBerserk（= ocPerHit × 倍率），
+                        并且封顶 ocMaxAs（0 = 不封顶）
              ocMovePct 移速加成
-             ocOn     是否已经越过阈值（越过之后开始自毁、3 星还额外加攻击力）
+             ocOn     是否已经进入狂暴（狂暴 = 开始自毁；3 星还额外加攻击力）
              adBonusPct 攻击力加成（雪毙），和 ad 分开存，
                        免得把 ad 本身改掉导致「日志里的 raw 和快照里的 ad 对不上」 */
-          ocAsPct: (pv && pv.kind === 'overclock') ? (pv.ocAsStart || 0) : 0,
+          ocAsPct: (pv && pv.kind === 'overclock')
+            ? Math.min(pv.ocAsStart || 0, (pv.ocMaxAs > 0 ? pv.ocMaxAs : Infinity)) : 0,
           ocMovePct: (pv && pv.kind === 'overclock') ? (pv.ocMoveStart || 0) : 0,
           ocPerHit: (pv && pv.kind === 'overclock') ? (pv.ocPerHit || 0) : 0,
+          /* ocPerHitBerserk: 狂暴里的单次叠加量。★ 倍率在**这里**就算掉，
+             不留在 overclockOnHit 的热路径里 —— 那里每次普攻都要读它，
+             而倍率是开局就定死的。倍率缺失或为 0 时按 1 处理，
+             免得一个笔误把叠加量变成 0（那会让狂暴永远叠不上去）。 */
+          ocPerHitBerserk: (pv && pv.kind === 'overclock')
+            ? (pv.ocPerHit || 0) * (pv.ocBerserkMul > 0 ? pv.ocBerserkMul : 1) : 0,
+          /* ocMaxAs: 攻速加成的硬上限。0 = 不封顶（旧版的行为）。 */
+          ocMaxAs: (pv && pv.kind === 'overclock' && pv.ocMaxAs > 0) ? pv.ocMaxAs : 0,
+          ocBerserkName: (pv && pv.ocBerserkName) ? pv.ocBerserkName : '',
           ocThreshold: (pv && pv.kind === 'overclock') ? (pv.ocThreshold || 99) : 0,
           ocBurnPct: (pv && pv.kind === 'overclock') ? (pv.ocBurnPct || 0) : 0,
           ocAoeRadius: (pv && pv.kind === 'overclock' && pv.ocAoeAt && p.star >= pv.ocAoeAt)
@@ -668,6 +710,27 @@
             ? (pv.ocAdPct || 0) : 0,
           ocOn: false, ocBurnAcc: 0, ocHits: 0, ocFlash: 0, ocBurnFlash: 0,
           adBonusPct: 0,
+          /* ---------- 老牧师「临终祷告」 ----------
+             前半段是**施法者**（老牧师）身上的：
+               ritesOn     这一星级有没有这个被动（2 星起）
+               ritesUsed   这一局是不是已经用掉了（一场只救一个人）
+               ritesHpPct  拉回来时的血量比例（1 = 满血）
+               ritesDelay  祷告多久之后站起来
+               ritesAdPct  复活时双方各加多少攻击力（3 星起；0 = 不加）
+             后半段挂在**被救的那个人**身上（倒下之后才填）：
+               ritesUntil   还要等到什么时候（-1 = 没在等）
+               ritesBy      谁在给他做祷告（uid，日志和校验器要看）
+               ritesCarryHp / ritesCarryAd
+                            ★ 把"遗嘱"一起带过去：祷告开始之后老牧师
+                              可能被打死，那份该给的血量和攻击力照样要生效 ——
+                              结算时再去读老牧师身上的字段就会读到 0。 */
+          ritesOn: !!(pv && pv.kind === 'lastRites' && pv.reviveAt && p.star >= pv.reviveAt),
+          ritesUsed: false,
+          ritesHpPct: (pv && pv.reviveHpPct > 0) ? pv.reviveHpPct : 1,
+          ritesDelay: (pv && pv.reviveDelay > 0) ? pv.reviveDelay : 1,
+          ritesAdPct: (pv && pv.kind === 'lastRites' && pv.adBuffAt && p.star >= pv.adBuffAt)
+            ? (pv.adBuffPct || 0) : 0,
+          ritesUntil: -1, ritesBy: null, ritesCarryHp: 0, ritesCarryAd: 0,
           /* ---------- 「巧乐兹」的冰棍 ----------
              层数记在**被冻的人身上**，因为减速要作用在它身上。
              chillPerStack 也一起带过去：同一个减速效果可能来自不同星级的张雪峰，
@@ -694,6 +757,28 @@
           unit.chillMax = pv.chillMax || 0;
           unit.freezeDur = pv.freezeDur || 0;
         }
+        /* ---------- 装备给的行为（「和成天下5000精品大果」） ----------
+         * ★ 走 `grants` 不走 `mods`：mods 是面板数字，会被逐键相加；
+         *   "普攻挂寒冰"和"每秒自燃"不是数字，相加没有意义（见 items.js）。
+         *
+         * ★★ 和「巧乐兹」之间是**取强**，不是相加：
+         *   两者都是"每层 -5%、满 10 层冻 3 秒"，取强的结果就是不亏也不叠；
+         *   相加的话一个「2 星张雪峰 + 这颗果子」每击叠 2 层，
+         *   5 次普攻就冻一次 —— 控制会直接滚雪球到没法玩。
+         *   所以两个来源各自算完后取 max，而不是把 perHit 加起来。 */
+        var itemGrants = ST.resolveItemGrants(p.items);
+        if (itemGrants.chill) {
+          var ic = itemGrants.chill;
+          unit.chillOn = true;
+          unit.chillPerHit = Math.max(unit.chillPerHit, ic.perHit);
+          unit.chillPerStack = Math.max(unit.chillPerStack, ic.perStack);
+          unit.chillMax = Math.max(unit.chillMax, ic.max);
+          unit.freezeDur = Math.max(unit.freezeDur, ic.freezeDur);
+        }
+        /* 每秒失去**生命上限**的 burnMaxPct（不是当前生命 —— 那是两条规则）。
+           burnAcc 是独立的计时器：带上两颗果子也只烧一次。 */
+        unit.burnMaxPct = itemGrants.burnMaxPct || 0;
+        unit.burnAcc = 0;
         /* 「捧腹大笑」：技能本身（时长/减伤/回血）来自 skill，星级只开两个开关。
            数据来源分两处是刻意的 —— 前半段是"这个技能干什么"（技能表），
            后半段是"星级让它多干什么"（被动表）。 */
@@ -1130,7 +1215,103 @@
              // ★ 复活次数用完了就如实写 false —— 界面靠它决定要不要画"还会站起来"的暗示
              revive: canRevive(u) });
       }
+      /* ★ 老牧师「临终祷告」：这是不是**第一个**倒下的队友？
+         放在坠机那一段之后 —— 两者不冲突：牢大既可能自己站起来，
+         也可能被老牧师拉回来，各走各的事件。 */
+      lastRitesOnDeath(u);
       return true;
+    }
+
+    /**
+     * 有队友倒下了 —— 找一个还活着、这一局还没用过的老牧师。
+     *
+     * ★ 施法者必须是**别人**（`p !== u`）：老牧师救不了自己。
+     *   所以他自己第一个倒下时这个被动就白瞎了 —— 这是有意保留的，
+     *   不然"先送谁"这个决策点就没了。
+     * ★ 同一方有多个老牧师时按 st.units 的固定顺序取第一个，**不用随机** ——
+     *   引擎里除了 makeRng 不许有别的随机源（那是"同 seed 必然同结果"的前提）。
+     * ★ 这里只**开始计时**，不立刻把人拉起来：真正的复活在 lastRitesTick 里，
+     *   和牢大"倒下 → 1 秒 → 落地"是同一套节奏。
+     */
+    function lastRitesOnDeath(u) {
+      if (u.ritesUntil >= 0) return;
+      var priest = null;
+      for (var i = 0; i < st.units.length; i++) {
+        var p = st.units[i];
+        if (p === u || !p.alive) continue;
+        if (p.side !== u.side) continue;
+        if (!p.ritesOn || p.ritesUsed) continue;
+        priest = p;
+        break;
+      }
+      if (!priest) return;
+      priest.ritesUsed = true;
+      u.ritesUntil = st.t + priest.ritesDelay;
+      u.ritesBy = priest.uid;
+      u.ritesCarryHp = priest.ritesHpPct;
+      u.ritesCarryAd = priest.ritesAdPct;
+      ev({ type: 'lastRites', from: priest.uid, to: u.uid, side: u.side,
+           r: u.r, c: u.c, delay: priest.ritesDelay,
+           until: round3(u.ritesUntil), hpPct: u.ritesCarryHp,
+           adPct: u.ritesCarryAd });
+    }
+
+    /**
+     * 祷告结算：到点了就把人拉起来。
+     *
+     * ★ 和牢大的坠机复活**共用 freeCellNear** —— 于是"原地站起来"是免费得到的：
+     *   freeCellNear 首先就返回原格（只要它还空着、还在自己半场）。
+     *   而"必须在自己半场"这条规则在这里同样必要：队友很可能死在对面半场。
+     * ★ 自己半场被占满时救不回来。**这一条必须写进事件**（ok:false）：
+     *   不写的话，"牧师用掉了被动、队友却没起来"在日志里完全读不出来。
+     */
+    function lastRitesTick() {
+      for (var i = 0; i < st.units.length; i++) {
+        var u = st.units[i];
+        if (u.ritesUntil < 0 || st.t < u.ritesUntil) continue;
+        u.ritesUntil = -1;
+        var hpPct = u.ritesCarryHp > 0 ? u.ritesCarryHp : 1;
+        var adPct = u.ritesCarryAd || 0;
+        var cell = freeCellNear(u.r, u.c, u.side);
+        if (!cell) {
+          ev({ type: 'reviveAlly', from: u.ritesBy, who: u.uid, side: u.side,
+               r: u.r, c: u.c, hp: 0, hpMax: u.maxHp, ok: false,
+               adPct: adPct, blessed: [] });
+          continue;
+        }
+        u.alive = true;
+        u.hp = U.round2(u.maxHp * hpPct);
+        u.shield = 0;
+        u.mana = 0; u.manaFromDmg = 0; u.healPool = 0;
+        u.atkTimer = 0; u.moveTimer = 0;
+        u.stunUntil = -1; u.asBuffPct = 0; u.asBuffUntil = -1;
+        u.buffMul = 1; u.buffUntil = -1;
+        u.r = cell.r; u.c = cell.c;
+        st.occ[cell.r * CFG.COLS + cell.c] = u;
+        st.aliveCount[u.side]++;
+
+        /* ★ 3 星「圣光赐福」：被救的人 + 老牧师，攻击力一起 +20%。
+           ★ 老牧师在这一秒里被打死了就**不给他加** —— 给死人加攻击力是假的，
+             而且事件里要如实写清"这个 buff 到底落在谁身上"（blessed 只列真加上的）。
+           ★ 复活不清空 adBonusPct：它和 buffMul 那种"限时倍率"不一样，
+             是**本局永久**的加成，站起来应该还在。 */
+        var blessed = [];
+        if (adPct > 0) {
+          u.adBonusPct = U.round2(u.adBonusPct + adPct);
+          blessed.push(u.uid);
+          var p = null;
+          for (var k = 0; k < st.units.length; k++) {
+            if (st.units[k].uid === u.ritesBy) { p = st.units[k]; break; }
+          }
+          if (p && p.alive) {
+            p.adBonusPct = U.round2(p.adBonusPct + adPct);
+            blessed.push(p.uid);
+          }
+        }
+        ev({ type: 'reviveAlly', from: u.ritesBy, who: u.uid, side: u.side,
+             r: u.r, c: u.c, hp: u.hp, hpMax: u.maxHp, ok: true,
+             adPct: adPct, blessed: blessed });
+      }
     }
 
     /**
@@ -1188,10 +1369,14 @@
       }
     }
 
-    /** 还有没有「已经倒下、但结算没走完」的单位（坠机还没落地） */
+    /** 还有没有「已经倒下、但结算没走完」的单位（坠机还没落地 / 祷告还没做完） */
     function anyPending() {
       for (var i = 0; i < st.units.length; i++) {
-        if (st.units[i].downUntil >= 0) return true;
+        var pu = st.units[i];
+        /* ★ 两种"倒下但还没结算完"，都要把账挂起来：
+             downUntil   牢大 / 羊帆：自己的坠机、自爆
+             ritesUntil  老牧师正在给别人做临终祷告（**被救的是别人**） */
+        if (pu.downUntil >= 0 || pu.ritesUntil >= 0) return true;
       }
       return false;
     }
@@ -1544,30 +1729,51 @@
     }
 
     /**
-     * 星级被动「你快不过我你信吗」：每次普攻叠攻速，**没有上限**。
+     * 星级被动「你快不过我你信吗」：每次普攻叠攻速，封顶 ocMaxAs（+200%）。
      *
-     * ★ 越过阈值（默认 +200%）的那一刻只做三件事，而且只做一次：
-     *     ocOn = true（开始自毁）、3 星的话把攻击力加成打开、写一条事件。
-     *   之后每次普攻照常 +2%，事件里带 over 标记。
+     * ★★ 叠多少取决于是不是已经在狂暴里：
+     *      平时 ocPerHit（+2%），狂暴里 ocPerHitBerserk（+4%，"效率翻倍"）。
+     *    判定用的是**叠加之前**的 u.ocOn，也就是：
+     *      把攻速顶进狂暴的那一次普攻，算的还是 +2%；
+     *      从**下一次**普攻起才是 +4%。
+     *    反过来写（本击就按 +4% 算）会让「进入狂暴」那条事件自相矛盾 ——
+     *    它一边宣布"从现在起每次 +4%"，一边自己按 +4% 结算。
+     *
+     * ★ 越过阈值（+100%）的那一刻只做三件事，而且只做一次：
+     *     ocOn = true（进入狂暴 = 开始自毁）、3 星的话把攻击力加成打开、写一条事件。
+     *   之后每次普攻继续叠，事件里带 over 标记。
+     *
+     * ★ 顶到上限之后**不再写事件**：继续写的话每 tick 一条一模一样的，
+     *   60 秒的对局能白写几千条。只在"这一次刚好顶到"时写一条 capped 收尾。
      */
     function overclockOnHit(u) {
       if (!u.alive || !(u.ocPerHit > 0)) return;
-      u.ocAsPct = U.round2(u.ocAsPct + u.ocPerHit);
-      u.ocHits++;
+      var step = u.ocOn ? u.ocPerHitBerserk : u.ocPerHit;
+      if (!(step > 0)) return;
+      var next = U.round2(u.ocAsPct + step);
+      var capped = false;
+      if (u.ocMaxAs > 0 && next >= u.ocMaxAs) {
+        next = u.ocMaxAs;
+        capped = u.ocAsPct < u.ocMaxAs;   // 只有"这一次刚好顶到"才写收尾事件
+      }
+      if (!capped && next <= u.ocAsPct + 1e-9) return;   // 早就满了，静默
+      u.ocAsPct = next;
+      u.ocHits++;                          // 只数"真的叠上去了"的那些普攻
       var justOver = false;
       if (!u.ocOn && u.ocAsPct >= u.ocThreshold) {
         u.ocOn = true;
         justOver = true;
         u.ocFlash = 1;
-        // 3 星「雪毙」：越过阈值之后攻击力 +78%
+        // 3 星「雪毙」：进入狂暴之后攻击力 +78%
         if (u.ocAdPct > 0) u.adBonusPct = u.ocAdPct;
       }
       ev({ type: 'ocas', who: u.uid, pct: round3(u.ocAsPct), hits: u.ocHits,
-           over: u.ocOn, justOver: justOver, adBonus: round3(u.adBonusPct) });
+           step: round3(step), over: u.ocOn, justOver: justOver,
+           capped: capped, adBonus: round3(u.adBonusPct) });
     }
 
     /**
-     * 超频自毁：越过阈值之后，每秒失去**当前生命**的 ocBurnPct。
+     * 超频自毁（= 狂暴的代价）：进入狂暴之后，每秒失去**当前生命**的 ocBurnPct。
      *
      * ★ 用「当前生命」而不是最大生命：写成最大生命的话它是固定秒数
      *   （1750 × 44% = 770/秒 → 2.3 秒必死），而当前生命是指数衰减，
@@ -1593,7 +1799,43 @@
         if (u.hp < 0) u.hp = 0;
         u.ocBurnFlash = 1;
         ev({ type: 'selfburn', who: u.uid, amount: U.round2(loss),
-             hpAfter: u.hp, hpMax: u.maxHp, pct: u.ocBurnPct });
+             hpAfter: u.hp, hpMax: u.maxHp, pct: u.ocBurnPct,
+             reason: 'overclock' });
+        checkDeath(u);
+      }
+    }
+
+    /**
+     * 装备的自燃：带上「和成天下5000精品大果」的人**每秒失去 6% 生命上限**。
+     *
+     * ★★ 和上面那条「超频自毁」是**两条独立的规则**，故意没有合并成一个函数：
+     *     张雪峰：每秒失去**当前**生命的 44% —— 指数衰减，越到后面掉得越慢；
+     *     这颗果子：每秒失去**上限**的 6% —— 线性，固定 16.7 秒后必定死。
+     *   一个是"慢慢烧死自己"，一个是"定时炸弹"。用参数分支写成一个函数的话，
+     *   以后调其中一条就会误伤另一条 —— 而它们的节奏差别正是这两件东西的性格。
+     *
+     * ★ 同样是"失去生命"而不是"受到伤害"：不过护盾、不触发反伤、
+     *   也不会被鸭子的「抓娃娃」挡掉（那不是"敌人攻击"）。
+     *   所以直接改 hp 并自己 checkDeath，不经过 dealDamage。
+     *
+     * ★ 事件仍然用 `selfburn`（玩家看到的是同一件事：血量在自己往下掉），
+     *   但多带一列 `reason` —— 校验器要靠它决定"该按哪条公式对账"。
+     */
+    function itemBurnTick() {
+      for (var i = 0; i < st.units.length; i++) {
+        var u = st.units[i];
+        if (!u.alive || !(u.burnMaxPct > 0)) continue;
+        u.burnAcc += CFG.DT;
+        if (u.burnAcc < 1) continue;
+        u.burnAcc -= 1;
+        var loss = Math.max(0.01, U.round2(u.maxHp * u.burnMaxPct));
+        if (loss > u.hp) loss = u.hp;
+        u.hp = U.round2(u.hp - loss);
+        if (u.hp < 0) u.hp = 0;
+        u.burnFlash = 1;
+        ev({ type: 'selfburn', who: u.uid, amount: U.round2(loss),
+             hpAfter: u.hp, hpMax: u.maxHp, pct: u.burnMaxPct,
+             reason: 'item' });
         checkDeath(u);
       }
     }
@@ -2622,6 +2864,20 @@
           // 超频 / 冰棍：渲染层要画「⚡+N%」和「❄N」两个徽章，校验器要判事件
           ocStart: u.ocAsPct, ocThreshold: u.ocThreshold, ocAoeRadius: u.ocAoeRadius,
           ocBurnPct: u.ocBurnPct, ocPerHit: u.ocPerHit,
+          /* ★ 狂暴那一套也要进快照，校验器才能独立算出"这一击该叠多少"：
+               ocPerHitBerserk 狂暴里的单次叠加量、ocMaxAs 上限（0 = 不封顶）。
+               不导出的话校验器只能自己再乘一遍倍率，那是把规则抄成两份。 */
+          ocPerHitBerserk: u.ocPerHitBerserk, ocMaxAs: u.ocMaxAs,
+          ocBerserkName: u.ocBerserkName,
+          /* 老牧师「临终祷告」：校验器要独立判两件事 ——
+             「一场只能救一个人」（ritesUsed）和「+20% 到底加没加」（adBonusPct）。
+             adBonusPct 也顺便导出：它是雪毙和圣光赐福共用的那个攻击力加成，
+             以前只有事件里带，校验器没法从快照反推。 */
+          ritesOn: u.ritesOn, ritesUsed: u.ritesUsed, ritesAdPct: u.ritesAdPct,
+          ritesHpPct: u.ritesHpPct, ritesDelay: u.ritesDelay,
+          adBonusPct: u.adBonusPct,
+          /* 装备的自燃：校验器要按"上限的 6%"独立对账，所以得从快照里读到它 */
+          burnMaxPct: u.burnMaxPct,
           chillMax: u.chillMax, chillPerStack: u.chillPerStack,
           passiveName: passiveName(u.def, u.star),
           passiveKind: passiveOf(u.def) ? passiveOf(u.def).kind : null
@@ -2650,6 +2906,10 @@
         /* ★ 超频自毁也要按 tick 走一遍：放在 regenTick 后面、胜负判定前面。
            （张雪峰会自己把自己烧死，那也是一次合法的阵亡。） */
         overclockTick();
+        /* ★ 装备的自燃（「和成天下5000精品大果」）同样按 tick 走。
+           放在超频之后：同一 tick 里两个都烧的话，顺序只影响先扣谁的，
+           而这两个计时器是独立的、各扣各的。 */
+        itemBurnTick();
         /* ★ 奶龙大笑期间的回血（含 3 星的队友光环）同样按 tick 走。 */
         laughTick();
         /* ★ 纯 CD 技能的冷却也按 tick 走（被控住也照常倒数）。 */
@@ -2658,6 +2918,13 @@
            aliveCount 已经 -1 了，如果这里不先把它的账走完，
            它会先被判定成全灭，直升机永远落不了地、也永远复活不了。 */
         pendingTick();
+        /* ★ 「临终祷告」也必须排在胜负判定之前 —— 和坠机同一个道理：
+           被救的人倒下的那一刻 aliveCount 已经 -1 了，
+           如果这一秒里先把这一方判成全灭，人就永远救不回来了。
+           ★ 它同时要在 shadowTick / loneWolfTick **之前**：
+             那两个读的是 aliveCount，而这里刚把它 +1 回去。
+             （否则"最后一个队友被救活"会让疑犯/Dank1ng 晚一 tick 才收起绝境状态。） */
+        lastRitesTick();
         /* ★ 暗影的解除也要在胜负判定之前 —— 它读的是 aliveCount，
            而 aliveCount 刚刚才被 pendingTick 里的复活改过。
            放在后面的话，一个"队友刚死光"的疑犯会多躲一 tick。 */
