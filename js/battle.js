@@ -3632,6 +3632,7 @@
           var kPhones = sk.phones || 40;
           var kPct = (sk.phonePct > 0) ? sk.phonePct : 0.25;
           var thrown = [];
+          var boomSeq = 0;
           for (var pi = 0; pi < kPhones; pi++) {
             var pool = phoneTargets(u);
             if (!pool.length) break;
@@ -3642,7 +3643,10 @@
             u.phoneHits++;
             phoneDamage(u, pt, u.ad * kPct);
             /* ★ 爆炸：命中点 3×3 里的**所有人**（含主目标）再吃一发。
-               排在单发伤害之后 —— 先挨手机、再挨爆炸，读起来才是"手机炸了"。 */
+               排在单发伤害之后 —— 先挨手机、再挨爆炸，读起来才是"手机炸了"。
+               ★ 事件里带 `seq`（这是第几次爆炸）：渲染层用它把震屏
+                 一级一级往上推 —— 40 部手机连着炸，不递增就"炸不出分量"，
+                 不封顶又会一直抖到看不清画面。 */
             if (u.phoneBoom) {
               var boomList = [];
               var all = enemiesOf(u);
@@ -3653,7 +3657,8 @@
                 boomList.push(be);
               }
               if (boomList.length) {
-                ev({ type: 'phoneBoom', from: u.uid, r: pt.r, c: pt.c,
+                boomSeq++;
+                ev({ type: 'phoneBoom', from: u.uid, r: pt.r, c: pt.c, seq: boomSeq,
                      radius: u.phoneBoomRadius, dmg: Math.round(u.ad * u.phoneBoomPct),
                      targets: boomList.map(function (x) { return x.uid; }) });
                 for (bj = 0; bj < boomList.length; bj++) {
