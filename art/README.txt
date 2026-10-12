@@ -80,7 +80,7 @@
         twinblade.png 双刃舞者 / falconer.png 猎鹰手 / templar.png 圣殿骑士
 
 【3 费】alchemist.png 炼金师 / brute.png 牢大 / windcaller.png 楚生疑犯
-        medic.png 战地医师
+        medic.png 老牧师
 
 【4 费·稀有】abyss.png 深渊祭司 / deadeye.png Dank1ng
              butcher.png 血月屠夫 / earthwarden.png 大地守护
@@ -91,7 +91,9 @@
 12 个装备图标（放 art\items\）
 ------------------------------
 
-giantblade 巨力之刃 / swiftboots 疾风之靴 / spellbook 秘法之书
+已有图标：thornmail.png 讲话石 / swiftboots.png 和成天下5000精品大果
+
+giantblade 巨力之刃 / swiftboots 和成天下5000精品大果 / spellbook 秘法之书
 dragonscale 龙鳞甲 / voidcloak 虚空斗篷 / belt 巨人腰带
 sapphire 蓝水晶 / huntereye 猎手之眼 / infinity 无尽之刃
 bloodthirst 血饮剑 / thornmail 讲话石 / holygrail 圣杯
