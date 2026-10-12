@@ -202,6 +202,13 @@
         color: u.color, cost: d.cost || 1, items: (u.items || []).slice(),
         maxHp: u.maxHp, hp: u.hp, hpLag: u.hp, shield: u.shield,
         mana: u.mana, maxMana: u.maxMana,
+        /* ★★ Dank1ng 的「狙击型」标记：技能数据里带 killSkull 的棋子。
+         *   ★ 必须**透传**到渲染层状态里 —— 快照（battle.js）里有这个字段，
+         *     但这里建状态时一个字一个字地抄，漏掉一个就是"这个功能永远不生效"
+         *     （实测就是：枪怎么都不出现，因为 u.killSkull 一直是 undefined）。
+         *   ★ 用它来决定"充能过半时架枪"，而不是写死 defId：
+         *     以后再加一个狙击型棋子，技能里写上 killSkull 就自动有这套表现。 */
+        killSkull: !!u.killSkull,
         r: u.r, c: u.c, rr: u.r, cc: u.c, alive: true, star: u.star,
         lunge: 0, lungeDx: 0, lungeDy: 0,
         flinch: 0, flinchDx: 0, flinchDy: 0, flash: 0,
@@ -231,6 +238,51 @@
         /* 东北雨姐「红薯粉丝」：被捆到什么时候（rootUntil）+ 一次性闪光。
            ★ rootUntil 用 -1 表示"没被捆"，和 stunUntil / asBuffUntil 同一套约定。 */
         rootUntil: -1, rootFlash: 0,
+        /* 钟离「玉璋护盾 / 天星」：
+             · wardCut > 0 且盾还在 → 卡面挂一枚 💠 徽章（免控 + 减伤的标志）
+             · petrifyUntil → 被石化到什么时候（这 3 秒里卡面压成石灰色 + 🪨 徽章）
+           ★ 和 rootUntil / buffUntil 同一套约定：用 -1 表示"没有这个状态"，
+             到期靠比时间，不需要任何"结束"事件。 */
+        wardCut: u.wardCut || 0, wardFlash: 0,
+        petrifyUntil: -1, petrifyFlash: 0,
+        /* 祖国人「飞行 / 灼烧」：
+             · flyOn —— 卡面抬起来画、影子分开（"它是飞着的"）
+             · burnCurUntil / burnCurPct —— 被激光点着之后卡面挂一枚 🔥 徽章
+           ★ 和 rootUntil / buffUntil 同一套约定：-1 = 没有这个状态。 */
+        flyOn: !!u.flyOn,
+        burnCurPct: u.burnCurPct || 0, burnCurUntil: -1, burnCurFlash: 0,
+        burnFreezeImmune: !!u.burnFreezeImmune,
+        /* 丁真「芝士雪豹 / 小马珍珠」：
+             · biteCut / biteUntil —— 被雪豹咬过的人身上挂着的减速（🐆 徽章）
+             · ponyOn / ponyShield / ponyDead —— 小马在不在、还剩多少
+               （卡面要画那匹马；马死掉之后换成一个"狂暴中"的徽章） */
+        biteCut: u.biteCut || 0, biteUntil: -1, biteFlash: 0,
+        ponyOn: !!u.ponyOn, ponyShield: (u.ponyMax > 0) ? u.ponyMax : 0,
+        ponyDead: false, ponyShout: '',
+        /* 鹰佐「霸体 / 天照」：
+             · batiOn / immuneUntil —— 免控窗口（卡面挂 🛡免控 徽章）
+             · amaterasuOn —— 3 星的黑火（用来区分两种燃烧的颜色） */
+        batiOn: !!u.batiOn, batiCdUntil: -1, immuneUntil: -1, batiFlash: 0,
+        amaterasuOn: !!u.amaterasuOn,
+        /* 蓝色大肥鱼「吃白饭 / TOKEN」：
+             · tokenStacks —— 身上还挂着几层 TOKEN（卡面挂 🍚 徽章）
+             · nextDmgMul  —— 下一次伤害的倍率（>1 时挂 🍽 徽章）
+             · flashEat / flashToken 是那两件事发生时的闪光 */
+        tokenStacks: 0, nextDmgMul: 1,
+        flashEat: 0, flashToken: 0,
+        /* ZMJJKK「世一决 / 霓虹激光 / 闪电乒乓」：
+             · neonUntil —— 激光打到什么时候（这段时间里画手部蓝色激光）
+             · neonAsMul / neonMul —— 徽章上的 ×10 / ×2
+             · deathBonus —— 队内阵亡累积的增伤（🗡+N% 徽章）
+             · ballOn —— 2 星有闪电球（开技能时会扔一个） */
+        neonUntil: -1, neonAsMul: 1, neonMul: 1,
+        neonShout: '', neonShoutFlash: 0, neonResets: 0, neonFlash: 0,
+        deathBonus: 0, deathFlash: 0, ballOn: !!u.ballOn,
+        /* 刘浩文「世界第一帅」：
+             · drPerHpPct —— 每少 1% 血减多少伤（徽章要按当前血量实时算）
+             · noDr       —— 不吃任何别的减伤（只用于说明性徽章/调试）
+           ★ 这一条必须透传：漏了它徽章永远不显示（arena 建状态是逐字段抄的）。 */
+        drPerHpPct: u.drPerHpPct || 0, noDr: !!u.noDr,
         /* 「和成天下5000精品大果」的自燃：卡片上要一直挂一个 🌰 徽章 ——
            带上它的人每秒都在掉血，不标出来的话玩家只会觉得"这张卡莫名其妙在死"。 */
         burnMaxPct: u.burnMaxPct || 0, burnFlash: 0,
@@ -239,6 +291,7 @@
         /* 电棍：现在挂着几条电流（「三相电」最多 3 条，玩家得能数出来） */
         curN: 0,
         ocBerserkName: u.ocBerserkName || '狂暴',
+        ocBerserkShout: u.ocBerserkShout || '',
         ocOverFlash: 0,
         /* 「巧乐兹」的冰棍层数（挂在自己身上） */
         chill: 0, chillMax: u.chillMax || 0, chillFlash: 0,
@@ -256,6 +309,10 @@
            空悲切（无限能量）开了没有、法力条刚回满的闪光。 */
         knifeUntil: -1, knifeFlash: 0,
         endless: false, manaFlash: 0,
+        /* ★ Dank1ng「端着狙击枪」：充能过半就架起来（见 drawUnit）。
+           rifleUp 记的是"上一帧架着没有"，用来抓**越过一半的那一瞬**闪一下；
+           rifleFlash 是那一下的高光。 */
+        rifleUp: false, rifleFlash: 0,
         /* ★ 纯 CD 技能的冷却条。
            cdSeconds > 0 的棋子**不吃法力**（gainMana 直接返回），
            所以 mana 永远不会自己往上涨 —— 法力条在这里是一条冷却条，
@@ -505,6 +562,20 @@
    */
   var CALLOUT_SIZE = 0.62;
   function addCallout(x, y, text, color, size) {
+    /* ★★ 特效满员时**挤掉一颗火花**，而不是把台词丢掉。
+     *
+     *   台词是"这一刻到底发生了什么"的**唯一**解释：张雪峰越线喊的那句、
+     *   钟离挡下控制弹的「免疫」、石化、捆住……粒子少一颗没人看得出来，
+     *   一句话丢了玩家就完全读不懂画面。
+     *   ★ 实测踩过：6 个单位在后期混战时 fx 很容易顶到 FX_MAX(220)，
+     *     而"越过狂暴线"正好可以落在一个很吵的帧上 ——
+     *     那一帧的台词会被静默丢掉，自检报出来的是"这句话从没出现过"。
+     *     火花是最不值钱的一类（一次 addSparks 就是十几颗），先拿它开刀。 */
+    if (fx.length > FX_MAX) {
+      for (var ci = 0; ci < fx.length; ci++) {
+        if (fx[ci].type === 'spark') { fx.splice(ci, 1); break; }
+      }
+    }
     if (fx.length > FX_MAX) return;
     fx.push({
       type: 'callout', x: x, y: y, text: text, color: color,
@@ -535,6 +606,76 @@
   function addPillar(x, y) {
     if (fx.length > FX_MAX) return;
     fx.push({ type: 'pillar', x: x, y: y, age: 0, life: 0.75 });
+  }
+
+  /* ---------- 钟离「天星」的陨石 ----------
+   *   和牢大的坠机（addStrike）是"同一类事"但**不能共用**：
+   *   坠机的尾迹是垂直的一条线、颜色是机身的橙红；
+   *   陨石要的是**斜着砸进来的火球**（拖尾 + 自转的石头 + 落点裂纹），
+   *   两者的观感差得远，而且这个还要按 3×3 的大小缩放。
+   *
+   *   ★ 画多大多久，直接来自事件里的半径和石化时长 ——
+   *     "砸下来的那一下"和"被石化 3 秒"在时间上是接得上的：
+   *     陨石 fx 的寿命取石化时长的一部分，落地冲击不会拖到石化结束才演完。
+   */
+  function addMeteor(x, y, size, dur) {
+    if (fx.length > FX_MAX) return;
+    fx.push({ type: 'meteor', x: x, y: y, size: size || CELL * 3,
+              age: 0, life: Math.max(0.45, Math.min(1.1, (dur || 3) * 0.22)) });
+  }
+
+  /**
+   * 陈兴裕「顶赋Jett」的五把飞刀。
+   *
+   * ★ `hit` 决定的是**终点**，不是换个颜色：
+   *   中了 → 终点就在目标身上（刀插进去，末尾一顿）；
+   *   没中 → 终点从目标两侧**擦过去**（横向散开 0.9 格 + 越过 1.1 格），
+   *   看起来就是"打偏了"。两种结果在画面上没有任何共同点，
+   *   玩家不需要看伤害数字就知道这一发中没中。
+   * ★ 五把刀的出发时间错开 0.06 秒：齐刷刷一排像弹幕，
+   *   一串接一串才像"刀一把把甩出去"。
+   */
+  function addKnives(x1, y1, x2, y2, count, hit) {
+    if (fx.length > FX_MAX) return;
+    var n = count || 5;
+    for (var i = 0; i < n; i++) {
+      /* 每把刀一个横向偏移：中了是围着目标散开（都落在卡上），
+         没中是整体偏到一侧飞过去。 */
+      var lane = (i - (n - 1) / 2);
+      var spread = hit ? CELL * 0.22 : CELL * 0.30;
+      var side = hit ? 0 : (i % 2 ? 1 : -1);
+      var dx = hit ? lane * spread * 0.55 : (lane * spread + side * CELL * 0.55);
+      var dy = hit ? lane * spread * 0.35 : -CELL * 0.45 - Math.abs(lane) * CELL * 0.06;
+      var tx = x2 + dx + (hit ? 0 : side * CELL * 0.9);
+      var ty = y2 + dy - (hit ? 0 : CELL * 1.35);
+      fx.push({
+        type: 'knifeFly', x1: x1, y1: y1, x2: tx, y2: ty,
+        hit: !!hit, age: -i * 0.06, life: 0.30 + i * 0.06,
+        vx: 0, vy: 0
+      });
+    }
+  }
+
+  /**
+   * 刘浩文「手机大王」的手机雨。
+   *
+   * ★ 40 部手机**不能一次全画出来**：同一帧 40 个小方块 + 40 条弹道
+   *   在 95px 的格子上就是一团糊。所以按扔出的顺序错开出发时间
+   *   （每部差 0.012 秒，40 部总共 0.48 秒）—— 看起来是"一把一把甩出去"，
+   *   最后几部还在飞的时候第一批已经命中，节奏正好。
+   * ★ 终点是**目标当时的位置**：手机飞一半目标死了也不改道
+   *   （改道反而像"追踪导弹"，而需求说的是"随机扔出"）。
+   */
+  function addPhones(x1, y1, points, boom) {
+    var step = 0.012;
+    for (var i = 0; i < points.length; i++) {
+      if (fx.length > FX_MAX) return;
+      fx.push({
+        type: 'phoneFly', x1: x1, y1: y1,
+        x2: points[i].x, y2: points[i].y, boom: !!boom,
+        age: -i * step, life: 0.26, vx: 0, vy: 0
+      });
+    }
   }
 
   /* ---------- 羊帆「巅峰谢幕」的自爆蓄力 ----------
@@ -677,9 +818,20 @@
             tgt.flinchDy = d.dy;
           }
           var isThorn = (e.reason === 'thorn');
+          /* ★ 「剧毒火龙果」的范围毒：绿色的数字 + 绿色的雾点。
+             和暴击的金、技能的紫、反伤的水色一眼分得开 ——
+             它是一条"每秒都在跳"的伤害，颜色必须是最不抢眼但认得出的那一种。 */
+          var isPoison = (e.reason === 'poison');
           var kind = e.type === 'attack'
             ? (e.peak ? 'peak' : (e.crit ? 'crit' : 'phys'))
             : (e.type === 'skill' ? 'magic' : (isThorn ? 'thornWater' : 'thorn'));
+          if (isPoison) kind = 'poison';
+          /* ★★ ZMJJKK「霓虹激光」：这 4 秒里的每一发都是**手部蓝色激光**。
+           *   判据是"出手者此刻还在激光状态里"（neonUntil > 播放时间），
+           *   渲染层不用认识 ZMJJKK 是谁。
+           *   ★ 画两道细的蓝光（左右手各一道）而不是一道粗的：
+           *     10 倍攻速下一帧可能有好几发，粗光会糊成一团。 */
+          var isNeon = !!(src && src.neonUntil >= 0 && state.t < src.neonUntil);
           addNum(cellX(tgt), cellY(tgt) - CELL * 0.42, String(Math.round(e.dmg)), kind,
             e.crit ? 1.35 : 1);
           /* ★★ 羊帆「羊巅峰」的 20 倍一击。
@@ -689,8 +841,38 @@
            *   混战里也能一眼认出"刚才那一下不是普通普攻"。
            *   ★ 震屏和顿帧都比暴击更重（暴击 6.5 / 0.055，这里是 9 / 0.09）——
            *     20 倍伤害如果只靠飘字表达，玩家会以为是数字显示错了。 */
-          if (e.peak && tgt) {
-            addRing(cellX(tgt), cellY(tgt), 'rgba(255,120,60,.95)', CELL * 1.9, 0.6);
+          /* ★★ 祖国人「耀眼红光」：从**眼睛**里射出的一道红色激光。
+           *
+           *   ★ 判据走事件里的 kind（'laser'），不写死 defId ——
+           *     以后再加一个"激光型"技能，改数据就有这套表现。
+           *   ★ 眼睛的位置是**估**出来的（和荣誉的蓄力激光同一套系数）：
+           *     立绘是一张方图，取卡面上方三分之一、左右各偏 16% 卡宽。
+           *   ★ 一道光束 + 命中点的爆闪 + 一圈热浪：红的、细的、笔直的 ——
+           *     和荣誉那两条金色激光的区别就在颜色和粗细上（那是"蓄力瞄准"，
+           *     这是"当场灼穿"）。三连发时每一次 skill 事件都会画一道，
+           *     所以看起来就是连闪三下。 */
+          if (e.type === 'skill' && e.kind === 'laser' && src) {
+            var ex1 = cellX(src), ey1 = cellY(src) - CELL * 0.18;
+            var tx2 = cellX(tgt), ty2 = cellY(tgt);
+            /* ★ 光束的 life 从 0.22 拉到 0.62（用户要求"时间长一点"）：
+               0.22 秒在 30fps 下只有 6~7 帧，扫过去几乎看不见；
+               0.62 秒 ≈ 19 帧，足够看清两道红光从眼睛射出去、命中点被灼穿。
+               ★ 中间那道更细更亮、life 稍短一点：它先消失，外面两道
+                 再撑一下，看起来就像"光衰减"，而不是整条一起"啪"地灭掉。 */
+            addBeam(ex1 - CELL * 0.16, ey1, tx2, ty2, '#ff3b30', 0.62);
+            addBeam(ex1 + CELL * 0.16, ey1, tx2, ty2, '#ff3b30', 0.62);
+            addBeam(ex1, ey1, tx2, ty2, '#fff0f0', 0.46);
+            addRing(tx2, ty2, 'rgba(255,60,48,.95)', CELL * 1.25, 0.75);
+            addRing(tx2, ty2, 'rgba(255,214,214,.9)', CELL * 0.7, 0.55);
+            addSparks(tx2, ty2, 20, '#ff5a4a', 260);
+            addSparks(tx2, ty2, 8, '#ffe6e6', 190);
+            addShake(5.5);
+            pb.hitstop = 0.05;
+            /* ★ 这里**不写字幕**（用户要求删掉「耀眼红光」）：
+               一道红色的激光本身就是这句话的表达，再压四个字上去，
+               混战里只会挡住别人。技能名字在战报和选中信息里都能看到。 */
+          }
+          if (e.peak && tgt) {            addRing(cellX(tgt), cellY(tgt), 'rgba(255,120,60,.95)', CELL * 1.9, 0.6);
             addRing(cellX(tgt), cellY(tgt), 'rgba(255,214,110,.95)', CELL * 1.1, 0.42);
             addSparks(cellX(tgt), cellY(tgt), 22, '#ffd24d', 300);
             addSparks(cellX(tgt), cellY(tgt), 10, '#ff7a3c', 210);
@@ -710,6 +892,16 @@
             addRipple(cellX(tgt), cellY(tgt), CELL * 0.95);
             addSparks(cellX(tgt), cellY(tgt), 5, '#8fcbe8', 150);
             addShake(1.2);
+          } else if (isNeon) {
+            /* ★ ZMJJKK 的手部激光：从两只手各射一道细的蓝光到目标身上。
+               命中点只有一点点电火花 —— 10 倍攻速下颗粒要小，
+               不然一整片蓝会把别的东西全盖住。 */
+            var hx = cellX(src), hy = cellY(src) + CELL * 0.10;
+            addBeam(hx - CELL * 0.22, hy, cellX(tgt), cellY(tgt), '#3ac0ff', 0.18);
+            addBeam(hx + CELL * 0.22, hy, cellX(tgt), cellY(tgt), '#3ac0ff', 0.18);
+            addBeam(hx, hy, cellX(tgt), cellY(tgt), '#e6f7ff', 0.13);
+            addSparks(cellX(tgt), cellY(tgt), 3, '#8fd8ff', 90);
+            if (e.crit) addShake(2.0);
           } else {
             addSparks(cellX(tgt), cellY(tgt), e.crit ? 9 : 4,
               e.crit ? '#e6b23c' : (e.type === 'skill' ? '#8d7ad4' : '#6b7a70'),
@@ -821,6 +1013,474 @@
         }
         break;
 
+      /* ★★ 陈兴裕「顶赋Jett」：五把飞刀。
+       *
+       *   两种结果长得**完全不一样**（这就是这条技能最要紧的表现）：
+       *     · hit  —— 五把刀扎到目标身上：每把都有一道刀光 + 命中点的火花
+       *     · miss —— 五把刀从目标**旁边**飞过去（角度散开、越过它才消失），
+       *               再喊一句「为什么瞄着不中啊」
+       *   ★ 全空必须画得干净利落：不能有任何命中特效、不能有 0 伤害飘字，
+       *     否则玩家读到的是"打中了但没伤害"（那看起来就是 bug）。
+       *   ★ 五把是一起扔出去的（同一个事件），所以靠 life 错开一点点 ——
+       *     齐刷刷一排像弹幕，一串接着一串才像"刀"。 */
+      case 'jett': {
+        var jSrc = pb.units[e.from], jTgt = pb.units[e.to];
+        if (jSrc && jTgt) {
+          var jn = e.knives || 5;
+          addKnives(cellX(jSrc), cellY(jSrc) - CELL * 0.12,
+                    cellX(jTgt), cellY(jTgt), jn, !!e.hit);
+          if (e.hit) {
+            addRing(cellX(jTgt), cellY(jTgt), 'rgba(220,236,255,.9)', CELL * 0.8, 0.35);
+            addShake(3.5);
+          } else {
+            addSparks(cellX(jTgt), cellY(jTgt), 4, '#9fb0bd', 90);
+            if (e.shout) {
+              addCallout(cellX(jSrc), cellY(jSrc) - (CELL + 10) / 2 - CELL * 0.34,
+                         e.shout, '#8fd8f0');
+            }
+          }
+        }
+        break;
+      }
+
+      /* ★★ 「剧毒火龙果」：每秒一次的绿色毒雾从装备者身上散开。
+       *   ★ 画成"一圈**持续**往外冒的绿雾"而不是一下子炸开：
+       *     它是一条 100% 会一直发生的事（每秒一跳），
+       *     高频特效如果画得很响，整场战斗就只剩这一件装备了。
+       *   ★ 目标名单里的每个人各补一小撮绿点 —— 让"谁在毒里"看得见，
+       *     尤其是**自己**（这颗果子连主人一起毒）。 */
+      case 'poison': {
+        var pw = pb.units[e.who];
+        if (pw) {
+          var pwX = cellX(pw), pwY = cellY(pw);
+          addRing(pwX, pwY, 'rgba(120,220,110,.55)',
+                  CELL * ((e.radius || 1) * 2 + 1) * 0.42, 0.7);
+          addSparks(pwX, pwY, 6, '#8fe07a', 90);
+        }
+        for (var pz = 0; e.targets && pz < e.targets.length; pz++) {
+          var pv2 = pb.units[e.targets[pz]];
+          if (pv2) addSparks(cellX(pv2), cellY(pv2), 3, '#6fbf5a', 70);
+        }
+        break;
+      }
+
+      /* ★★ 刘浩文「手机大王」：40 部手机一条事件带出来，渲染层按顺序撒出去。
+       *   ★ 目标位置从**当前画面状态**里读（手机飞向"它现在站的地方"）——
+       *     事件里只带 uid，坐标由渲染层自己查，和别的特效一致。 */
+      case 'phones': {
+        var phu = pb.units[e.from];
+        if (phu) {
+          var pts = [];
+          for (var qi = 0; qi < e.targets.length; qi++) {
+            var qu = pb.units[e.targets[qi]];
+            if (!qu) continue;
+            pts.push({ x: cellX(qu), y: cellY(qu) });
+          }
+          if (pts.length) {
+            addPhones(cellX(phu), cellY(phu) - CELL * 0.10, pts, !!e.boom);
+            addRing(cellX(phu), cellY(phu), 'rgba(216,162,74,.85)', CELL * 1.1, 0.5);
+            addSparks(cellX(phu), cellY(phu), 10, '#ffe0a0', 170);
+            addCallout(cellX(phu), cellY(phu) - (CELL + 10) / 2 - CELL * 0.34,
+                       '手机大王 ×' + pts.length, '#d8a24a');
+            addShake(7);
+          }
+        }
+        break;
+      }
+
+      /* ★ 3 星「三星手机」：每部手机命中后的那一下爆炸。
+       *   画成一圈**金白色的爆环 + 方形的碎片**（碎屏），
+       *   和 ZMJJKK 的蓝色激光、钟离的土黄陨石都分得开。 */
+      case 'phoneBoom': {
+        var pbu = pb.units[e.from];
+        var bx3 = e.c * PITCH + CELL / 2, by3 = e.r * PITCH + CELL / 2;
+        var bRad3 = CELL * ((e.radius || 1) * 2 + 1);
+        addRing(bx3, by3, 'rgba(255,217,138,.95)', bRad3 * 0.52, 0.42);
+        addRing(bx3, by3, 'rgba(255,255,255,.9)', bRad3 * 0.3, 0.28);
+        addSparks(bx3, by3, 10, '#ffd98a', 210);
+        addSparks(bx3, by3, 6, '#fff2cf', 160);
+        if (pbu) addSparks(cellX(pbu), cellY(pbu), 3, '#ffd98a', 90);
+        addShake(4);
+        break;
+      }
+
+      /* ★★ ZMJJKK「霓虹激光」：开大的那一刻。
+       *
+       *   蓝色的爆环 + 一层"电流罩" + 徽章「🔫×10」——
+       *   这 4 秒里它射出的每一发都是手部激光（见 attack 分支里的蓝色光束），
+       *   所以开场必须有一次明确的"我变了"。
+       *   ★ 3 星会带 `shout`（「你们的王回来了！」），2 星则是闪电球先落地。 */
+      case 'neon': {
+        var nu = pb.units[e.who];
+        if (nu) {
+          nu.neonUntil = e.until;
+          nu.neonAsMul = e.asMul;
+          nu.neonMul = e.mul;
+          nu.neonFlash = 1;
+          var nx = cellX(nu), ny = cellY(nu);
+          addRing(nx, ny, 'rgba(58,192,255,.95)', CELL * 1.6, 0.7);
+          addRing(nx, ny, 'rgba(200,240,255,.9)', CELL * 1.0, 0.5);
+          addSparks(nx, ny, 24, '#3ac0ff', 300);
+          addSparks(nx, ny, 10, '#e6f7ff', 200);
+          addShake(8);
+          pb.hitstop = 0.06;
+          if (e.shout) {
+            addCallout(nx, ny - (CELL + 10) / 2 - CELL * 0.34, e.shout, '#3ac0ff');
+          } else {
+            addCallout(nx, ny - (CELL + 10) / 2 - CELL * 0.34, '霓虹激光', '#7fd8ff');
+          }
+        }
+        break;
+      }
+
+      /* ★★ ZMJJKK 2 星「闪电乒乓」：一个电球砸下来，3×3 里的敌人一起麻 3.5 秒。 */
+      case 'pingpong': {
+        var px2 = e.c * PITCH + CELL / 2, py2 = e.r * PITCH + CELL / 2;
+        var pRad = CELL * ((e.radius || 1) * 2 + 1);
+        addRing(px2, py2, 'rgba(255,240,140,.95)', pRad * 0.6, 0.6);
+        addRing(px2, py2, 'rgba(140,220,255,.95)', pRad * 0.38, 0.45);
+        addSparks(px2, py2, 22, '#ffe98a', 300);
+        addSparks(px2, py2, 14, '#8fd8ff', 240);
+        addCallout(px2, py2 - ((CELL + 10) / 2 + CELL * 0.4), '闪电乒乓', '#ffe98a');
+        addShake(9);
+        pb.hitstop = 0.05;
+        break;
+      }
+
+      /* ★★ ZMJJKK「霓虹激光」期间的击杀：**时间重置回 4 秒** + 一句台词。
+       *   ★ 台词按双方星级分三句（低 / 高 / 同），都从事件里带过来 ——
+       *     渲染层不需要认识 ZMJJKK。
+       *   ★ 还要画一条"续命"的蓝色脉冲：玩家得看出"这一杀让激光又满了"。 */
+      case 'neonKill': {
+        var nk = pb.units[e.who];
+        if (nk) {
+          nk.neonUntil = e.until;
+          nk.neonResets = e.resets;
+          nk.neonFlash = 1;
+          var nkx = cellX(nk), nky = cellY(nk);
+          addRing(nkx, nky, 'rgba(58,192,255,.9)', CELL * 1.2, 0.5);
+          addSparks(nkx, nky, 10, '#3ac0ff', 180);
+          if (e.shout) {
+            nk.neonShout = e.shout;
+            nk.neonShoutFlash = 1;
+            addCallout(nkx, nky - (CELL + 10) / 2 - CELL * 0.34, e.shout, '#3ac0ff');
+          }
+        }
+        break;
+      }
+
+      /* ★ ZMJJKK「世一决」：队里又倒下一个人 → 它更狠一点（🗡+20%）。 */
+      case 'shiai': {
+        var su2 = pb.units[e.who];
+        if (su2) {
+          su2.deathBonus = e.bonus;
+          su2.deathFlash = 1;
+          addRing(cellX(su2), cellY(su2), 'rgba(255,120,120,.85)', CELL * 0.9, 0.45);
+          addSparks(cellX(su2), cellY(su2), 8, '#ff8a8a', 150);
+        }
+        break;
+      }
+
+      /* ★★ 蓝色大肥鱼「吃白饭」四件套：
+       *     ① eatrice  —— 技能起手：嘴里亮一下（下一口翻倍）
+       *     ② eat      —— **把它吞了**：目标被整个吃掉（黑屏一样的一口）
+       *     ③ token    —— 全队各加一层 TOKEN（每个人头上飘一枚 🍚）
+       *     ④ tokenUsed/tokenMana —— 花掉一层 / 大肥鱼因此回蓝
+       *   ★ "吃掉"必须画得比普通击杀**更狠**：它是直接处死，
+       *     所以用"整张卡被吸进鱼嘴里"的演出（一圈向内收的黑环），
+       *     而不是普通的死亡特效。 */
+      case 'chargeUp': {
+        var cu2 = pb.units[e.who];
+        if (cu2) {
+          cu2.nextDmgMul = e.mul;
+          var cux = cellX(cu2), cuy = cellY(cu2);
+          addRing(cux, cuy, 'rgba(120,200,255,.9)', CELL * 0.8, 0.5);
+          addSparks(cux, cuy, 8, '#9fd8ff', 150);
+          addNum(cux, cuy - CELL * 0.46, '下一口 ×' + e.mul, 'eatReady', 0.9);
+        }
+        break;
+      }
+      case 'eat': {
+        var eu2 = pb.units[e.to], ef2 = pb.units[e.from];
+        if (eu2) {
+          eu2.alive = false;
+          eu2.hp = 0;
+          eu2.shield = 0;
+          var eux = cellX(eu2), euy = cellY(eu2);
+          addRing(eux, euy, 'rgba(8,18,30,.92)', CELL * 1.6, 0.55);
+          addRing(eux, euy, 'rgba(120,200,255,.9)', CELL * 0.9, 0.45);
+          addSparks(eux, euy, 24, '#1a2a3a', 300);
+          addSparks(eux, euy, 10, '#9fd8ff', 200);
+          addCallout(eux, euy - (CELL + 10) / 2 - CELL * 0.34, '吃掉了！', '#7fd0ff');
+          addShake(10);
+          pb.hitstop = 0.07;
+        }
+        if (ef2) {
+          ef2.flashEat = 1;
+          addRing(cellX(ef2), cellY(ef2), 'rgba(255,236,180,.9)', CELL * 1.2, 0.55);
+        }
+        break;
+      }
+      case 'token': {
+        /* 全队一人一枚：只给**自己这边**现在还活着的人飘字 */
+        for (var tk in pb.units) {
+          var tu = pb.units[tk];
+          if (!tu.alive || tu.side !== e.side) continue;
+          tu.tokenStacks = (tu.tokenStacks || 0) + 1;
+          tu.flashToken = 1;
+          addSparks(cellX(tu), cellY(tu), 5, '#ffe9a8', 120);
+        }
+        var tou = pb.units[e.from];
+        if (tou) {
+          addCallout(cellX(tou), cellY(tou) - (CELL + 10) / 2 - CELL * 0.34,
+                     'TOKEN ×1', '#ffd98a');
+        }
+        break;
+      }
+      case 'tokenUsed': {
+        var uu2 = pb.units[e.who];
+        if (uu2) {
+          uu2.tokenStacks = Math.max(0, (uu2.tokenStacks || 0) - 1);
+          uu2.flashToken = 1;
+          addNum(cellX(uu2), cellY(uu2) - CELL * 0.46, 'TOKEN ×' + e.mul,
+                 'tokenUse', 0.92);
+        }
+        break;
+      }
+      case 'tokenMana': {
+        var mu3 = pb.units[e.who];
+        if (mu3) {
+          addSparks(cellX(mu3), cellY(mu3), 6, '#8fd0ff', 130);
+        }
+        break;
+      }
+      case 'consume': {
+        var co = pb.units[e.who];
+        if (co) {
+          co.nextDmgMul = 1;
+          co.flashEat = 1;
+          addSparks(cellX(co), cellY(co), 7, '#9fd8ff', 150);
+          addNum(cellX(co), cellY(co) - CELL * 0.46, '×' + e.mul, 'eatReady', 1.0);
+        }
+        break;
+      }
+
+      /* ★★ 鹰佐 2 星「霸体」：挨了一下控制，金色的光一闪，人立刻能动、还免控 5 秒。
+       *
+       *   金色是**唯一**的颜色选择：眩晕是金色环 + 哈哈、捆住是琥珀色、
+       *   冰冻是冰蓝、石化是土灰 —— 只有"解控"这件事要用**亮的金**来说，
+       *   因为它是"我没事"而不是"我被打中了"。
+       *   ★ `passive: true` 的那一条是"免控窗口里又挨了一下控制"：
+       *     同一个金色，但不重置冷却（引擎那边分的），画面上不额外弹字幕。 */
+      case 'bati': {
+        var ba = pb.units[e.who];
+        if (ba) {
+          ba.immuneUntil = e.immuneUntil;
+          ba.batiCdUntil = e.cdUntil;
+          ba.batiFlash = 1;
+          var bax = cellX(ba), bay = cellY(ba);
+          addRing(bax, bay, 'rgba(255,214,90,.95)', CELL * 1.5, 0.6);
+          addRing(bax, bay, 'rgba(255,246,200,.9)', CELL * 0.9, 0.42);
+          addSparks(bax, bay, 20, '#ffd24d', 240);
+          addShake(6);
+          if (!e.passive) {
+            addCallout(bax, bay - (CELL + 10) / 2 - CELL * 0.34, '霸体', '#ffd24d');
+          }
+        }
+        break;
+      }
+
+      /* ★★ 鹰佐 3 星「天照」：黑色的火落在 3×3 上。
+       *
+       *   · 落点那一格先炸一圈**黑红**的冲击（黑火是暗的，所以描边要亮一点，
+       *     否则在深色地面上根本看不见）
+       *   · 被点着的人身上各起一撮黑焰 —— 之后每秒一跳（laserburn 事件）
+       *   ★ 黑火的颜色和数据里的"黑色火焰"对齐：不要用橙红，
+       *     那是祖国人那把火，两把火必须一眼分得开。 */
+      case 'amaterasu': {
+        var ax2 = e.c * PITCH + CELL / 2, ay2 = e.r * PITCH + CELL / 2;
+        var aRad = CELL * ((e.radius || 1) * 2 + 1);
+        addRing(ax2, ay2, 'rgba(20,10,26,.85)', aRad * 0.62, 0.75);
+        addRing(ax2, ay2, 'rgba(168,72,220,.95)', aRad * 0.52, 0.6);
+        addRing(ax2, ay2, 'rgba(255,214,255,.85)', aRad * 0.3, 0.4);
+        addSparks(ax2, ay2, 26, '#2a1030', 300);
+        addSparks(ax2, ay2, 14, '#c070f0', 230);
+        addCallout(ax2, ay2 - ((CELL + 10) / 2 + CELL * 0.4), '天照', '#c070f0');
+        addShake(9);
+        pb.hitstop = 0.06;
+        for (var at = 0; e.targets && at < e.targets.length; at++) {
+          var au = pb.units[e.targets[at]];
+          if (au) addSparks(cellX(au), cellY(au), 10, '#1a0a20', 160);
+        }
+        break;
+      }
+
+      /* ★★ 丁真「芝士雪豹」：雪豹咬中的人**攻速移速一起 -40%**、持续 3 秒。
+       *
+       *   这条减速必须有一个**看得见的标记**：它既不改变卡面、也不掉血，
+       *   只是"动得慢、打得慢" —— 而"慢"在混战里是最容易被读成
+       *   "这张卡卡住了 / 我的游戏掉帧了"的一种状态。 */
+      case 'bite': {
+        var bi = pb.units[e.to];
+        if (bi) {
+          bi.biteCut = e.cut;
+          bi.biteUntil = e.until;
+          bi.biteFlash = 1;
+          var bix = cellX(bi), biy = cellY(bi);
+          addRing(bix, biy, 'rgba(150,220,190,.9)', CELL * 0.7, 0.45);
+          addSparks(bix, biy, 6, '#9ce0b8', 130);
+          addNum(bix, biy - CELL * 0.46, '-' + Math.round(e.cut * 100) + '%',
+                 'biteSlow', 0.9);
+        }
+        break;
+      }
+
+      /* ★★ 丁真 3 星「小马珍珠」：小马被打死的那一瞬间。
+       *
+       *   两件事必须同时被看见：丁真**喊了一句**「珍珠死了」，
+       *   以及他**变强了**（魔力获取 +70%）——
+       *   只画一个爆环的话，玩家读到的是"他被打了"，
+       *   而不是"他的马死了、他要开始报复了"。 */
+      case 'ponyDead': {
+        var pd = pb.units[e.who];
+        if (pd) {
+          pd.ponyDead = true;
+          pd.ponyShield = 0;
+          var pdx = cellX(pd), pdy = cellY(pd);
+          addRing(pdx, pdy, 'rgba(255,90,70,.95)', CELL * 1.5, 0.7);
+          addRing(pdx, pdy, 'rgba(255,214,120,.9)', CELL * 1.0, 0.5);
+          addSparks(pdx, pdy, 22, '#ff7a5a', 280);
+          addShake(9);
+          if (e.shout) {
+            addCallout(pdx, pdy - (CELL + 10) / 2 - CELL * 0.34, e.shout, '#ff6a4a');
+          }
+          /* ★ 「狂暴」那一行小字：它是这一整套被动的收益，
+             不写出来的话"马死了"看起来纯粹是坏事。 */
+          addNum(pdx, pdy + CELL * 0.30, '狂暴 魔力+' +
+                 Math.round((e.manaMul - 1) * 100) + '%', 'ponyRage', 0.95);
+        }
+        break;
+      }
+
+      /* 小马落地：开局那一层护盾，画一圈马色的光 + 一枚 🐴 徽章。 */
+      case 'pony': {
+        var po = pb.units[e.who];
+        if (po) {
+          po.ponyOn = true;
+          po.ponyShield = e.shield;
+          addRing(cellX(po), cellY(po), 'rgba(255,214,140,.9)', CELL * 0.9, 0.6);
+          addSparks(cellX(po), cellY(po), 12, '#ffe0a0', 170);
+        }
+        break;
+      }
+
+      /* ★★ 钟离 2 星「玉璋护盾」：被罩住的队友**免疫控制、少受 20% 伤害**。
+       *
+       *   `what` 分两种，表现完全相反：
+       *     · 'grant' —— 刚把守护挂上（跟着套盾一起来）：金色的环 + ✨
+       *     · 别的值（stun / freeze / petrify / root / knockback）——
+       *       **挡下了一次控制**：这时如果什么都不画，玩家看到的只是
+       *       "对面的技能好像没生效"，那和 bug 长得一模一样。
+       *       所以弹一行「免疫」，再把守护环亮一次。
+       *   ★ 卡面上那枚 💠 徽章是常驻的（见 drawUnit / stateBadges），
+       *     只要盾还在就一直挂着 —— 玩家据此知道"现在还有守护"。 */
+      /* ★★ 祖国人 2 星「灼烧」：激光把目标点着了。
+       *
+       *   着火是一个**持续 5 秒**的状态，而这一下特效是瞬时的 ——
+       *   所以除了当下的火环，卡面上还会挂一枚 🔥 徽章（带剩余秒数）。
+       *   没有徽章的话，玩家只会看到"它莫名其妙每秒掉一截血"。
+       *   ★ 橙色而不是红色：红色已经是"暴击/重伤"的颜色，
+       *     而这里要表达的是"它在烧"。 */
+      case 'ignite': {
+        var iu = pb.units[e.to];
+        if (iu) {
+          iu.burnCurPct = e.pct;
+          iu.burnCurUntil = e.until;
+          iu.burnFreezeImmune = !!e.freezeImmune;
+          iu.burnCurFlash = 1;
+          var ix = cellX(iu), iy = cellY(iu);
+          /* ★ 两把火的**开场特效**也要分开画：
+             · 祖国人那把是橙色（"烧起来了"）
+             · 天照是黑紫 + 一圈暗环（"天照"本身就是黑火）
+             否则玩家在混战里分不清身上烧的是哪一把。 */
+          if (e.reason === 'amaterasu' || e.eternal) {
+            addRing(ix, iy, 'rgba(20,10,26,.9)', CELL * 1.1, 0.6);
+            addRing(ix, iy, 'rgba(168,72,220,.9)', CELL * 0.8, 0.5);
+            addSparks(ix, iy, 16, '#2a1030', 220);
+            addSparks(ix, iy, 8, '#c070f0', 170);
+            addCallout(ix, iy - (CELL + 10) / 2 - CELL * 0.34, '天照', '#c070f0');
+          } else {
+            addRing(ix, iy, 'rgba(255,140,50,.95)', CELL * 1.05, 0.55);
+            addSparks(ix, iy, 14, '#ff9a3c', 210);
+            addCallout(ix, iy - (CELL + 10) / 2 - CELL * 0.34, '灼烧', '#ff8a3c');
+          }
+        }
+        break;
+      }
+
+      /* 灼烧的每秒一跳：一小撮火苗 + 一个独立的伤害数字（reason = burn）。
+         ★ 数字走 addNum 而不是弹幕：玩家要看清"每秒掉多少"，
+           这 5 跳的数字本身就是"5% 当前生命"这句话的证据。 */
+      case 'laserburn': {
+        var lu2 = pb.units[e.who];
+        if (lu2) {
+          lu2.hp = e.hpAfter;
+          lu2.burnCurFlash = 1;
+          addSparks(cellX(lu2), cellY(lu2), 3, '#ff9a3c', 90);
+          addNum(cellX(lu2), cellY(lu2) - CELL * 0.30, String(Math.round(e.amount)),
+                 'burn', 0.85);
+        }
+        break;
+      }
+
+      /* 被灼烧的人免疫冰冻 —— 挡下来必须看得见，
+         否则玩家只看到"冰冻技能没生效"，那和 bug 长得一模一样。 */
+      case 'immune': {
+        var mu2 = pb.units[e.who];
+        if (mu2) {
+          var mx2 = cellX(mu2), my2 = cellY(mu2);
+          addRing(mx2, my2, 'rgba(255,150,60,.95)', CELL * 0.95, 0.42);
+          addSparks(mx2, my2, 8, '#ffb066', 150);
+          addCallout(mx2, my2 - (CELL + 10) / 2 - CELL * 0.34, '免疫冰冻', '#ff8a3c');
+        }
+        break;
+      }
+
+      case 'ward': {        var wu = pb.units[e.who];
+        if (wu) {
+          wu.wardFlash = 1;
+          var wx = cellX(wu), wy = cellY(wu);
+          if (e.what === 'grant') {
+            addRing(wx, wy, 'rgba(240,196,90,.9)', CELL * 0.8, 0.5);
+            addSparks(wx, wy, 10, '#ffe9a8', 170);
+          } else {
+            addRing(wx, wy, 'rgba(255,236,160,.95)', CELL * 0.95, 0.4);
+            addSparks(wx, wy, 8, '#fff2c4', 150);
+            addCallout(wx, wy - (CELL + 10) / 2 - CELL * 0.34, '免疫', '#ffd24d');
+          }
+        }
+        break;
+      }
+
+      /* ★★ 钟离 3 星「天星」：一颗陨石砸下来。
+       *
+       *   三件事按时间顺序演：先在天上画一个拖着火的石头往下坠（0.35 秒），
+       *   落地那一下是土黄的冲击环 + 碎渣 + 屏幕一震，最后原地留一圈裂纹。
+       *   ★ 落点和半径都从事件里读（e.r / e.c / e.radius），渲染层不自己算 ——
+       *     "砸哪里"是规则层的决定，画面只是把它画出来。
+       *   ★ 陨石**从上方斜着砸进来**，不是凭空在格子里炸一下：
+       *     那是"陨石"和"手雷"的区别。 */
+      case 'meteor': {
+        var mx = e.c * PITCH + CELL / 2, my = e.r * PITCH + CELL / 2;
+        addMeteor(mx, my, CELL * (e.radius * 2 + 1), e.dur);
+        addShake(14);
+        addRing(mx, my, 'rgba(206,164,86,.95)', CELL * (e.radius * 2 + 1) * 0.62, 0.6);
+        addRing(mx, my, 'rgba(255,226,160,.85)', CELL * (e.radius * 2 + 1) * 0.36, 0.4);
+        addSparks(mx, my, 26, '#c9a86a', 260);
+        addSparks(mx, my, 12, '#ffe0a0', 200);
+        break;
+      }
+
       /* ★ 荣誉的蓄力：两只眼睛喷金色激光。
        *
        *   眼睛的位置是**估**出来的 —— 立绘是一张方形照片，没有眼睛坐标。
@@ -886,10 +1546,14 @@
             ou2.ocOverFlash = 1;
             addRing(cellX(ou2), cellY(ou2), 'rgba(255,90,70,.95)', CELL * 1.5, 0.55);
             addSparks(cellX(ou2), cellY(ou2), 18, '#ff6a4a', 260);
-            /* ★ 喊的是**状态名**「狂暴」，不是被动名。
-               这一下之后玩家要认的是"他现在在烧自己"，所以喊状态。 */
+            /* ★★ 喊的是**一句台词**「你跑不过我你信吗」——
+               这是用户指定的（和被动名「你快不过我你信吗」故意差一个字：
+               那句是名字，这句是他真的喊出来的话）。
+               ★ 这一段之前喊的是状态名「狂暴！」：状态名对玩家没有信息量
+                 （卡片上已经有一枚变红的 🔥 徽章在说这件事），
+                 而一句台词能让人记住"是谁、什么时候开始不要命的"。 */
             addCallout(cellX(ou2), cellY(ou2) - (CELL + 10) / 2 - CELL * 0.34,
-                       ou2.ocBerserkName + '！', '#ff6a4a');
+                       ou2.ocBerserkShout || '你跑不过我你信吗', '#ff6a4a');
             addShake(8);
             pb.hitstop = 0.08;
           }
@@ -1376,7 +2040,24 @@
            *   ★ 但**只有满层那个清空冰棍层数** —— 技能冰冻和冰棍是两条规则，
            *     顺手清一下的话，"3 星巧乐兹 + 冰冰冰"这种组合会把层数白吃掉。 */
           var isFreeze = (e.reason === 'freeze' || e.reason === 'frost');
-          if (isFreeze) {
+          var isPetrify = (e.reason === 'petrify');
+          if (isPetrify) {
+            /* ★★ 钟离「天星」的石化：**石头**，不是闪电也不是冰块。
+             *   一套完全不同的三件套 ——
+             *     ① 一圈土黄的裂纹环（砸下来的那一格）
+             *     ② 灰褐色的碎渣（石头崩起来）
+             *     ③ 头顶一个「石化」字样 + 卡片整体压成石灰色
+             *   ★ `petrifyUntil` 记在卡片上，所以这 3 秒里**一直**是灰的 ——
+             *     "现在动不了"和"刚刚被砸了一下"是两件事，
+             *     只放一串粒子的话，玩家看不出它还在僵着。
+             */
+            u.petrifyUntil = e.until;
+            u.petrifyFlash = 1;
+            addRing(cellX(u), cellY(u), 'rgba(176,148,96,.95)', CELL * 1.1, 0.55);
+            addSparks(cellX(u), cellY(u), 14, '#b08a52', 200);
+            addCallout(cellX(u), cellY(u) - (CELL + 10) / 2 - CELL * 0.34,
+                       '石化', '#c9a86a');
+          } else if (isFreeze) {
             if (e.reason === 'freeze') u.chill = 0;   // 层数被清空
             addRing(cellX(u), cellY(u), 'rgba(150,220,255,.95)', CELL * 1.15, 0.55);
             addRing(cellX(u), cellY(u), 'rgba(255,255,255,.9)', CELL * 0.7, 0.4);
@@ -1582,6 +2263,15 @@
       if (u.ocFlash > 0) u.ocFlash = Math.max(0, u.ocFlash - dt * 3.2);
       if (u.asBuffFlash > 0) u.asBuffFlash = Math.max(0, u.asBuffFlash - dt * 3.2);
       if (u.rootFlash > 0) u.rootFlash = Math.max(0, u.rootFlash - dt * 3.2);
+      if (u.wardFlash > 0) u.wardFlash = Math.max(0, u.wardFlash - dt * 3.2);
+      if (u.petrifyFlash > 0) u.petrifyFlash = Math.max(0, u.petrifyFlash - dt * 3.2);
+      if (u.burnCurFlash > 0) u.burnCurFlash = Math.max(0, u.burnCurFlash - dt * 3.2);
+      if (u.biteFlash > 0) u.biteFlash = Math.max(0, u.biteFlash - dt * 3.2);
+      if (u.batiFlash > 0) u.batiFlash = Math.max(0, u.batiFlash - dt * 3.2);
+      if (u.flashEat > 0) u.flashEat = Math.max(0, u.flashEat - dt * 3.2);
+      if (u.flashToken > 0) u.flashToken = Math.max(0, u.flashToken - dt * 3.2);
+      if (u.neonFlash > 0) u.neonFlash = Math.max(0, u.neonFlash - dt * 3.2);
+      if (u.deathFlash > 0) u.deathFlash = Math.max(0, u.deathFlash - dt * 3.2);
       if (u.ocBurnFlash > 0) u.ocBurnFlash = Math.max(0, u.ocBurnFlash - dt * 3.2);
       if (u.ocOverFlash > 0) u.ocOverFlash = Math.max(0, u.ocOverFlash - dt * 3.2);
       if (u.burnFlash > 0) u.burnFlash = Math.max(0, u.burnFlash - dt * 3.2);
@@ -1631,6 +2321,16 @@
         var cdFrac = (state.t - u.cdT) / u.cdSeconds;
         u.mana = Math.max(0, Math.min(1, cdFrac)) * u.maxMana;
       }
+
+      /* ★★ Dank1ng「端着狙击枪」的**状态变化**要在每帧这里抓：
+       *   架枪的条件（充能过半）是一个**连续量**，靠事件是抓不到的
+       *   （法力每次普攻涨一点、挨打也涨，没有"刚好过半"那条事件）。
+       *   ★ 所以这里只做一件事：检测"上一帧没架、这一帧架上了"，
+       *     给一下高光。枪本身画在 drawUnit 里（那里才拿得到卡片坐标）。 */
+      var shouldAim = !!(u.killSkull && u.maxMana > 0 && u.mana > u.maxMana * 0.5);
+      if (shouldAim && !u.rifleUp) u.rifleFlash = 1;
+      u.rifleUp = shouldAim;
+      if (u.rifleFlash > 0) u.rifleFlash = Math.max(0, u.rifleFlash - dt * 2.2);
     }
 
     for (var f = state.flashes.length - 1; f >= 0; f--) {
@@ -1802,6 +2502,19 @@
     guardClang: { fill: '#c8f6ff', edge: '#1d5f86', size: 0.88 },
     // 超频自毁：红得刺眼，和"挨打"的白/黄数字一眼分得开
     selfBurn: { fill: '#ff8a6a', edge: '#6b1d10', size: 1.05 },
+    /* ★ 祖国人「灼烧」的每秒一跳：橙色、字号偏小 ——
+       它是"持续掉血"的节奏音，不该盖过激光那一下的高额伤害数字。 */
+    burn: { fill: '#ffb066', edge: '#7a3a08', size: 0.88 },
+    /* ★ 丁真「芝士雪豹」的减速：青绿色 -40%，和灼烧的橙色分得开 */
+    biteSlow: { fill: '#9ce0b8', edge: '#1d5f45', size: 0.90 },
+    /* ★ 小马死后的狂暴提示：金色、比暴击还大一点（它是这一局的转折点） */
+    ponyRage: { fill: '#ffd98a', edge: '#7a3a08', size: 1.05 },
+    /* ★ 大肥鱼「下一口翻倍」：水蓝色 —— 和暴击的金、灼烧的橙都分得开 */
+    eatReady: { fill: '#9fd8ff', edge: '#0d3a55', size: 0.95 },
+    /* ★ TOKEN 被花掉：米白色（饭的颜色） */
+    tokenUse: { fill: '#ffe9a8', edge: '#6b4a10', size: 0.95 },
+    /* ★ 「剧毒火龙果」每秒一跳：草绿色、字号偏小（高频，不抢戏） */
+    poison: { fill: '#a8e88a', edge: '#265c18', size: 0.86 },
     /* ★ 羊帆「羊巅峰」的 20 倍一击。
        ★★ 字号必须**明显大过暴击**（1.35）—— 它是这个角色一整局唯一的高光，
           和"偶尔一下打得好"完全不是一个量级。1.9 倍已经接近血条高度了。 */
@@ -2040,6 +2753,136 @@
         ctx.strokeStyle = 'rgba(255,255,255,.9)';
         ctx.lineWidth = Math.max(1.5, 4 * (1 - p));
         ctx.beginPath(); ctx.arc(e.x, e.y, e.r1 * (0.3 + 0.9 * bp), 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      } else if (e.type === 'phoneFly') {
+        /* 一部飞出去的小手机：一个圆角小方块 + 一条淡淡的拖尾。
+           ★ p 夹到 0~1：后几部的 age 是负数（错开出发时间），
+             不夹的话它们会出现在画面外或者算成 NaN。
+           ★ 手机自己**转着飞**（角度跟着 p 变）—— 直线飞出去的小方块
+             看起来像子弹，转起来才像"被扔出去的手机"。 */
+        var phP = Math.max(0, Math.min(1, p));
+        var phX = e.x1 + (e.x2 - e.x1) * phP;
+        var phY = e.y1 + (e.y2 - e.y1) * phP - Math.sin(phP * Math.PI) * CELL * 0.35;
+        var phW = CELL * 0.16, phH = CELL * 0.26;
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        // 拖尾
+        ctx.strokeStyle = 'rgba(216,162,74,.5)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(e.x1 + (e.x2 - e.x1) * Math.max(0, phP - 0.22),
+                   e.y1 + (e.y2 - e.y1) * Math.max(0, phP - 0.22));
+        ctx.lineTo(phX, phY);
+        ctx.stroke();
+        ctx.translate(phX, phY);
+        ctx.rotate(phP * 7);
+        ctx.fillStyle = '#2b2f36';
+        roundRect(-phW / 2, -phH / 2, phW, phH, 2.5);
+        ctx.fill();
+        ctx.strokeStyle = e.boom ? '#ffd98a' : '#8fa0b4';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        // 屏幕：3 星是"三星手机"，屏幕亮金色
+        ctx.fillStyle = e.boom ? 'rgba(255,217,138,.95)' : 'rgba(140,200,255,.8)';
+        roundRect(-phW * 0.34, -phH * 0.30, phW * 0.68, phH * 0.52, 1.5);
+        ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'knifeFly') {
+        /* 陈兴裕的五把飞刀：从出手者飞向落点的一小片刀影。
+           ★ p 会被夹到 0~1 —— 后几把刀的 age 是负数（错开出发时间），
+             不夹的话它们的坐标会飞到画面外面去。 */
+        var knP = Math.max(0, Math.min(1, p));
+        var knX = e.x1 + (e.x2 - e.x1) * knP;
+        var knY = e.y1 + (e.y2 - e.y1) * knP - Math.sin(knP * Math.PI) * CELL * 0.22;
+        var knAng = Math.atan2(e.y2 - e.y1, e.x2 - e.x1);
+        var knLen = CELL * 0.34;
+        ctx.save();
+        ctx.globalAlpha = e.hit ? (1 - knP * 0.25) : (0.85 - knP * 0.45);
+        ctx.translate(knX, knY);
+        ctx.rotate(knAng);
+        // 拖尾
+        ctx.strokeStyle = e.hit ? 'rgba(220,236,255,.85)' : 'rgba(150,166,180,.7)';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(-knLen * (e.hit ? 2.4 : 1.6), 0);
+        ctx.lineTo(0, 0);
+        ctx.stroke();
+        // 刀身（一个细长的三角）
+        ctx.fillStyle = e.hit ? '#e8f2ff' : '#aab6c2';
+        ctx.beginPath();
+        ctx.moveTo(knLen, 0);
+        ctx.lineTo(-knLen * 0.25, -knLen * 0.20);
+        ctx.lineTo(-knLen * 0.25, knLen * 0.20);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else if (e.type === 'meteor') {
+        /* 斜着砸下来的陨石：
+             ① 前 55% 的时间里，石头从左上高空冲向落点（带一条火尾）
+             ② 之后原地炸开：土黄的尘环 + 一圈裂纹
+           ★ 石头本体画成一个**多边形的深色石块**，不是圆球 ——
+             圆球看着像火球术，多边形才像"一块石头"。 */
+        var mp = p;
+        var landAt = 0.55;
+        ctx.save();
+        if (mp < landAt) {
+          var lp = mp / landAt;                        // 0 → 1
+          var mxx = e.x - e.size * 1.1 * (1 - lp);
+          var myy = e.y - e.size * 2.2 * (1 - lp);
+          var mrad = e.size * (0.10 + 0.06 * lp);
+          // 火尾
+          ctx.globalAlpha = 0.5 * (0.4 + 0.6 * lp);
+          var tg = ctx.createLinearGradient(mxx, myy, mxx + e.size * 0.5, myy + e.size * 1.0);
+          tg.addColorStop(0, 'rgba(255,196,90,.9)');
+          tg.addColorStop(1, 'rgba(200,80,20,0)');
+          ctx.strokeStyle = tg;
+          ctx.lineCap = 'round';
+          ctx.lineWidth = mrad * 1.5;
+          ctx.beginPath();
+          ctx.moveTo(mxx, myy);
+          ctx.lineTo(mxx + e.size * 0.55, myy + e.size * 1.1);
+          ctx.stroke();
+          // 石头
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#6f5a44';
+          ctx.beginPath();
+          for (var k = 0; k < 7; k++) {
+            var ang = k / 7 * Math.PI * 2 + lp * 2.4;
+            var rr2 = mrad * (k % 2 ? 0.78 : 1);
+            var px2 = mxx + Math.cos(ang) * rr2, py2 = myy + Math.sin(ang) * rr2;
+            if (k === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255,214,140,.85)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else {
+          var fadep = (mp - landAt) / (1 - landAt);    // 0 → 1
+          var fadeA = 1 - fadep;
+          // 尘环
+          ctx.globalAlpha = fadeA * 0.75;
+          ctx.strokeStyle = 'rgba(196,164,106,.95)';
+          ctx.lineWidth = Math.max(2, 7 * fadeA);
+          ctx.beginPath();
+          ctx.ellipse(e.x, e.y + e.size * 0.10,
+                      e.size * (0.30 + 0.42 * fadep), e.size * (0.12 + 0.18 * fadep),
+                      0, 0, Math.PI * 2);
+          ctx.stroke();
+          // 裂纹
+          ctx.globalAlpha = fadeA * 0.6;
+          ctx.strokeStyle = 'rgba(120,92,58,.9)';
+          ctx.lineWidth = 2.5;
+          for (var c2 = 0; c2 < 6; c2++) {
+            var a2 = c2 / 6 * Math.PI * 2 + 0.4;
+            ctx.beginPath();
+            ctx.moveTo(e.x + Math.cos(a2) * e.size * 0.12,
+                       e.y + e.size * 0.10 + Math.sin(a2) * e.size * 0.05);
+            ctx.lineTo(e.x + Math.cos(a2) * e.size * (0.34 + 0.22 * fadep),
+                       e.y + e.size * 0.10 + Math.sin(a2) * e.size * (0.14 + 0.10 * fadep));
+            ctx.stroke();
+          }
+        }
         ctx.restore();
       } else if (e.type === 'pillar') {
         /* 复活光柱：一道从地面冲上去的金色光 + 底部一圈尘环。 */
@@ -2470,6 +3313,91 @@
     }
   }
 
+  /**
+   * ★★ Dank1ng 充能过半时「端着狙击枪」的那把枪。
+   *
+   *   需求：充能（法力）超过一半之后，他身上要有一把端着的狙击枪。
+   *
+   *   ★ 为什么值得画一个形状、而不是挂一枚徽章：
+   *     他 2 星起开局满能量、3 星能量回复翻倍，法力条几乎是**一直满的**——
+   *     "他什么时候快开镜了"是这个角色唯一的节奏点，
+   *     而法力条在混战里太小、太容易被忽略。一把枪横在卡面上，
+   *     扫一眼就知道"这人已经架好了"。
+   *   ★ 画法是**局部坐标 + 旋转**：先把枪按水平方向画好（枪管/机匣/枪托/
+   *     瞄具/弹匣/高光），再整体转 -25°。直接算斜着的六个多边形要难读得多。
+   *   ★ 颜色用冷灰 + 一道白高光：底色是花花绿绿的立绘，
+   *     只有"低饱和 + 高对比"的剪影才在任何一张脸上都看得清。
+   *   ★ `t` 用来做那一丁点呼吸（瞄准时的轻微晃动），静止的枪看着像贴纸。
+   */
+  function drawRifle(cx, cy, L, t) {
+    var s = L / 100;                      // 局部坐标按"长度 100"设计
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-0.44);
+    ctx.scale(s, s);
+    /* 呼吸：±1.2 度的轻微摆动 + 0.6 的上下浮动（"端着"而不是"贴着"） */
+    ctx.rotate(Math.sin(t * 2.1) * 0.021);
+    ctx.translate(0, Math.sin(t * 2.6) * 0.6);
+
+    function box(x, y, w, h, r) {
+      var rr = r === undefined ? 1.5 : r;
+      var x0 = x, y0 = y;
+      ctx.beginPath();
+      ctx.moveTo(x0 + rr, y0);
+      ctx.lineTo(x0 + w - rr, y0);
+      ctx.quadraticCurveTo(x0 + w, y0, x0 + w, y0 + rr);
+      ctx.lineTo(x0 + w, y0 + h - rr);
+      ctx.quadraticCurveTo(x0 + w, y0 + h, x0 + w - rr, y0 + h);
+      ctx.lineTo(x0 + rr, y0 + h);
+      ctx.quadraticCurveTo(x0, y0 + h, x0, y0 + h - rr);
+      ctx.lineTo(x0, y0 + rr);
+      ctx.quadraticCurveTo(x0, y0, x0 + rr, y0);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    var BODY = '#3a4148', DARK = '#232a30', LITE = '#8f9aa6';
+
+    // 枪管（细长，一直伸到画面左边）
+    ctx.fillStyle = DARK;
+    box(-50, -3.2, 52, 6.4, 2);
+    // 枪口制退器
+    ctx.fillStyle = LITE;
+    box(-50, -5.4, 7, 10.8, 2);
+    // 机匣（中段加厚）
+    ctx.fillStyle = BODY;
+    box(-4, -6, 30, 12, 2.5);
+    // 弹匣
+    ctx.fillStyle = DARK;
+    box(6, 5, 9, 11, 2);
+    // 枪托
+    ctx.fillStyle = BODY;
+    box(24, -7, 24, 12, 3);
+    ctx.beginPath();
+    ctx.moveTo(46, -7); ctx.lineTo(56, -4); ctx.lineTo(56, 3); ctx.lineTo(46, 5);
+    ctx.closePath();
+    ctx.fill();
+    // 瞄具：一根横梁 + 两个圆环
+    ctx.fillStyle = DARK;
+    box(-2, -13.5, 22, 5, 2);
+    ctx.strokeStyle = LITE;
+    ctx.lineWidth = 2;
+    var sc;
+    for (sc = 0; sc < 2; sc++) {
+      ctx.beginPath();
+      ctx.arc(sc === 0 ? 3 : 17, -11, 3.6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // 白高光：沿枪管上沿一道细线（让它在深色立绘上也浮得出来）
+    ctx.strokeStyle = 'rgba(255,255,255,.62)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-49, -2.2);
+    ctx.lineTo(-6, -2.2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawCorpse(u) {
     var x = cellX(u), y = cellY(u);
     var s = CELL * 0.30;
@@ -2504,8 +3432,17 @@
     // 突进 / 后仰的位移
     var ox = u.lungeDx * u.lunge * CELL * 0.10 - u.flinchDx * u.flinch * CELL * 0.07;
     var oy = u.lungeDy * u.lunge * CELL * 0.10 - u.flinchDy * u.flinch * CELL * 0.07;
+    /* ★★ 祖国人「飞行」：整张卡**抬起来**画，影子留在原地。
+     *   飞着这件事在 2D 俯视图里只有两个办法能表达：抬高 + 影子分开。
+     *   两样都用上：卡面抬 CELL×0.16、影子缩一圈并留在格子上，
+     *   于是"它悬在那一格上面"是一眼就能读出来的。 */
+    var flyLift = u.flyOn ? CELL * 0.16 : 0;
+    /* ★★ 丁真 3 星「小马珍珠」：他**骑着小马**打，所以整张卡也要抬起来一点，
+       而且幅度比飞行小（马是贴地跑的）。小马死了之后落回地面 ——
+       那一下"落地"本身就是"珍珠死了"的画面。 */
+    var ponyLift = (u.ponyOn && !u.ponyDead) ? CELL * 0.09 : 0;
     var x = cellX(u) + ox;
-    var y = cellY(u) + oy;
+    var y = cellY(u) + oy - flyLift - ponyLift;
     var dx = x - halfW, dy = y - halfH;
 
     ctx.save();
@@ -2524,11 +3461,52 @@
     var greyed = !!u.converted;
     if (greyed) ctx.filter = 'grayscale(1) brightness(.94)';
 
-    // 影子贴地（不跟着突进走）
+    // 影子贴地（不跟着突进走，也不跟着飞行抬起来）
+    /* ★ 会飞的棋子影子要**小一圈**：同样的影子配上抬高的卡面，
+       读起来不是"飞着"，而是"这张卡画歪了"。 */
     ctx.beginPath();
-    ctx.ellipse(cellX(u), cellY(u) + halfH * 0.86, halfW * 0.74, 3.8, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(38,51,43,.17)';
+    ctx.ellipse(cellX(u), cellY(u) + halfH * 0.86,
+                halfW * (u.flyOn ? 0.52 : 0.74), u.flyOn ? 2.8 : 3.8,
+                0, 0, Math.PI * 2);
+    ctx.fillStyle = u.flyOn ? 'rgba(38,51,43,.12)' : 'rgba(38,51,43,.17)';
     ctx.fill();
+
+    /* ★★ 丁真的小马：骑着的这匹马得**画在卡面之前**（在卡下面），
+       否则它会盖在立绘的脸上。两个马蹄 + 一个马头 + 一条尾巴，
+       位置贴着卡片下沿、往右偏一点 —— 读起来就是"卡上骑着东西"。
+       ★ 马死了就不画了：那一刻"马没了"本身是信息
+         （配合落回地面 + 「珍珠死了」的字幕）。 */
+    if (u.ponyOn && !u.ponyDead) {
+      var ponyX = cellX(u) + cw * 0.20, ponyY = cellY(u) + halfH * 0.55;
+      ctx.save();
+      ctx.globalAlpha = 0.95;
+      // 马身
+      ctx.fillStyle = '#f0e2c8';
+      roundRect(ponyX - cw * 0.34, ponyY - ch * 0.06, cw * 0.62, ch * 0.20, 6);
+      ctx.fill();
+      // 脖子 + 头
+      ctx.beginPath();
+      ctx.moveTo(ponyX + cw * 0.18, ponyY - ch * 0.04);
+      ctx.lineTo(ponyX + cw * 0.34, ponyY - ch * 0.20);
+      ctx.lineTo(ponyX + cw * 0.44, ponyY - ch * 0.14);
+      ctx.lineTo(ponyX + cw * 0.26, ponyY + ch * 0.04);
+      ctx.closePath();
+      ctx.fill();
+      // 四条腿
+      ctx.fillStyle = '#dcc9a6';
+      for (var pl = 0; pl < 4; pl++) {
+        var lx = ponyX - cw * 0.30 + pl * cw * 0.16;
+        ctx.fillRect(lx, ponyY + ch * 0.13, 2.6, ch * 0.13);
+      }
+      // 尾巴
+      ctx.strokeStyle = '#c9b48f';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(ponyX - cw * 0.34, ponyY - ch * 0.02);
+      ctx.lineTo(ponyX - cw * 0.46, ponyY + ch * 0.10);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     /* 星级被动「越打越快」的外发光：叠得越多、边框越亮越粗。
        画在卡面**之前**，所以它是从卡片边上透出来的一圈，
@@ -2624,6 +3602,71 @@
     ctx.lineWidth = 2.6;
     ctx.strokeStyle = u.side === 'a' ? C.enemyEdge : C.mineEdge;
     ctx.stroke();
+
+    /* ★★ 敌方卡面**略微泛红**（用户要求）。
+     *
+     *   混战里最难的一眼判断不是"谁快死了"，而是"这张挨打的卡是自己人还是对面"——
+     *   原来只有一圈描边（我绿 / 敌红）在区分，卡面本身两边长得一模一样。
+     *   现在敌方整张脸再压一层淡红 + 上沿一道更淡的红：
+     *   远看是"红的一块"，近看立绘一点没被吃掉。
+     *
+     *   ★ 透明度只有 0.10 / 0.16：**目的是分得清，不是把立绘染色**。
+     *     再重一点，敌人的立绘就认不出是谁了 —— 那是拿一个信息换另一个信息。
+     *   ★ 我方**完全不染**：单向滤镜，两边的观感不会一起变调
+     *     （而且"我方保持原样"本身就是一种参照）。
+     *   ★ 画在**命中白闪和徽章之前**：所以被招安变灰的卡、以及各种状态徽章
+     *     仍然清晰可读，红色只是底色上的一层。
+     */
+    if (u.side === 'a') {
+      ctx.save();
+      roundRect(dx, dy, cw, ch, 10);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(196,58,46,.10)';
+      ctx.fillRect(dx, dy, cw, ch);
+      /* ★ 下半部分本来就有立绘的暗色渐变（名字带），只压整体的话
+         "红"会被吃掉一半；上沿补一道更淡的红，远看才成立。 */
+      var eg = ctx.createLinearGradient(0, dy, 0, dy + ch * 0.55);
+      eg.addColorStop(0, 'rgba(214,70,56,.16)');
+      eg.addColorStop(1, 'rgba(214,70,56,0)');
+      ctx.fillStyle = eg;
+      ctx.fillRect(dx, dy, cw, ch * 0.55);
+      ctx.restore();
+    }
+
+    /* ★★ 钟离「天星」的石化：卡面压成**石灰色**（画在立绘之上、徽章之下）。
+     *
+     *   为什么不能只靠飘字和徽章：被石化的人站在原地不动、也打不出伤害 ——
+     *   那是全场最容易被误读成"卡住了"的一类状态。
+     *   整张卡蒙一层土灰，读起来就是"它现在是一块石头"。
+     *   ★ 和上面那层"敌方略微泛红"同一个位置、同一个理由：
+     *     血条、星级、状态徽章画在它之后，所以石化期间信息一样不少。 */
+    if (u.petrifyUntil >= 0 && state.t < u.petrifyUntil) {
+      ctx.save();
+      roundRect(dx, dy, cw, ch, 10);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(126,110,84,.42)';
+      ctx.fillRect(dx, dy, cw, ch);
+      ctx.restore();
+    }
+
+    /* ★★ Dank1ng「端着狙击枪」：充能过半就架起来。
+     *   ★ 判据走数据（`killSkull` 只有他这一个技能带）而不是写死 defId ——
+     *     以后再加一个"狙击型"棋子，只要技能里写 killSkull 就自动有这套表现。
+     *   ★ 画在**卡面之上、徽章之下**：枪要压着立绘才像"端着"，
+     *     但不能盖住费用/星级/装备那些小角标。 */
+    if (u.killSkull && u.maxMana > 0 && u.mana > u.maxMana * 0.5) {
+      /* 出现的那一瞬闪一下：从"空手"到"枪架好了"是一个**状态变化**，
+         不提示的话玩家只会觉得"咦怎么突然多了把枪"。 */
+      drawRifle(x + cw * 0.02, y + ch * 0.30, cw * 1.04, state.t);
+      if (u.rifleFlash > 0) {
+        ctx.save();
+        ctx.globalAlpha = u.rifleFlash * 0.5;
+        roundRect(dx, dy, cw, ch, 10);
+        ctx.fillStyle = 'rgba(236,246,255,.5)';
+        ctx.fill();
+        ctx.restore();
+      }
+    }
 
     // 命中白闪
     if (u.flash > 0) {
@@ -2814,6 +3857,103 @@
         u.burnFlash > 0 ? '#ffe0b8' : '#e0a86a', u.burnFlash);
     }
 
+    /* ★★ 刘浩文「世界第一帅」：血量每少 1% 就少受 1% 伤害 ——
+     *   徽章上直接写**当前**减伤百分比（跟着血量实时变）。
+     *   ★ 它是这个角色最反直觉的一条（"残血反而更硬"），
+     *     不写出来玩家只会觉得"对面怎么突然打不动它了"。 */
+    if (u.drPerHpPct > 0 && u.maxHp > 0) {
+      var drPct = Math.min(0.99, (1 - u.hp / u.maxHp) * u.drPerHpPct);
+      stateBadge('🛡-' + Math.round(drPct * 100) + '%',
+        drPct > 0.5 ? '#ffd98a' : '#c8d8e8', 0);
+    }
+
+    /* ★★ ZMJJKK「世一决」：队内每阵亡一人 +20% 增伤，徽章上一直写着当前总量。
+     *   ★ 它是这个角色"残局更强"的唯一可见证据（不看徽章只会觉得伤害在飘）。
+     *   ★ 用 🗡 而不是 ⚡：⚡ 已经是张雪峰的攻速徽章了。 */
+    if (u.deathBonus > 0) {
+      stateBadge('🗡+' + Math.round(u.deathBonus * 100) + '%',
+        u.deathFlash > 0 ? '#ffd0d0' : '#ff8a8a', u.deathFlash);
+    }
+
+    /* ★★ ZMJJKK「霓虹激光」：这 4 秒里挂一枚 🔫×10（3 星是 ×20）徽章，
+     *   让"现在的输出是平时的 5 倍"这件事有一个常驻的解释。 */
+    if (u.neonUntil >= 0 && state.t < u.neonUntil) {
+      stateBadge('🔫×' + Math.round(u.neonAsMul * (u.neonMul || 1)),
+        u.neonFlash > 0 ? '#ffffff' : '#3ac0ff', u.neonFlash);
+    }
+
+    /* ★★ 蓝色大肥鱼「吃白饭 / TOKEN」：
+     *   · 🍽×2  —— 下一口伤害翻倍（攒着的，打出去就消失）
+     *   · 🍚N   —— 身上还挂着几层 TOKEN（每层换一次 ×1.5 的伤害）
+     *   ★ TOKEN 的层数必须看得见：它是"什么时候该打一波"的唯一依据，
+     *     不显示的话玩家只会觉得伤害忽高忽低。 */
+    if (u.nextDmgMul > 1) {
+      stateBadge('🍽×' + (Math.round(u.nextDmgMul * 10) / 10),
+        u.flashEat > 0 ? '#d8f0ff' : '#9fd8ff', u.flashEat);
+    }
+    if (u.tokenStacks > 0) {
+      stateBadge('🍚' + u.tokenStacks, u.flashToken > 0 ? '#fff6d8' : '#ffd98a',
+        u.flashToken);
+    }
+
+    /* ★★ 鹰佐 2 星「霸体」：免控窗口里挂一枚 🛡免控 徽章（带剩余秒数）。
+     *   不挂的话，玩家只会觉得"对面的控制怎么突然不好使了"。 */
+    if (u.immuneUntil >= 0 && state.t < u.immuneUntil) {
+      stateBadge('🛡免控' + Math.max(0, u.immuneUntil - state.t).toFixed(1) + 's',
+        u.batiFlash > 0 ? '#fff6c8' : '#ffd24d', u.batiFlash);
+    }
+
+    /* ★★ 丁真「芝士雪豹」：被咬过的人 3 秒内攻速移速 -40%。
+     *   徽章是"它为什么突然变慢了"的唯一解释。 */
+    if (u.biteUntil >= 0 && state.t < u.biteUntil) {
+      stateBadge('🐆-' + Math.round(u.biteCut * 100) + '%',
+        u.biteFlash > 0 ? '#d8ffe8' : '#9ce0b8', u.biteFlash);
+    }
+
+    /* ★★ 丁真 3 星「小马珍珠」：
+     *   · 小马还活着 → 一枚 🐴 徽章写着这层护盾还剩多少
+     *   · 小马死了   → 换成 🔥 狂暴徽章（魔力获取 +70%）
+     *   ★ 两枚互斥：马死了就不该再显示马的血量。 */
+    if (u.ponyOn && !u.ponyDead) {
+      stateBadge('🐴' + Math.round(u.ponyShield), '#ffd98a', 0);
+    } else if (u.ponyDead) {
+      stateBadge('🔥狂暴', '#ff9a6a', 0);
+    }
+
+    /* ★★ 祖国人「灼烧」：被激光点着的人**每秒掉 5% 当前生命**、连着 5 秒。
+     *   徽章是"这张卡为什么一直冒火"的唯一解释，所以带剩余秒数。
+     *   ★ 用 🔥 而不是 🌰：🌰 是大果那件装备的**自我**燃烧（生命上限的比例），
+     *     两个都是"在烧"，但一个是挨打挨出来的、一个是被自己带的东西烧的。 */
+    if (u.burnCurUntil >= 0 && state.t < u.burnCurUntil) {
+      /* ★ 两把火必须一眼分得开：祖国人那把是**橙色**（有倒计时），
+         鹰佐的天照是**黑紫色**（无限时间，所以不写秒数、改画 ∞）。
+         混成一个颜色的话，"我被谁烧的"在画面上就读不出来。 */
+      if (u.burnFreezeImmune === false && u.burnCurUntil > state.t + 1e6) {
+        stateBadge('🖤天照∞', u.burnCurFlash > 0 ? '#f0d0ff' : '#c070f0',
+          u.burnCurFlash);
+      } else {
+        stateBadge('🔥' + Math.max(0, u.burnCurUntil - state.t).toFixed(1) + 's',
+          u.burnCurFlash > 0 ? '#ffd0a0' : '#ff8a3c', u.burnCurFlash);
+      }
+    }
+
+    /* ★★ 钟离「玉璋护盾」：卡面上挂一枚 💠（盾还在才挂）。
+     *   它同时代表**两件事**：免疫控制、少受 20% 伤害。
+     *   不带徽章的话，玩家只看到"对面的眩晕怎么没生效"，
+     *   而"被钟离罩着"这件事在画面上完全看不出来。
+     *   ★ 判据和引擎一致（盾 > 0）—— 白条消失的那一刻徽章一起消失。 */
+    if (u.wardCut > 0 && u.shield > 0) {
+      stateBadge('💠免控-' + Math.round(u.wardCut * 100) + '%',
+        u.wardFlash > 0 ? '#fff0c0' : '#f0c45a', u.wardFlash);
+    }
+
+    /* ★★ 钟离「天星」的石化：这 3 秒里卡片要一直写着它动不了。
+     *   ★ 和眩晕的「哈哈」分开：石化是土黄的 🪨，一眼能看出是被石头封住了。 */
+    if (u.petrifyUntil >= 0 && state.t < u.petrifyUntil) {
+      stateBadge('🪨石化' + Math.max(0, u.petrifyUntil - state.t).toFixed(1) + 's',
+        u.petrifyFlash > 0 ? '#ffe6b0' : '#c9a86a', u.petrifyFlash);
+    }
+
     /* ★★ 东北雨姐「红薯粉丝」：被捆住的敌人**只能挨打不能跑**。
      *   这枚徽章是"它为什么站着不动"的**唯一**解释 ——
      *   不带秒数的话，玩家看到的是"这张卡发呆了三秒"。
@@ -2924,6 +4064,14 @@
       ctx.fillRect(bx, my, bw, mh);
       ctx.fillStyle = C.mana;
       ctx.fillRect(bx, my, bw * Math.min(1, u.mana / u.maxMana), mh);
+      /* ★★ Dank1ng 的法力条上多一道**半程刻度**：
+       *   他的枪是在"充能过半"那一刻架起来的，不把这条线画出来，
+       *   玩家只会觉得"咦怎么突然多了把枪"。一根 1px 的浅色线，
+       *   就把"枪的出现"和"条子走到一半"挂上了因果关系。 */
+      if (u.killSkull) {
+        ctx.fillStyle = 'rgba(255,255,255,.72)';
+        ctx.fillRect(bx + bw * 0.5 - 0.5, my - 1, 1, mh + 2);
+      }
 
       if (debug) {
         var dtxt = Math.round(u.hp) + (u.shield > 0 ? '+' + Math.round(u.shield) : '');
