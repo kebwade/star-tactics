@@ -66,6 +66,57 @@
   }
 
   /* ============================================================
+   * 一b、自动更新（让"页面已经开着"的人也能立刻拿到新版）
+   *
+   *   规则在部署脚本那一侧（盖版本戳 + 写 version.json），
+   *   这里只守页面这一侧必须成立的三件事：
+   *     ① 有 app-version 占位（部署脚本往里填号，uptodate.js 拿它比对）；
+   *     ② 页面真的加载了 uptodate.js；
+   *     ③ **每个本地 js/css 地址都是"相对路径 + .js/.css"** ——
+   *        部署脚本就是靠这个形状的正则盖 `?v=` 的。
+   *        哪天有人换成 CDN、改成 .mjs、或者写成绝对路径，
+   *        版本戳会**静默地**盖不上，于是"改了也没人拿到新版"，
+   *        而所有测试都还是绿的 —— 所以必须有这条把形状钉住。
+   * ============================================================ */
+  async function testAutoUpdate() {
+    TH.section('自动更新');
+
+    var meta = D.querySelector('meta[name="app-version"]');
+    TH.ok('页面里有 app-version 占位（部署脚本会把版本号填进去）', !!meta,
+      meta ? ('content="' + meta.getAttribute('content') + '"') : '没找到');
+    /* ★ 本地副本上它必须是空的：不空的话，本地打开也会去比对线上版本、
+       然后把自己刷到线上那一版 —— 开发时会被自己的部署踢走。 */
+    TH.eq('★ 本地副本上的版本号是空的 → 自动更新完全静默',
+      meta ? meta.getAttribute('content') : '（没有这个 meta）', '');
+
+    var up = null;
+    var allScripts = D.querySelectorAll('script[src]');
+    for (var i = 0; i < allScripts.length; i++) {
+      if (allScripts[i].getAttribute('src').indexOf('uptodate.js') >= 0) up = allScripts[i];
+    }
+    TH.ok('页面加载了 js/uptodate.js（比对 version.json，有新版本就换地址）', !!up,
+      up ? up.getAttribute('src') : '没找到');
+    TH.eq('★ 本地双击打开时不检查（file:// 下没有线上版本，fetch 也会被 CORS 挡）',
+      W.location.protocol, 'file:');
+
+    var badJs = [], badCss = [];
+    for (var j = 0; j < allScripts.length; j++) {
+      var s = allScripts[j].getAttribute('src');
+      if (!/^[^:?]+\.js(\?|$)/.test(s)) badJs.push(s);
+    }
+    var sheets = D.querySelectorAll('link[rel="stylesheet"]');
+    for (var k = 0; k < sheets.length; k++) {
+      var h = sheets[k].getAttribute('href');
+      if (!/^[^:?]+\.css(\?|$)/.test(h)) badCss.push(h);
+    }
+    TH.eq('★ 每个 <script src> 都是"相对路径 + .js"（部署脚本靠这个形状盖版本戳）',
+      badJs.join(' '), '');
+    TH.eq('★ 每个样式表都是"相对路径 + .css"', badCss.join(' '), '');
+    TH.note('这一页共 ' + allScripts.length + ' 个脚本 / ' + sheets.length +
+      ' 个样式表，全部可被版本戳覆盖');
+  }
+
+  /* ============================================================
    * 一、封面
    * ============================================================ */
   async function testCover() {
@@ -844,6 +895,86 @@
       holder ? JSON.stringify(holder.items) : '没找到棋子');
     TH.eq('装备栏少了一件', qa('#item-row .item-chip').length, 1);
     TH.ok('装备上限是 3 件', W.ST.MAX_ITEMS === 3, 'MAX_ITEMS = ' + W.ST.MAX_ITEMS);
+
+    /* ---------- 4 星：3 个 3 星 → 1 个 4 星（2026-10 加的一档） ----------
+     * ★ 3 星我们是走真实链路（买第三张）验的；4 星走不了那条路 ——
+     *   商店卖的永远是 1 星，要凑 27 张同名卡才能买出一个 4 星。
+     *   所以这里直接往备战席塞 3 个 3 星，再买**任意一个别的棋子**把
+     *   `tryCombine()` 触发一次 —— 合成的判定逻辑仍然是真代码在跑，
+     *   只是"卡从哪来"这一步被跳过了。 */
+    function ownedAll() {
+      var out = [];
+      for (var k in G().board) if (G().board[k]) out.push(G().board[k]);
+      for (var i2 = 0; i2 < G().bench.length; i2++) if (G().bench[i2]) out.push(G().bench[i2]);
+      return out;
+    }
+    function seedBench(list) {
+      G().board = {};
+      G().bench = new Array(9);
+      G().gold = 60;
+      for (var i3 = 0; i3 < list.length; i3++) G().bench[i3] = list[i3];
+    }
+
+    var star4Tag = 'ironwall';   // 用鸭子：1 费，合成它最贴近真实经济
+    seedBench([
+      { uid: 's1', defId: star4Tag, star: 3, items: ['belt'] },
+      { uid: 's2', defId: star4Tag, star: 3, items: [] },
+      { uid: 's3', defId: star4Tag, star: 3, items: [] }
+    ]);
+    G().shop = ['bowman', 'bowman', 'bowman', 'bowman', 'bowman'];
+    W.Game.refresh();
+    await wait(80);
+    TH.eq('备战席上摆着 3 个 3 星', G().bench.filter(Boolean).length, 3);
+
+    W.Game.buy(0);              // 买一个别的棋子，触发一次合成扫描
+    await wait(140);
+
+    var merged = ownedAll().filter(function (u) { return u.defId === star4Tag; });
+    TH.eq('★ 3 个 3 星合成成了 1 个', merged.length, 1);
+    TH.ok('★ 合成结果是 **4 星**', merged.length === 1 && merged[0].star === 4,
+      merged.length ? ('星级 = ' + merged[0].star) : '没找到');
+    TH.ok('★ 合成时装备也不会丢（3 星身上那件腰带还在）',
+      merged.length === 1 && merged[0].items.indexOf('belt') >= 0,
+      merged.length ? JSON.stringify(merged[0].items) : '—');
+
+    // 卡片上必须画**四颗**星，不能还是三颗
+    var starChip = q('#bench .u .u-stars') || q('#player-half .u .u-stars');
+    TH.eq('★ 卡片上画的是 4 颗星', starChip ? starChip.textContent : '（没找到）', '★★★★');
+
+    // 4 星是顶：3 个 4 星不会再合成
+    seedBench([
+      { uid: 'q1', defId: star4Tag, star: 4, items: [] },
+      { uid: 'q2', defId: star4Tag, star: 4, items: [] },
+      { uid: 'q3', defId: star4Tag, star: 4, items: [] }
+    ]);
+    W.Game.refresh();
+    await wait(80);
+    W.Game.buy(0);
+    await wait(140);
+    var still4 = ownedAll().filter(function (u) { return u.defId === star4Tag; });
+    TH.eq('★ 4 星是星级上限：3 个 4 星不会继续合成', still4.length, 3);
+    TH.ok('★ 而且它们仍然是 4 星（没有被吃掉或者降级）',
+      still4.every(function (u) { return u.star === 4; }),
+      still4.map(function (u) { return u.star; }).join(','));
+
+    /* 卖出价：4 星 = 27 倍费用（3 个 3 星，每个 9 倍）。
+       ★ 走真实卖出链路（Game.sell）而不是直接调内部函数 ——
+         售价那条三元链写死成 9 倍的时候，只有"真的卖一个 4 星"才看得出来。 */
+    var d4 = W.ST.UNIT_BY_ID[star4Tag];
+    seedBench([{ uid: 'r1', defId: star4Tag, star: 4, items: [] }]);
+    G().gold = 0;
+    W.Game.refresh();
+    await wait(80);
+    W.Game.sell('r1');
+    await wait(80);
+    TH.eq('★ 4 星的售价是 27 倍费用（不然卖掉一个 4 星会亏掉三分之二）',
+      G().gold, d4.cost * 27);
+
+    // 收尾：把备战席清干净，免得影响后面的用例
+    seedBench([]);
+    G().shop = [null, null, null, null, null];
+    W.Game.refresh();
+    await wait(60);
   }
 
   /* ============================================================
@@ -873,8 +1004,13 @@
       click(q('#player-half .u').parentNode);
       await wait(110);
       var box = q('#sel-bar .sb-passive') || q('#sel-bar .sb-teaser');
+      /* ★ 顺手把两个信息条都记下来：调用方通常只关心"当前生效"那一条，
+         但下面那条全量扫描要**两条都查** —— 预告里也会有被动名字。 */
+      var pb2 = q('#sel-bar .sb-passive'), tb2 = q('#sel-bar .sb-teaser');
+      lastTexts = [pb2 ? pb2.textContent : '', tb2 ? tb2.textContent : ''];
       return box ? box.textContent : '';
     }
+    var lastTexts = [];
 
     var s1 = await pick('acolyte', 1);
     TH.ok('1 星豆包不显示「已生效」那一行，只给升星预告',
@@ -943,8 +1079,18 @@
 
     var z1 = await pick('blademaster', 1);
     TH.ok('1 星显示「你快不过我你信吗」', z1.indexOf('你快不过我你信吗') >= 0, z1.slice(0, 140));
-    TH.ok('★ 1 星的文案里写明了「开局攻速/移速 +100%」和「每秒失去 44%」',
-      z1.indexOf('+100%') >= 0 && z1.indexOf('44%') >= 0, z1.slice(0, 200));
+    TH.ok('★ 1 星的文案里写明了「开局攻速 +60%」和「移速 +100%」',
+      z1.indexOf('开局攻速 +60%') >= 0 && z1.indexOf('移速 +100%') >= 0, z1.slice(0, 220));
+    /* ★★ 这条是防**假通过**的，不是凑数：
+       削弱之前的文案是「开局攻速/移速 +100%」，而削弱之后
+       「移速 +100%」还在 —— 只查 '+100%' 的话，旧文案、甚至把攻速写错，
+       都会因为移速那一半而通过。所以这里钉住**旧的措辞不许再出现**。 */
+    TH.ok('★ 1 星不能再出现旧文案「攻速/移速」（移速的 +100% 会伪装成通过）',
+      z1.indexOf('攻速/移速') < 0, z1.slice(0, 220));
+    TH.ok('★ 1 星写明「攻速加成到 +100% 进入狂暴」和「每秒失去 44%」',
+      z1.indexOf('+100% 进入「狂暴」') >= 0 && z1.indexOf('44%') >= 0, z1.slice(0, 260));
+    TH.ok('★ 1 星写明狂暴里叠加翻倍到 +4%、以及 +200% 的硬上限',
+      z1.indexOf('翻倍到 +4%') >= 0 && z1.indexOf('加成上限 +200%') >= 0, z1.slice(0, 300));
     TH.ok('★ 1 星写明「普攻是单体」（范围是 3 星才有的，写错就是假信息）',
       z1.indexOf('普攻是单体') >= 0 && z1.indexOf('范围') < 0, z1.slice(0, 200));
     TH.ok('1 星不提巧乐兹和雪毙（那是 2/3 星的事）',
@@ -964,8 +1110,106 @@
     TH.ok('★ 3 星写的是「攻击力 +78%」，并且普攻升级成 3×3 范围',
       z3.indexOf('攻击力 +78%') >= 0 && z3.indexOf('普攻升级成 3×3 范围') >= 0,
       z3.slice(0, 320));
+    TH.ok('★ 3 星的雪毙写的是「进入狂暴之后」而不是旧的「攻速达标后」',
+      z3.indexOf('进入「狂暴」之后攻击力') >= 0 && z3.indexOf('攻速达标后') < 0,
+      z3.slice(0, 320));
     TH.ok('3 星同时保留巧乐兹（三层是叠加的，不是替换）',
       z3.indexOf('巧乐兹') >= 0 && z3.indexOf('你快不过我你信吗') >= 0, z3.slice(0, 300));
+    /* ★★ 这条是抓上面那个 bug 的：2 星那一段原来显示成
+       「你快不过我你信吗,巧乐兹」（数组被 toString 了）。
+       加完断言之后顺手做了个全量扫描，见下面「被动名字表」那一节。 */
+    TH.ok('★ 2/3 星的冰棍段只显示「巧乐兹」这一个名字，不是逗号拼起来的名字链',
+      z2.indexOf('巧乐兹,') < 0 && z2.indexOf(',巧乐兹') < 0 &&
+      z3.indexOf('巧乐兹,') < 0 && z3.indexOf(',巧乐兹') < 0,
+      z2.slice(0, 220));
+
+    /* ---------- 所有棋子：被动名字表不能把"累积数组"直接拼进文案 ----------
+     * ★★ `passive.names` 里同一个星级的名字有两种写法：
+     *     字符串（`2: '巧乐兹'`）和**累积数组**（`2: ['你快不过我你信吗','巧乐兹']`）。
+     *   12 个被动里有 **7 个**用的是数组写法 —— 所以这不是个别失误，是默认坑。
+     *   直接塞进字符串拼接，数组会被 `toString()` 成「你快不过我你信吗,巧乐兹」，
+     *   玩家看到一串带逗号的名字链。张雪峰的 2/3 星就中过这个招
+     *   （`pn[2] || '巧乐兹'` 对数组来说永远取的是数组本身，兜底根本不生效）。
+     * ★ 这里对**每一个用到数组名字的棋子 × 每一个星级**自动扫一遍，
+     *   两条信息条（生效 + 预告）都查。以后新写的被动也不会再犯，
+     *   不用靠人肉 review —— 这种"看着像文案问题、其实是数据形状问题"的 bug
+     *   只靠逐个断言是守不住的。 */
+    var badChains = [];
+    var scanUnits = 0, scanPicks = 0, scanSample = '';
+    /* ★★ 这里必须用 `Array.isArray`，**不能**用 `instanceof Array` ——
+       游戏跑在 `<iframe id="game">` 里，`W` 是那个 iframe 的 window，
+       所以 `W.ST.UNITS[...].passive.names[2]` 是**另一个 realm 的数组**，
+       顶层测试页的 `instanceof Array` 对它一律返回 false。
+       （第一版就是这么写的，扫描覆盖 0 个棋子、断言"通过"—— 一个假绿。
+         game.js 自己用 instanceof 没问题，因为它和那些数组在同一个 realm 里。） */
+    var isArr = Array.isArray;
+    for (var di = 0; di < W.ST.UNITS.length; di++) {
+      var du = W.ST.UNITS[di];
+      var dn = (du.passive && du.passive.names) || {};
+      var chains = [];
+      for (var kk in dn) {
+        if (!isArr(dn[kk]) || dn[kk].length < 2) continue;
+        for (var s0 = 0; s0 < dn[kk].length; s0++) {
+          for (var e0 = s0 + 1; e0 < dn[kk].length; e0++) {
+            chains.push(dn[kk].slice(s0, e0 + 1).join(','));
+          }
+        }
+      }
+      if (!chains.length) continue;
+      scanUnits++;
+      for (var stx = 1; stx <= 3; stx++) {
+        await pick(du.id, stx);
+        scanPicks++;
+        if (!scanSample) scanSample = du.id + stx + '[' + chains.join('|') + ']→' +
+          lastTexts.join('⏸').slice(0, 120);
+        for (var ci = 0; ci < chains.length; ci++) {
+          for (var ti = 0; ti < lastTexts.length; ti++) {
+            if (chains[ci] && lastTexts[ti].indexOf(chains[ci]) >= 0) {
+              badChains.push(du.id + ' ' + stx + '星：' + chains[ci]);
+            }
+          }
+        }
+      }
+    }
+    TH.note('扫描覆盖：' + scanUnits + ' 个棋子用了数组名字、共取 ' + scanPicks +
+      ' 次文案；样本 ' + scanSample);
+    TH.eq('★ 全量扫描：没有任何棋子的被动文案里出现"逗号拼起来"的名字链',
+      badChains.length, 0);
+    if (badChains.length) TH.note('出问题的：' + badChains.join(' / '));
+
+    /* ---------- 老牧师：临终祷告 / 圣光赐福 ----------
+     * ★ 这个棋子的信息条有三种形态，每一种都要单独钉住：
+     *     1 星  没有被动 → 只显示"升星预告"
+     *     2 星  只显示"还能抢救一下"（**不能**提前写 +20%）
+     *     3 星  两个都显示
+     *   中间那一条最容易写错：把 3 星的效果写进 2 星的文案里，
+     *   玩家会为了一条根本不生效的规则去升星。 */
+    TH.section('老牧师 · 被动文案');
+
+    var m1 = await pick('medic', 1);
+    TH.ok('★ 1 星不显示"已生效"那一行，只给升星预告（他 1 星本来就没被动）',
+      m1.indexOf('被动预览') >= 0, m1.slice(0, 140));
+    TH.ok('★ 1 星的预告写明了「2 星能救队友」和「3 星额外给 +20%」',
+      m1.indexOf('还能抢救一下') >= 0 && m1.indexOf('圣光赐福') >= 0 &&
+      m1.indexOf('+20%') >= 0, m1.slice(0, 220));
+    TH.ok('★ 1 星的预告说明了"每场战斗一次"（不然玩家以为能反复救）',
+      m1.indexOf('每场战斗一次') >= 0, m1.slice(0, 220));
+
+    var m2 = await pick('medic', 2);
+    TH.ok('2 星显示「还能抢救一下」', m2.indexOf('还能抢救一下') >= 0, m2.slice(0, 200));
+    TH.ok('★ 2 星写明「满血站起来」和「一场只救一次」',
+      m2.indexOf('满血站起来') >= 0 && m2.indexOf('每场战斗一次') >= 0, m2.slice(0, 240));
+    TH.ok('★ 2 星写明「老牧师救不了自己」（这是最容易被玩家误解的一条）',
+      m2.indexOf('救不了自己') >= 0, m2.slice(0, 240));
+    TH.ok('★★ 2 星**绝不能**提「圣光赐福」或 +20%（那是 3 星的，写了就是假信息）',
+      m2.indexOf('圣光赐福') < 0 && m2.indexOf('+20%') < 0, m2.slice(0, 240));
+
+    var m3 = await pick('medic', 3);
+    TH.ok('3 星多了「圣光赐福」', m3.indexOf('圣光赐福') >= 0, m3.slice(0, 280));
+    TH.ok('★ 3 星写明「老牧师和被救的人攻击力都 +20%」',
+      m3.indexOf('攻击力都 +20%') >= 0, m3.slice(0, 300));
+    TH.ok('3 星同时保留「还能抢救一下」（两层是叠加的，不是替换）',
+      m3.indexOf('还能抢救一下') >= 0 && m3.indexOf('圣光赐福') >= 0, m3.slice(0, 300));
 
     /* ---------- 奶龙：捧腹大笑 / 笑气护体 / 边走边笑 / 笑传四方 ----------
      * ★★ 这一组最容易写错的地方和抓娃娃、荣誉一样：
@@ -1394,7 +1638,10 @@
       W.Arena.step(1 / 30);
       var fl = W.Arena.fxList();
       for (var k = 0; k < fl.length; k++) {
-        if (fl[k].type === 'callout' && fl[k].text === '你快不过我你信吗') sawOverCallout = true;
+        /* ★ 喊的是**状态名**「狂暴」，不是被动名 ——
+           进狂暴之后玩家要认的是"他现在在烧自己"，
+           而且「狂暴」是这一版新引入的说法，文案和画面必须一致。 */
+        if (fl[k].type === 'callout' && fl[k].text === '狂暴！') sawOverCallout = true;
         // 自毁的飘字用独立的 kind，取色也独立 —— 和"挨打"的白/黄一眼分得开
         if (fl[k].type === 'num' && fl[k].kind === 'selfBurn') sawBurnNum = true;
       }
@@ -1410,7 +1657,7 @@
 
     TH.ok('★ 攻速加成会一路上涨（卡片上的 ⚡+N% 是活的）', ocRose,
       '最后 +' + Math.round(lastOc * 100) + '%');
-    TH.ok('★ 越过 +200% 时会弹出「你快不过我你信吗」的台词', sawOverCallout);
+    TH.ok('★ 进入狂暴时会弹出「狂暴！」的台词', sawOverCallout);
     TH.ok('★ 自毁时有独立的红色伤害数字（kind=selfBurn，和挨打的白/黄区分开）', sawBurnNum);
     /* ★ 只断言"血量比刚超频时更低" —— 不断言它没死：
        超频本身就是自毁，它死掉才是正常的，写成 hp > 0 反而是错的。 */
@@ -1418,6 +1665,81 @@
       hpAtOver !== null && minHpAfterOver !== null && minHpAfterOver < hpAtOver,
       hpAtOver === null ? '没进入超频'
         : (Math.round(hpAtOver) + ' → ' + Math.round(minHpAfterOver)));
+  }
+
+  /* ============================================================
+   * 五h、老牧师的「临终祷告」在画面上看得见
+   *
+   *   规则在 simtest 里验过了。这里只问一件事：
+   *   **那 1 秒里，玩家知不知道有人在救他。**
+   *   队友倒下的瞬间卡片就灰了（阵亡态），如果这 1 秒什么都不画，
+   *   玩家看到的就只是"我的棋子死了"，然后它莫名其妙又站起来了。
+   *
+   *   ★ 所以这条要验的是三件事，缺一件这个表现就不算做完：
+   *     ① 倒下时立刻有「还能抢救一下」+ 一圈光环 + 一条连到牧师的光束
+   *     ② 1 秒后真的站起来（渲染层的 alive 必须跟着变回 true）
+   *     ③ 3 星时还要看得出"两个人都变强了"（+20% 的字幕和名单）
+   * ============================================================ */
+  async function testMedicVfx() {
+    TH.section('老牧师 · 临终祷告表现');
+
+    /* 场景取的是 simtest 里探出来的那一套（3 星山岳**不带装备** + 3 星弓）：
+       它有个好性质 —— 被救的人复活前后都打得到人，而且对局跑 51 秒。
+       ★ 坐标必须按半场给（a 是 0~3 行、b 是 4~7 行），
+         给错半场引擎会**静默自动布阵**，前排/后排的意图就没了。 */
+    var result = W.ST.Battle.battle({
+      a: [{ id: 'medic', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 0 },
+          { id: 'bowman', star: 3, r: 3, c: 3 }],
+      b: [{ id: 'titan', star: 3, r: 4, c: 3 }]
+    }, 424242);
+    var rites = result.log.filter(function (e) { return e.type === 'lastRites'; });
+    var saved = result.log.filter(function (e) { return e.type === 'reviveAlly' && e.ok; });
+    TH.ok('这一场确实触发了临终祷告（否则后面全是空断言）', rites.length > 0,
+      rites.length + ' 次祷告 / ' + saved.length + ' 次复活');
+    if (!rites.length || !saved.length) return;
+    var savedUid = saved[0].who, savedT = saved[0].t;
+
+    W.Arena.play(result);
+    var sawRitesCallout = false, sawBeam = false, sawBackCallout = false, sawBlessCallout = false;
+    var aliveAtRevive = null, hpBeforeRevive = null, hpAfterRevive = null;
+    var steps = Math.min(2400, Math.ceil((savedT + 3) * 30));
+    for (var i = 0; i < steps; i++) {
+      W.Arena.step(1 / 30);
+      var fl = W.Arena.fxList();
+      for (var k = 0; k < fl.length; k++) {
+        if (fl[k].type === 'callout') {
+          if (fl[k].text === '还能抢救一下') sawRitesCallout = true;
+          if (fl[k].text === '我回来了') sawBackCallout = true;
+          if (String(fl[k].text).indexOf('圣光赐福') === 0) sawBlessCallout = true;
+        }
+        /* ★ 光束是**新加的 FX 类型**（beam），它不是"顺便复用一下激光"——
+           用途完全不同：激光指向"马上要开枪"，光束指向"我在救他"。
+           所以要专门断言它出现过，不然哪天把它删了也没人发现。 */
+        if (fl[k].type === 'beam') sawBeam = true;
+      }
+      var us = W.Arena.units();
+      var me = us[savedUid];
+      if (!me) continue;
+      // 复活那一帧之前：渲染层必须认为他是**死的**
+      if (W.Arena.time() < savedT - 0.2) hpBeforeRevive = me.alive;
+      if (W.Arena.time() > savedT + 0.2) {
+        aliveAtRevive = me.alive;
+        hpAfterRevive = me.hp;
+      }
+    }
+
+    TH.ok('★ 倒下时弹出「还能抢救一下」（不画的话玩家只看到棋子死了）',
+      sawRitesCallout);
+    TH.ok('★ 倒下时有一束光从老牧师连到他（看得出是谁在救）', sawBeam);
+    TH.ok('★ 复活那一刻弹出「我回来了」', sawBackCallout);
+    TH.ok('★ 3 星还弹出「圣光赐福 +20%」的字幕（两个人变强了要说出来）',
+      sawBlessCallout);
+    TH.eq('★ 复活之前渲染层认为他是死的（卡片是灰的）', hpBeforeRevive, false);
+    TH.eq('★ 复活之后渲染层认为他活着（不是只改了数字、卡片还是灰的）',
+      aliveAtRevive, true);
+    TH.ok('★ 复活之后血量真的回满了（渲染层拿的是事件里的 hp）',
+      hpAfterRevive !== null && hpAfterRevive > 0,
+      hpAfterRevive === null ? '没读到' : Math.round(hpAfterRevive));
   }
 
   /* ============================================================
@@ -1433,7 +1755,7 @@
   async function testLaughVfx() {
     TH.section('奶龙 · 捧腹大笑表现');
 
-    /* 场景和 simtest 里那套一致：奶龙单挑一只打不死的战地医师 ——
+    /* 场景和 simtest 里那套一致：奶龙单挑一只打不死的老牧师 ——
        对局一定跑满 60 秒，所以第 13 秒那次大笑必然出现。 */
     var result = W.ST.Battle.battle({
       a: [{ id: 'stoneguard', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }],
@@ -1511,7 +1833,7 @@
   async function testDomainVfx() {
     TH.section('嘉豪 · 男人领域表现');
 
-    /* 三个战地医师当靶子：输出低、互相回血，所以战斗能跑够久，
+    /* 三个老牧师当靶子：输出低、互相回血，所以战斗能跑够久，
        嘉豪放得出技能；三个都站在正前方，3 星正好一次控满三个。 */
     var result = W.ST.Battle.battle({
       a: [{ id: 'vine', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
@@ -2557,10 +2879,20 @@
     TH.section('手机竖屏布局');
 
     var saved = { w: f.style.width, h: f.style.height };
+    /* ★ 尺寸表覆盖三类真机：
+         · 常见竖屏（iPhone 11/14、安卓 360~430）
+         · 矮屏小机（360×640、320×568）—— 内容比视口高得多，是最难排的一档
+         · 横屏手机（844×390）—— 宽而矮，和竖屏是**两种**不同的挤压
+       ★ 加尺寸不是凑数：360×640 和 844×390 各暴露过一个竖屏/横屏特有的问题
+         （吸底条盖住选中信息 / 盖住棋盘），只测 390×844 是发现不了的。 */
     var SIZES = [
-      [390, 844, 'iPhone 14'],
-      [360, 640, '安卓小屏'],
-      [320, 568, 'iPhone SE']
+      [390, 844, 'iPhone14 竖'],
+      [414, 896, 'iPhone11 竖'],
+      [360, 800, '安卓常见 竖'],
+      [360, 640, '安卓小屏 竖'],
+      [320, 568, 'iPhoneSE 竖'],
+      [430, 932, '大屏 竖'],
+      [844, 390, 'iPhone14 横']
     ];
     try {
       for (var s = 0; s < SIZES.length; s++) {
@@ -2609,8 +2941,95 @@
         TH.ok('★ ' + label + '：HUD 没有吃掉大半个屏幕',
           hud.height <= 80, Math.round(hud.height) + 'px');
 
-        // 开战，量战场画布
+        /* ---------- 2026-10 补的四条：手机版真正难用的地方 ----------
+         * ★★ 这一组是量出来的，不是猜的。上一版只验了"横向放得下"，
+         *    而实测 390×844 的真实问题是**竖向够不着**：
+         *      开战按钮 T=919、备战池 T=1026，而视口只有 844 ——
+         *      玩家每回合都要先滚动 100~200px 才点得到开战、才够得着备战池。
+         *    另外 HUD 里 `.hud-left` 被挤成 6px（「‹」只剩 7px 宽，
+         *    关卡名被切到 16px）。所以补上"纵向够得着"和"不被别人盖住"两组。 */
+
+        // ① 开战按钮必须在视口里（这是每回合都要按的那一个）
         var fight = D.getElementById('btn-fight');
+        var fightBar = D.querySelector('.action-bar');
+        var fbR = fightBar ? fightBar.getBoundingClientRect() : null;
+        var btnR = fight ? fight.getBoundingClientRect() : null;
+        TH.ok('★ ' + label + '：开战按钮在视口里（不用滚动就能按）',
+          !!btnR && btnR.top >= -1 && btnR.bottom <= W.innerHeight + 1,
+          btnR ? (Math.round(btnR.top) + ' → ' + Math.round(btnR.bottom) +
+                  '（视口高 ' + W.innerHeight + '）') : '没找到开战按钮');
+
+        /* ② 备战池也要基本在第一屏（拖拽就发生在它和棋盘之间）
+         * ★ 判据是"**至少 70% 露在外面**"，不是"完整落在视口里" ——
+         *   320×568 上它的下沿会超出 6px（那一档内容实在太挤），
+         *   而"露 70%"既能抓住最初的 bug（那时备战池在 T=1026、视口 844，
+         *   一整块都在屏幕外），也不会为了 6px 去写一个假的通过。
+         * ★ 横屏手机不在这条之内：844×390 上内容总高约 800px、视口只有 390px，
+         *   备战池不可能在第一屏。那里只保证「开战」够得着（上一条已验），
+         *   其余靠滚动 —— 横屏本来就不是这个游戏的主要姿势。 */
+        var isLandscape = vw > vh;
+        if (isLandscape) {
+          TH.note(label + '：横屏，内容总高远超视口，只要求「开战」够得着（已验），' +
+            '备战池在 T=' + Math.round(bench.top) + '，滚一下就到');
+        } else {
+          TH.ok('★ ' + label + '：备战池至少 70% 在第一屏（拖拽不用先滚动）',
+            bench.top >= -1 && bench.top + bench.height * 0.7 <= W.innerHeight,
+            Math.round(bench.top) + ' → ' + Math.round(bench.bottom) +
+            '（视口高 ' + W.innerHeight + '）');
+        }
+
+        // ③ 关键区块两两不许重叠（吸底条最容易盖住别人）
+        var blocks = {
+          商店: shop, 棋盘: board, 备战池: bench,
+          选中信息: D.querySelector('#sel-bar') ? D.querySelector('#sel-bar').getBoundingClientRect() : null,
+          装备栏: D.querySelector('#item-row') ? D.querySelector('#item-row').getBoundingClientRect() : null,
+          开战条: fbR
+        };
+        var bk = Object.keys(blocks), hits = [];
+        for (var x = 0; x < bk.length; x++) {
+          for (var y = x + 1; y < bk.length; y++) {
+            var A2 = blocks[bk[x]], B2 = blocks[bk[y]];
+            if (!A2 || !B2) continue;
+            var ox = Math.min(A2.right, B2.right) - Math.max(A2.left, B2.left);
+            var oy = Math.min(A2.bottom, B2.bottom) - Math.max(A2.top, B2.top);
+            if (ox > 1 && oy > 1) hits.push(bk[x] + '×' + bk[y] + '=' + Math.round(ox * oy));
+          }
+        }
+        TH.eq('★ ' + label + '：关键区块互不遮挡（尤其是吸底的开战条）',
+          hits.join(' '), '');
+
+        // ④ 手指点得着：所有按钮的短边 >= 30px
+        var smalls = [];
+        var allBtns = D.querySelectorAll('button, .btn');
+        for (var bi2 = 0; bi2 < allBtns.length; bi2++) {
+          var br2 = allBtns[bi2].getBoundingClientRect();
+          if (br2.width < 1 || br2.height < 1) continue;
+          if (Math.min(br2.width, br2.height) < 30) {
+            smalls.push((allBtns[bi2].id || allBtns[bi2].textContent.trim().slice(0, 5)) +
+              '=' + Math.round(br2.width) + 'x' + Math.round(br2.height));
+          }
+        }
+        TH.eq('★ ' + label + '：没有点不着的按钮（短边都 >= 30px）',
+          smalls.join(' '), '');
+
+        // ⑤ 文字不许被切（唯一允许的是 320px 上那个被省略号处理过的关卡名）
+        var clipped2 = [];
+        var nodes = D.querySelectorAll('*');
+        for (var ni = 0; ni < nodes.length; ni++) {
+          var nd = nodes[ni];
+          if (nd.children.length) continue;
+          var t2 = (nd.textContent || '').trim();
+          if (!t2 || nd.clientWidth <= 0) continue;
+          if (nd.scrollWidth > nd.clientWidth + 1) {
+            clipped2.push((nd.className || nd.tagName) + '「' + t2.slice(0, 10) + '」');
+          }
+        }
+        TH.ok('★ ' + label + '：没有被切掉的文字（320px 上允许关卡名走省略号）',
+          clipped2.length === 0 ||
+          (clipped2.length === 1 && clipped2[0].indexOf('hud-stage-name') === 0),
+          clipped2.join(' | '));
+
+        // 开战，量战场画布
         if (fight) { fight.click(); await wait(320); }
         var cv = D.getElementById('arena');
         var cw = cv ? cv.getBoundingClientRect().width : 0;
@@ -2659,6 +3078,7 @@
       try {
         await wait(300);
         await testCover();
+        await testAutoUpdate();
         await testSettings();
         await testEnterPve();
         await testLayout();
@@ -2668,6 +3088,7 @@
         await testBruteVfx();
         await testDuckVfx();
         await testZhangVfx();
+        await testMedicVfx();
         await testLaughVfx();
         await testDomainVfx();
         await testYangVfx();
