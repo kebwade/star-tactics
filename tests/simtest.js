@@ -472,6 +472,9 @@
     var ritesPending = {};                                    // 老牧师：谁正在被祷告（等人站起来）
     var ritesReviveCount = {};                                // 老牧师：谁被救了几次
     var ritesByPriest = {};                                   // 老牧师：每个牧师救了几个人
+    var revivedOnce = {};                                     // 复活过一次（老牧师救的 / 被招安的）
+    var convertCount = {};                                    // 孙笑川：谁被招安了几次
+    var curOf = {}, curLive = {};                             // 电棍：每道电流的状态 / 每个电棍活着几条
     var chillStacks = {}, chillPending = {};                   // 张雪峰：冰棍层数 / 刚满层待冰冻
     var stunCastN = {};                                        // 嘉豪：一次施法已经发出了几条眩晕
     var peakStunArmedAt = {};                                  // 羊帆：巅峰一击 / 自爆发生的时刻
@@ -625,8 +628,13 @@
               bad(tag + ' 不在大笑期间却回了血 ' + to);
             }
             if (init[to] && init[to].laughHealPct > 0) {
+              /* ★★ 容差 1.05（不是 0.6）：`healPool` 会把不足 1 点的治疗攒起来、
+                 下一次一起放出去（医者羁绊每 tick 那份就是零点几），
+                 所以单条 heal 事件最多比"定额"多出不到 1 点。
+                 这条和「外卖回血」那条是同一个来源（见第 123 行那条坑）——
+                 它这次才红，是因为换了棋子之后随机序列变了、头一次踩上边界。 */
               if (Math.abs(e.amount - Math.min(init[to].maxHp * init[to].laughHealPct,
-                    U.round2(e.hpMax - (e.hpAfter - e.amount)))) > 0.6) {
+                    U.round2(e.hpMax - (e.hpAfter - e.amount)))) > 1.05) {
                 bad(tag + ' 大笑回血量不是最大生命的 ' + init[to].laughHealPct);
               }
             }
@@ -639,6 +647,45 @@
             if (init[e.from] && !init[e.from].laughHeal) {
               bad(tag + ' 这个棋子没有「笑传四方」（3 星才有），却在治疗队友');
             }
+          }
+          /* ★★ 美团袋鼠 3 星「好评如潮」：普攻给"被打中的敌人周围"的队友送外卖。
+             守住四件事：
+               ① 只有 3 星（deliveryHealPct > 0）的棋子才有这个治疗
+               ② 施法者必须是**自己人**（外卖不会送给对面）
+               ③ 每一口都必须挂在**同一 tick 的一次普攻**上（不会凭空冒出来）
+               ④ 一口不能超过「自己的生命上限 × healPct」——
+                  上限型数值，所以只能验上界（被剩余血量截断是合法的）。 */
+          if (e.reason === 'delivery') {
+            var du6 = init[e.from];
+            if (!du6) { bad(tag + ' 外卖治疗来自未知单位 ' + e.from); break; }
+            if (!(du6.deliveryHealPct > 0)) {
+              bad(tag + ' 这个棋子不该有外卖治疗（3 星才有） ' + e.from);
+            }
+            if (init[to] && init[to].side !== du6.side) {
+              bad(tag + ' 外卖送到了敌方单位身上 ' + to);
+            }
+            if (init[to] && e.amount > init[to].maxHp * du6.deliveryHealPct + 1.05) {
+              /* ★★ 容差是 **1.05**，不是 0.6 —— 这不是"把断言放宽到能过"，
+                 而是 `healPool` 那条既有规则的必然结果：
+                 不足 1 点的治疗（医者羁绊的每 tick 回血、光环那类）**不会**被丢掉，
+                 而是攒在 `healPool` 里，够 1 点才生效并记账
+                 （README 第 2 行坑）。所以某一口外卖可能顺手把上一 tick 攒下的
+                 ~1 点一起放出来，事件里的 amount 就比"这一口的定额"多一点。
+                 ★ 第一版按 0.6 卡，80 场随机对局里就报出了
+                 「40.18 > 39.2」—— 引擎没错，是上界写得太死。 */
+              bad(tag + ' 外卖回血超过了最大生命的 ' + du6.deliveryHealPct +
+                  '（含 healPool 攒下的 <1 点）：' + e.amount + ' > ' +
+                  U.round2(init[to].maxHp * du6.deliveryHealPct));
+            }
+            var paired6 = false;
+            for (var q6 = 0; q6 < res.log.length; q6++) {
+              var pe6 = res.log[q6];
+              if (pe6.type === 'attack' && pe6.t === e.t && pe6.from === e.from) {
+                paired6 = true;
+                break;
+              }
+            }
+            if (!paired6) bad(tag + ' 外卖治疗没有紧跟在同一 tick 的一次普攻上 ' + e.to);
           }
           if (!init[to]) { bad(tag + ' 指向未知单位 ' + to); break; }
           if (!alive[to]) bad(tag + ' 治疗了已死亡的单位 ' + to);
@@ -947,6 +994,9 @@
           lastHp[e.who] = e.hp;            // ★ 不更新的话，复活后的第一次受伤会被判成「血量上升」
           lastShield[e.who] = 0;
           reviveCount[e.who] = (reviveCount[e.who] || 0) + 1;
+          /* ★ 记下"它复活过"—— 孙笑川 3 星的「安排上了」对**已经复活过**的单位无效。
+             不在这里记的话，那条排除条件在随机对局里永远验不到（空转）。 */
+          revivedOnce[e.who] = true;
           if (!!e.cdCut !== !!ru.cdCut) bad(tag + ' cdCut 标记和棋子不符');
           if (!(e.maxMana > 0)) bad(tag + ' 复活后法力上限非法');
           break;
@@ -1243,6 +1293,60 @@
                反复出现的一条经验（"上一条事件是 attack"那条也是栽在这里）。 */
             if (peakStunArmedAt[e.from] !== e.t) {
               bad(tag + ' 巅峰眩晕没有紧跟在一次巅峰一击 / 自爆之后 ' + e.from);
+            }
+          } else if (e.reason === 'current') {
+            /* ★ 电棍 2 星「麻痹」：电流每次弹射额外击晕 0.5 秒。
+             *   ★ 和嘉豪那条**不能共用分支**：那个是"一次施法控几个人"，
+             *     而这个是"每条电流各晕一下"—— 同一 tick 里有三条电流同时
+             *     落地是完全合法的（3 星上限就是 3），按"每次施法几条"去数
+             *     会误报成"一次施法发了 3 条眩晕"。
+             *   ★ 它必须**紧跟在一条电流弹射之后**（同一 tick、同一个受害者）——
+             *     单独冒出来一条"电棍晕了谁"是不可能的。 */
+            var ju4 = init[e.from];
+            if (!ju4) { bad(tag + ' 电流眩晕来自未知单位 ' + e.from); break; }
+            if (!init[e.to]) { bad(tag + ' 电流眩晕指向未知单位 ' + e.to); break; }
+            if (!(ju4.currentStunDur > 0)) {
+              bad(tag + ' 这个电棍不该有电流眩晕（1 星级？）' + e.from);
+            } else if (Math.abs(e.dur - ju4.currentStunDur) > 1e-9) {
+              bad(tag + ' 电流眩晕时长不是数据里的 ' + ju4.currentStunDur + '：' + e.dur);
+            }
+            if (!(e.until > e.t)) bad(tag + ' 电流眩晕的 until 不在未来');
+            var paired4 = false;
+            for (var q4 = 0; q4 < res.log.length; q4++) {
+              var pe4 = res.log[q4];
+              if (pe4.type === 'current' && pe4.t === e.t && pe4.to === e.to &&
+                  !pe4.born && !pe4.fizzle) { paired4 = true; break; }
+            }
+            if (!paired4) {
+              bad(tag + ' 电流眩晕没有紧跟在同一 tick 的一次电流弹射之后 ' + e.to);
+            }
+          } else if (e.reason === 'frost') {
+            /* ★ 冰冰冰 2 星「冻手冻脚」：被寒霜新星打中的人额外冰冻 1.5 秒。
+             *   ★★ 这条**三个分支都不能共用**：
+             *     `freeze`（巧乐兹满层）要求"刚攒满 10 层"——技能冰冻没有层数；
+             *     `current`（电棍麻痹）要求"紧跟一次电流弹射"；
+             *     嘉豪那条要求带上 `targets` 名单 —— 技能冰冻是一条一个人。
+             *     这就是"两条独立规则共用一个事件类型时，判据不能共用"
+             *     （README 第 106 行）在**校验器**上的同一课。
+             *   ★ 它必须紧跟在同一 tick、同一施法者的一次技能伤害之后：
+             *     单独冒出来一条"冰冰冰冻了谁"是不可能的。 */
+            var fu5 = init[e.from];
+            if (!fu5) { bad(tag + ' 技能冰冻来自未知单位 ' + e.from); break; }
+            if (!init[e.to]) { bad(tag + ' 技能冰冻指向未知单位 ' + e.to); break; }
+            if (!(fu5.frostFreezeDur > 0)) {
+              bad(tag + ' 这个棋子不该有技能冰冻（1 星级？）' + e.from);
+            } else if (Math.abs(e.dur - fu5.frostFreezeDur) > 1e-9) {
+              bad(tag + ' 技能冰冻时长不是数据里的 ' + fu5.frostFreezeDur + '：' + e.dur);
+            }
+            if (!(e.until > e.t)) bad(tag + ' 技能冰冻的 until 不在未来');
+            var paired5 = false;
+            for (var q5 = 0; q5 < res.log.length; q5++) {
+              var pe5 = res.log[q5];
+              if (pe5.type === 'skill' && pe5.t === e.t &&
+                  pe5.from === e.from && pe5.to === e.to) { paired5 = true; break; }
+            }
+            if (!paired5) {
+              bad(tag + ' 技能冰冻没有紧跟在同一 tick 的一次技能伤害之后 ' + e.to);
             }
           } else {
             /* ★ 嘉豪「男人领域」：一次可以同时控多个人（2 星 2 个、3 星 3 个）。
@@ -1632,6 +1736,9 @@
           lastHp[e.who] = e.hp;            // ★ 不更新的话，复活后第一次受伤会被判成「血量上升」
           lastShield[e.who] = 0;
           ritesReviveCount[e.who] = (ritesReviveCount[e.who] || 0) + 1;
+          /* ★ 同上：老牧师救回来的人，也不能再被孙笑川招安
+             （需求里那句「对有复活技能的单位无效（牢大，老牧师复活的人等）」）。 */
+          revivedOnce[e.who] = true;
           /* ★ 不在这里限制"同一个人被救两次"—— 见上面的说明。 */
           /* ★ 血量按**数据**算（reviveHpPct），不写死满血 ——
              哪天改成半血复活，这条断言要跟着数据走，不能变成假信息。 */
@@ -1664,8 +1771,230 @@
           break;
         }
 
+        /* ★★ 孙笑川 3 星「安排上了」：被打死的敌人倒戈成我方单位。
+         *
+         *   ★ 这是**全场唯一一个"阵营会变"的事件**，所以校验器必须真的跟着改模型：
+         *     `alive`、`diedCount`、占格、位置、阵营全都要翻过来。
+         *     不翻的话，后面每一次"打到了已死亡的单位""给队友上冰棍"都会误报 ——
+         *     而且报出来的现象和真正的问题一模一样，非常难查。
+         *
+         *   ★ 三个排除条件在这里**独立复算**一遍（不能只信引擎的 if）：
+         *     还有复活次数的、正在等结算的、已经复活过一次的，都不该被招安。
+         */
+        case 'convert': {
+          var ku = init[e.from], vu = init[e.who];
+          if (!ku) { bad(tag + ' 招安来自未知单位 ' + e.from); break; }
+          if (!vu) { bad(tag + ' 招安指向未知单位 ' + e.who); break; }
+          if (!ku.convertOnKill) {
+            bad(tag + ' 这个棋子没有「安排上了」（3 星才有），却招安了别人 ' + e.from);
+          }
+          if (ku.side !== e.toSide) bad(tag + ' 招安的 toSide 和施法者阵营不符');
+          if (e.fromSide === e.toSide) bad(tag + ' 招安前后阵营一样（等于没换边）');
+          if (vu.side !== e.fromSide) {
+            bad(tag + ' 被招安的单位原本不在 ' + e.fromSide + ' 这一方');
+          }
+          if (alive[e.who]) bad(tag + ' 还活着的单位被招安了 ' + e.who);
+          /* 排除条件 ①：它自己还有复活次数（牢大 / 羊帆） */
+          if (vu.revives && (reviveCount[e.who] || 0) < (vu.maxRevives || 1)) {
+            bad(tag + ' 招安了一个还有复活次数的单位（' + e.who + '）');
+          }
+          /* 排除条件 ②：还在走坠机 / 自爆（downUntil 挂着的） */
+          if ((vu.crashDamage > 0 || vu.boomAdMult > 0) && (crashCount[e.who] || 0) > 0) {
+            bad(tag + ' 招安了一个正在等坠机/自爆结算的单位（' + e.who + '）');
+          }
+          /* 排除条件 ③：已经复活过一次（老牧师救回来的 / 之前被招安过的） */
+          if (revivedOnce[e.who]) {
+            bad(tag + ' 招安了一个已经复活过的单位（' + e.who + '）');
+          }
+          if (!(e.hp > 0) || e.hp > e.hpMax + 0.02) bad(tag + ' 招安后的血量非法: ' + e.hp);
+          var cwant = U.round2(e.hpMax * ku.convertHpPct);
+          if (Math.abs(e.hp - cwant) > 1.5) {
+            bad(tag + ' 招安的血量应该是上限 × ' + ku.convertHpPct + ' = ' +
+                cwant + '，实际 ' + e.hp);
+          }
+          if (ST.Battle.sideOfRow(e.r) !== e.toSide) {
+            bad(tag + ' 招安之后站在了对面半场 (' + e.r + ',' + e.c + ')');
+          }
+          var ckey = e.r + ',' + e.c;
+          if (cellOf[ckey] && cellOf[ckey] !== e.who) {
+            bad(tag + ' 招安占了一个有人的格子 ' + ckey);
+          }
+          /* 翻模型：和 revive / reviveAlly 一样，它又活过来了 */
+          if (curPos[e.who]) delete cellOf[curPos[e.who].r + ',' + curPos[e.who].c];
+          cellOf[ckey] = e.who;
+          curPos[e.who] = { r: e.r, c: e.c };
+          alive[e.who] = true;
+          diedCount[e.who]--;               // 它又活了，不再算在这个头上
+          lastHp[e.who] = e.hp;
+          lastShield[e.who] = 0;
+          init[e.who].side = e.toSide;      // ★ 阵营也要换，后面全靠它
+          revivedOnce[e.who] = true;
+          convertCount[e.who] = (convertCount[e.who] || 0) + 1;
+          if (convertCount[e.who] > 1) {
+            bad(tag + ' 同一个单位被招安了两次 ' + e.who);
+          }
+          break;
+        }
+
+        /* ★★ 电棍「导电」：普攻/技能留下的电流，0.5 秒一跳，最多四次。
+         *
+         *   ★ 这一套的规则密度很高，所以校验器要独立复算：
+         *     · `born` 事件：施法者要有这个被动，而且**同时存在数不能超上限**
+         *       （1/2 星 1 条、3 星 3 条）—— 这是"每个电棍制造的电流只能存在一个"
+         *       这条需求唯一能验的地方；
+         *     · 跳：目标必须是**敌方**、在 3×3 内、而且**没被这道电流打过**；
+         *       次数每跳 -1，且不能跳到负数；伤害必须 = 施法者攻击力 × 25%；
+         *     · `fizzle`：附近没新目标（或施法者倒了）时消失 —— 这是终止条件。
+         */
+        case 'current': {
+          var ou4 = init[e.from];
+          if (!ou4) { bad(tag + ' 电流来自未知单位 ' + e.from); break; }
+          if (!ou4.currentOn) {
+            bad(tag + ' 这个棋子没有「导电」被动，却放出了电流 ' + e.from);
+          }
+          if (e.born) {
+            /* ★ 同时存在数：先减掉这一条，再看有没有超 */
+            curLive[e.from] = (curLive[e.from] || 0) + 1;
+            if (curLive[e.from] > (ou4.currentMaxAt || 1)) {
+              bad(tag + ' 同一个电棍同时存在 ' + curLive[e.from] +
+                  ' 条电流，超过上限 ' + ou4.currentMaxAt);
+            }
+            if (!(e.delay > 0)) bad(tag + ' 电流的延迟非正');
+            if (Math.abs(e.until - (e.t + e.delay)) > 0.002) {
+              bad(tag + ' 电流的 until 不等于 t + delay');
+            }
+            if (!(e.left >= 1)) bad(tag + ' 新电流的剩余弹射次数非正: ' + e.left);
+            curOf[e.id] = { owner: e.from, side: e.side, r: e.r, c: e.c,
+                            left: e.left, hit: [e.to] };
+            break;
+          }
+          var cc = curOf[e.id];
+          if (!cc) { bad(tag + ' 电流 #' + e.id + ' 没有 born 就跳/散了'); break; }
+          if (e.fizzle) {
+            curLive[e.from] = Math.max(0, (curLive[e.from] || 1) - 1);
+            curOf[e.id] = null;
+            break;
+          }
+          /* 弹射一下 */
+          if (e.from !== cc.owner) bad(tag + ' 电流的归属变了 ' + e.from);
+          if (!init[e.to]) { bad(tag + ' 电流跳向未知单位 ' + e.to); break; }
+          var vict = init[e.to];
+          if (vict.side === cc.side) bad(tag + ' 电流跳到了自己人身上 ' + e.to);
+          if (cc.hit.indexOf(e.to) >= 0) {
+            bad(tag + ' 同一道电流重复打同一个人 ' + e.to + '（说好弹过的不再命中）');
+          }
+          if (U.cheb(e.fromR, e.fromC, e.r, e.c) > (ou4.currentRadius || 1)) {
+            bad(tag + ' 电流跳出了 3×3：(' + e.fromR + ',' + e.fromC + ') → (' +
+                e.r + ',' + e.c + ')');
+          }
+          if (e.left !== cc.left - 1) {
+            bad(tag + ' 电流剩余次数应该是 ' + (cc.left - 1) + '，实际 ' + e.left);
+          }
+          if (e.left < 0) bad(tag + ' 电流弹射次数变成负数了：' + e.left);
+          if (cc.left > ou4.currentMaxBounces) {
+            bad(tag + ' 弹射次数超过了上限 ' + ou4.currentMaxBounces);
+          }
+          /* 伤害必须正好是"施法者攻击力 × 25%" */
+          if (Math.abs(e.raw - ou4.ad * ou4.currentPct) > 0.05) {
+            bad(tag + ' 电流伤害不是攻击力 × ' + ou4.currentPct + '：raw=' + e.raw +
+                '（攻击力 ' + ou4.ad + '）');
+          }
+          /* ★★ 注意这里**不能**断言 dmg <= raw ——
+             加时赛有伤害递增（ramp），34 秒之后实际伤害会**高于** raw。
+             第一版就是这么假红的：dmg=13.12 > raw=12.94，看着像"多打了"，
+             其实是 ramp ≈ 1.014。事件里带上 ramp 之后才对得上账。
+           * ★ 也**不能**断言 dmg > 0：100元的鸭子的「抓娃娃」会把整次伤害判定
+             直接无效掉，`res.dmg` 就是 0（那是合法结局，不是 bug）。
+             所以下界是 0，上界是 raw × ramp。 */
+          var cap4 = e.raw * (e.ramp || 1) + 0.02;
+          if (!(e.dmg >= 0) || e.dmg > cap4) {
+            bad(tag + ' 电流的实际伤害不合法：dmg=' + e.dmg + ' raw=' + e.raw +
+                ' ramp=' + (e.ramp === undefined ? '缺' : e.ramp));
+          }
+          cc.hit.push(e.to);
+          cc.r = e.r; cc.c = e.c; cc.left = e.left;
+          if (e.left <= 0) {
+            curLive[e.from] = Math.max(0, (curLive[e.from] || 1) - 1);
+            curOf[e.id] = null;
+          }
+          break;
+        }
+
+        /* ★★ 攻速增益。两种来源，判据完全不同：
+         *   `reason='self'`（双刃舞者的「疾风连斩」）—— 自己给自己开，who === from。
+         *   `reason='delivery'`（美团袋鼠 2 星「准时送达」）—— 别人送来的，
+         *     必须落在**同一个施法者、同一 tick 的一次治疗**的那个受害者身上。
+         *   ★ 两条规则共用一个事件类型，所以**判据不能共用** ——
+         *     这已经是这个项目里第四次踩到同一课（第 106 行那条）。 */
+        case 'buff': {
+          var bu6 = init[e.who];
+          if (!bu6) { bad(tag + ' 攻速增益指向未知单位 ' + e.who); break; }
+          if (!(e.amount > 0)) bad(tag + ' 攻速增益幅度非正');
+          if (!(e.dur > 0)) bad(tag + ' 攻速增益时长非正');
+          if (!(e.until > e.t)) bad(tag + ' 攻速增益的 until 不在未来');
+          if (e.reason === 'delivery') {
+            var src6 = init[e.from];
+            if (!src6) { bad(tag + ' 外卖增益来自未知单位 ' + e.from); break; }
+            if (!(src6.deliveryAsPct > 0)) {
+              bad(tag + ' 这个棋子不该发外卖增益（2 星才有） ' + e.from);
+            } else if (Math.abs(e.amount - src6.deliveryAsPct) > 1e-9) {
+              bad(tag + ' 外卖增益不是数据里的 ' + src6.deliveryAsPct + '：' + e.amount);
+            }
+            if (src6.deliveryAsDur > 0 && Math.abs(e.dur - src6.deliveryAsDur) > 1e-9) {
+              bad(tag + ' 外卖增益时长不是数据里的 ' + src6.deliveryAsDur + '：' + e.dur);
+            }
+            if (bu6.side !== src6.side) bad(tag + ' 外卖增益送到了对面 ' + e.who);
+            /* ★★ 配对的是**施法**，不是治疗 —— 外卖是"投出去"就成立了：
+               队友满血时那一口不会写出 heal 事件（healUnit 直接返回 0），
+               但外卖照样送到。第一版这里要求"紧跟一次治疗"，
+               随机对局里立刻报「外卖增益没有紧跟在同一 tick 的一次治疗上」——
+               **引擎是对的，断言比规则更严**（和临终祷告那条一模一样的坑）。 */
+            var paired7 = false;
+            for (var q7 = 0; q7 < res.log.length; q7++) {
+              var pe7 = res.log[q7];
+              if (pe7.type === 'cast' && pe7.t === e.t && pe7.from === e.from) {
+                paired7 = true;
+                break;
+              }
+            }
+            if (!paired7) {
+              bad(tag + ' 外卖增益没有紧跟在同一 tick 的一次施法上 ' + e.who);
+            }
+          }
+          break;
+        }
+
+        /* ★★ 东北雨姐「红薯粉丝」：捆住 = **只挡走位，不挡出手**。
+         *   所以校验器要守的不是"被捆的人没出手"（那正好是反的），
+         *   而是这四件事：
+         *     ① 只有 2 星以上的雨姐才有这个能力（bindOn）
+         *     ② 时长的数据里那个数（3 秒）
+         *     ③ 受害者全在施法者 5×5 之内（半径 2）
+         *     ④ 它**不是** stun：这一条靠"root 和 stun 是两个事件类型"来保证，
+         *        这里再补一句"同一时刻被捆的人仍然能出手"的正面证据。
+         *   ★ 第 ④ 条是这一整套里最值钱的：把 root 写成 stun 的话，
+         *     特效、数值、时长全都对，只有"它还能还手吗"不一样 ——
+         *     而那正是玩家能感觉到的差别。 */
+        case 'root': {
+          var ru6 = init[e.from], rv6 = init[e.to];
+          if (!ru6) { bad(tag + ' 捆人来自未知单位 ' + e.from); break; }
+          if (!rv6) { bad(tag + ' 捆住指向未知单位 ' + e.to); break; }
+          if (!(ru6.bindOn)) {
+            bad(tag + ' 这个棋子不该会捆人（2 星才有） ' + e.from);
+          } else if (Math.abs(e.dur - ru6.bindDur) > 1e-9) {
+            bad(tag + ' 捆住的时长不是数据里的 ' + ru6.bindDur + '：' + e.dur);
+          }
+          if (!(e.until > e.t)) bad(tag + ' 捆住的 until 不在未来');
+          if (rv6.side === ru6.side) bad(tag + ' 把粉丝捆到自己人身上了 ' + e.to);
+          /* 位置按**施法那一刻**算：这里用快照里的初始坐标不够准（会走位），
+             所以退一步只验"半径是数据里那个值"，具体几何由 5c13 那一节
+             用"全场静止"的场面精确验。 */
+          if (!(ru6.bindRadius > 0)) bad(tag + ' 捆人的半径没配');
+          break;
+        }
+
         default:
-          if (['stun', 'buff'].indexOf(e.type) < 0) bad(tag + ' 未知事件类型');
+          if (['stun'].indexOf(e.type) < 0) bad(tag + ' 未知事件类型');
       }
     }
 
@@ -3764,6 +4093,1233 @@
     } else {
       TH.note('没凑出这个场面 —— 这条这次没验到，不是通过');
     }
+  })();
+
+  /* ============================================================
+   * 5c10. 电棍（原「长枪兵」/ spearman）
+   *
+   *   面板：普攻伤害减半、攻速翻倍（ad 46→23、as 0.64→1.28）
+   *   技能「穿刺投枪」一个字没动。
+   *   1 星「导电」    普攻和技能留下电流，0.5 秒后向 3×3 内的敌人弹射，
+   *                   每次 25% 攻击力，最多四次
+   *   2 星「麻痹」    每次弹射额外击晕 0.5 秒
+   *   3 星「三相电」  同时存在的电流 1 → 3 条
+   * ============================================================ */
+  TH.section('电棍 · 导电 / 麻痹 / 三相电');
+
+  var BATON = ST.UNIT_BY_ID.spearman;
+  TH.eq('单位已改名为电棍', BATON.name, '电棍');
+  TH.eq('id 仍然是 spearman（levels.js 的阵容 + art/spearman.png 都按 id 索引）',
+    BATON.id, 'spearman');
+  TH.eq('★ 普攻伤害减半（46 → 23）', BATON.ad, 23);
+  TH.eq('★ 攻速翻倍（0.64 → 1.28）', BATON.as, 1.28);
+  /* ★★ 这两条要**一起**看：23 × 1.28 = 29.44，原来的 46 × 0.64 = 29.44。
+     所以这是"出手更密、每下更轻"的换形，不是加强 —— 面板 DPS 一模一样。
+     只验其中一条的话，把两个数都写错成"更强"也能过。 */
+  TH.ok('★ 减半 + 翻倍 = 面板 DPS 不变（换形，不是加强）',
+    Math.abs(BATON.ad * BATON.as - 46 * 0.64) < 0.05,
+    (BATON.ad * BATON.as).toFixed(2) + ' vs ' + (46 * 0.64).toFixed(2));
+  TH.ok('★ 技能一个字没动（穿刺投枪 / line / 170 / 长度 3）',
+    BATON.skill.name === '穿刺投枪' && BATON.skill.kind === 'line' &&
+    BATON.skill.damage === 170 && BATON.skill.length === 3,
+    BATON.skill.name + '/' + BATON.skill.kind + '/' + BATON.skill.damage);
+  TH.eq('被动类型是导电', ST.passiveKind(BATON), 'current');
+  TH.eq('★ 1 星就有被动，名字是「导电」', ST.passiveName(BATON, 1), '导电');
+  TH.eq('2 星的名字', ST.passiveName(BATON, 2), '导电 + 麻痹');
+  TH.eq('3 星的名字', ST.passiveName(BATON, 3), '导电 + 麻痹 + 三相电');
+  /* ★ 4 星：`names` 表同样只写到 3 星。夹紧写歪的话 4 星会掉成光秃秃的
+     「被动」（曾经真的发生过 —— 13 个棋子全中），所以这一条要钉住。 */
+  TH.eq('★ 4 星的名字不会被夹没（还是三层全在）',
+    ST.passiveName(BATON, 4), '导电 + 麻痹 + 三相电');
+  TH.eq('★ 弹射延迟 0.5 秒', BATON.passive.delay, 0.5);
+  TH.eq('★ 弹射范围半径 1（= 3×3）', BATON.passive.radius, 1);
+  TH.eq('★ 每次弹射 25% 攻击力', BATON.passive.bouncePct, 0.25);
+  TH.eq('★ 最多弹射四次', BATON.passive.maxBounces, 4);
+  TH.eq('★ 2 星起弹射带眩晕', BATON.passive.stunAt, 2);
+  TH.eq('★ 眩晕 0.5 秒', BATON.passive.stunDur, 0.5);
+  TH.eq('★ 同时存在数按星级：1/2 星 1 条、3 星 3 条',
+    [BATON.passive.maxAtOnce[1], BATON.passive.maxAtOnce[2],
+     BATON.passive.maxAtOnce[3]].join('/'), '1/1/3');
+
+  /* 场面：电棍（三条腰带撑血）vs **五个挤成一团**的靶子。
+     ★ 为什么是五个：一次弹射最多四下，加上落地那一下要打**五个不同的人**
+       （弹过的不再命中），所以要凑够 5 个才验得到"第四次弹射"。
+     ★ 为什么用 1 星荣誉 + 三腰带：它们血厚（1340）、输出极低（每个十几 dps），
+       于是电棍能活二十秒、而且一个靶子都打不死 —— 场面干净，
+       不会混进死亡/复活那些别的事件。
+     ★ 靶子摆成 2×3 的方块：保证每一跳都能在 3×3 内找到"还没打过的人"。 */
+  function batonFight(star) {
+    return ST.Battle.battle({
+      a: [{ id: 'spearman', star: star, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 3 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 4 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 5 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 5, c: 3 },
+          { id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 5, c: 4 }]
+    }, 31415);
+  }
+  /** 把电流事件按 id 分组 */
+  function chainOf(r) {
+    var byId = {};
+    for (var i = 0; i < r.log.length; i++) {
+      var e = r.log[i];
+      if (e.type !== 'current') continue;
+      if (!byId[e.id]) byId[e.id] = { born: null, jumps: [], fizzle: null };
+      if (e.born) byId[e.id].born = e;
+      else if (e.fizzle) byId[e.id].fizzle = e;
+      else byId[e.id].jumps.push(e);
+    }
+    return byId;
+  }
+
+  // ① 普攻留下电流 → 0.5 秒后弹射 → 每次 25% 攻击力
+  (function () {
+    var r = batonFight(1);
+    var me = r.initial.units.filter(function (u) { return u.side === 'a'; })[0];
+    var chains = chainOf(r);
+    var ids = Object.keys(chains);
+    TH.ok('★ 普攻真的留下了电流', ids.length > 0, ids.length + ' 道');
+    if (!ids.length) return;
+    var first = chains[ids[0]];
+    TH.ok('第一道电流是"命中之后才出现的"（born 挂在一次普攻上）',
+      !!first.born && first.born.to !== undefined, JSON.stringify(first.born && first.born.to));
+    TH.ok('★ 弹射确实发生了', first.jumps.length > 0, first.jumps.length + ' 跳');
+    if (first.jumps.length) {
+      var j0 = first.jumps[0];
+      TH.ok('★ 第一跳的间隔是 0.5 秒',
+        Math.abs((j0.t - first.born.t) - 0.5) < 0.06,
+        U.round2(j0.t - first.born.t) + 's');
+      TH.ok('★ 每一次弹射都正好是「攻击力 × 25%」',
+        first.jumps.every(function (j) {
+          return Math.abs(j.raw - Math.round(me.ad * 0.25 * 1000) / 1000) < 0.05;
+        }),
+        'raw=' + j0.raw + '　攻击力 ' + me.ad + ' → 期望 ' +
+        (Math.round(me.ad * 0.25 * 1000) / 1000));
+      TH.ok('★ 相邻两跳之间也是 0.5 秒',
+        first.jumps.length < 2 ||
+        Math.abs((first.jumps[1].t - first.jumps[0].t) - 0.5) < 0.06,
+        first.jumps.length < 2 ? '—' :
+          (U.round2(first.jumps[1].t - first.jumps[0].t) + 's'));
+      // 每一跳的起点必须是上一跳的落点（电流是"跳过去"的，不是瞬间挪)
+      TH.ok('★ 每一跳都是从上一跳的落点出发的（电流真的在跳）',
+        first.jumps.every(function (j) {
+          return j.fromR !== undefined;
+        }) && first.jumps[0].fromR === first.born.r &&
+        first.jumps[0].fromC === first.born.c,
+        first.jumps[0].fromR + ',' + first.jumps[0].fromC + ' ← born ' +
+        first.born.r + ',' + first.born.c);
+      TH.ok('★ 跳过的敌人不会重复命中（连锁闪电的经典规则）',
+        (function () {
+          var seen = [first.born.to], ok = true;
+          first.jumps.forEach(function (j) {
+            if (seen.indexOf(j.to) >= 0) ok = false;
+            seen.push(j.to);
+          });
+          return ok;
+        })(), [first.born.to].concat(first.jumps.map(function (j) { return j.to; })).join('→'));
+    }
+  })();
+
+  // ② 最多四次：满了之后不再跳
+  (function () {
+    var r = batonFight(3);
+    var chains = chainOf(r);
+    var ids = Object.keys(chains);
+    var maxJumps = 0, over = [];
+    ids.forEach(function (id) {
+      var c = chains[id];
+      maxJumps = Math.max(maxJumps, c.jumps.length);
+      if (c.jumps.length > 4) over.push(id + '=' + c.jumps.length);
+      // 次数必须一路递减到 0
+      for (var i = 0; i < c.jumps.length; i++) {
+        if (c.jumps[i].left !== 4 - 1 - i) over.push('left 不连续 ' + c.jumps[i].left);
+      }
+    });
+    TH.ok('★ 一次弹射最多四下（不会出现第五跳）', over.length === 0, over.slice(0, 3).join(' '));
+    TH.ok('★ 而且真的有电流跳满了四下（否则"最多四次"没被验到）', maxJumps === 4,
+      '实测最多 ' + maxJumps + ' 跳');
+    TH.note('电棍 3 星这一场：' + ids.length + ' 道电流，最长 ' + maxJumps + ' 跳');
+  })();
+
+  // ③ 同时存在数：1 星只能 1 条，3 星到 3 条
+  (function () {
+    function maxLive(r) {
+      // 按事件顺序模拟"活着的电流条数"
+      var live = {}, peak = 0;
+      for (var i = 0; i < r.log.length; i++) {
+        var e = r.log[i];
+        if (e.type !== 'current') continue;
+        if (e.born) { live[e.id] = 1; }
+        if ((!e.born && !e.fizzle && e.left <= 0) || e.fizzle) delete live[e.id];
+        peak = Math.max(peak, Object.keys(live).length);
+      }
+      return peak;
+    }
+    var p1 = maxLive(batonFight(1));
+    var p2 = maxLive(batonFight(2));
+    var p3 = maxLive(batonFight(3));
+    /* ★★ 4 星：maxAtOnce 这张表只写到 3 星，4 星是"3 个 3 星融合"出来的，
+       能力必须停在 3 星那一档（查表往低档取），**不能**因为是 4 星就掉回 1 条。
+       这条同时守两件事：引擎的 starLookup 夹紧逻辑，和文案层 starNum 的一致性
+       —— 两边算出来不一样的话，卡面写着"3 条"而实际只有 1 条。 */
+    var p4 = maxLive(batonFight(4));
+    TH.eq('★ 1 星同时只有 1 条电流', p1, 1);
+    TH.eq('★ 2 星也还是 1 条', p2, 1);
+    TH.ok('★ 3 星能同时挂到 3 条（三相电）', p3 >= 3, p3 + ' 条');
+    TH.ok('★ 4 星的电棍不会比 3 星弱（表里查不到就往低档取，不是掉回 1 条）',
+      p4 >= 3, p4 + ' 条');
+    TH.note('同时存在数实测：1星 ' + p1 + ' / 2星 ' + p2 + ' / 3星 ' + p3 +
+      ' / 4星 ' + p4);
+  })();
+
+  // ④ 2 星弹射带 0.5 秒眩晕；1 星没有
+  (function () {
+    function curStuns(r) {
+      return r.log.filter(function (e) {
+        return e.type === 'stun' && e.reason === 'current';
+      });
+    }
+    var s1 = curStuns(batonFight(1));
+    var s2 = curStuns(batonFight(2));
+    TH.eq('★ 1 星的电流不会眩晕（麻痹是 2 星的事）', s1.length, 0);
+    TH.ok('★ 2 星的电流会眩晕', s2.length > 0, s2.length + ' 次');
+    TH.ok('★ 眩晕时长都是 0.5 秒',
+      s2.every(function (e) { return Math.abs(e.dur - 0.5) < 1e-9; }),
+      s2.length ? s2[0].dur + 's' : '—');
+  })();
+
+  // ⑤ 技能也会留下电流（需求："普攻和技能会传导电流"）
+  (function () {
+    var r = batonFight(3);
+    var hit = 0;
+    for (var i = 0; i < r.log.length; i++) {
+      var e = r.log[i];
+      if (e.type !== 'current' || !e.born) continue;
+      // 同 tick 里有没有一条技能伤害打的就是它？
+      for (var j = 0; j < r.log.length; j++) {
+        var s = r.log[j];
+        if (s.type === 'skill' && s.t === e.t && s.to === e.to) { hit++; break; }
+      }
+    }
+    TH.ok('★ 技能命中也会留下电流（不只是普攻）', hit > 0,
+      hit + ' 道电流是技能留下的');
+    TH.note('技能留下的电流：' + hit + ' 道');
+  })();
+
+  // ⑥ 规则外的边界：一个敌人时电流第一跳就无处可去 → 消散
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'spearman', star: 1, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'bowman', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, 2718);
+    var chains = chainOf(r);
+    var ids = Object.keys(chains);
+    TH.ok('这一场也留下了电流', ids.length > 0, ids.length + ' 道');
+    var fizzled = ids.filter(function (id) { return !!chains[id].fizzle; });
+    TH.ok('★ 旁边没有别的敌人时，电流会消散（这是终止条件）',
+      fizzled.length > 0, fizzled.length + '/' + ids.length + ' 道消散了');
+    TH.ok('★ 消散的电流一跳都没跳过（不是"空转四次"）',
+      fizzled.every(function (id) { return chains[id].jumps.length === 0; }),
+      fizzled.map(function (id) { return chains[id].jumps.length; }).join(','));
+    checkInvariants(r, '电棍·单体电流消散', function (msg) {
+      TH.ok('不变量（单体电流消散）: ' + msg, false);
+    });
+  })();
+
+  /* ============================================================
+   * 5c13. 东北雨姐（原「圣殿骑士」/ templar）
+   *
+   *   面板：生命 +50%（880 → 1320）、攻击 +30%（58 → 75）。
+   *   技能「圣盾术」一个字没动（shield / 血量百分比最低的队友 / 320）。
+   *   1 星            没有被动，就是原来那个套盾骑士
+   *   2 星「红薯粉丝」 放技能的同时把身边 5×5 内的敌人**捆住** 3 秒
+   *                    —— 捆住 = 钉在原地，但**还能打**（不是眩晕）
+   *   3 星「雨姐的关照」普攻打到**被捆住的**敌人时，给血量最低的队友回 8% 最大生命
+   * ============================================================ */
+  TH.section('东北雨姐 · 红薯粉丝 / 雨姐的关照');
+
+  var YU = ST.UNIT_BY_ID.templar;
+  TH.eq('单位已改名为东北雨姐', YU.name, '东北雨姐');
+  TH.eq('id 仍然是 templar（levels.js 的阵容 + art/templar.png 都按 id 索引）',
+    YU.id, 'templar');
+  TH.eq('★ 生命 +50%（880 → 1320）', YU.hp, 1320);
+  TH.eq('★ 攻击 +30%（58 → 75）', YU.ad, 75);
+  TH.ok('★ 技能一个字没动（圣盾术 / shield / 血量最低 / 320）',
+    YU.skill.name === '圣盾术' && YU.skill.kind === 'shield' &&
+    YU.skill.target === 'lowest' && YU.skill.amount === 320,
+    YU.skill.name + '/' + YU.skill.kind + '/' + YU.skill.amount);
+  TH.eq('被动类型是 noodle', ST.passiveKind(YU), 'noodle');
+  TH.eq('★ 1 星没有被动（名字是空的，界面据此走"升星预告"）', ST.passiveName(YU, 1), null);
+  TH.eq('2 星的名字', ST.passiveName(YU, 2), '红薯粉丝');
+  TH.eq('3 星的名字', ST.passiveName(YU, 3), '红薯粉丝 + 雨姐的关照');
+  TH.eq('★ 4 星的名字不会被夹没（两层都在）',
+    ST.passiveName(YU, 4), '红薯粉丝 + 雨姐的关照');
+  TH.eq('★ 2 星起才有捆人', YU.passive.bindAt, 2);
+  TH.eq('★ 捆 3 秒', YU.passive.bindDur, 3);
+  /* ★★ 半径 2（5×5）是刻意的：只捆挨着她的人，那些人本来就在射程内站住打她，
+     **"不能移动"这件事根本看不出来**。上面有更长的注释。 */
+  TH.eq('★ 5×5 范围（半径 2）', YU.passive.bindRadius, 2);
+  TH.eq('★ 3 星起才有回血', YU.passive.healAt, 3);
+  TH.eq('★ 打被捆住的人回 8% 最大生命', YU.passive.hitHealPct, 0.08);
+
+  /* 场面（第一发技能在 t=0，全靠两颗蓝水晶把法力顶满）：
+       我方：雨姐 (3,3) —— 前排，贴着一个敌人
+             猎鹰手 (2,7) + 大果 —— 射程 4，(5,7) 那个敌人离它 2 格，
+             所以它开局就有目标、**整场不走位**；而大果每秒自燃 6% 生命上限，
+             于是它**永远有缺口可回**（healUnit 见到满血会直接返回 0）
+       敌方：(4,3) 贴着她　(4,1) 离她 2 格　(5,7) 离她 4 格（**在 5×5 之外**）
+     ★ 这一场是专门为"捆住到底管什么用"配的，三个敌人各有分工：
+       · (4,3) 贴着她 —— 在射程内，被捆住也**照样打她** → 证明这不是眩晕
+       · (4,1) 离她 2 格 —— 近战够不着，本来就要往上冲；
+                 被捆住 → 钉住不动；3 秒一到 → 立刻开始走
+       · (5,7) 离她 4 格 —— **捆不到**（对照组）：同一时间它必须正常走位。
+         没有这个对照组的话，"被捆的人没动"完全可能只是因为
+         "这一场里本来就没人需要动" —— 那这条断言就是空转的。
+     ★ 敌人用奶龙（近战、伤害中等、不会晕人）：换成弓手的话一发狙击
+       2000 点魔法伤害会当场把雨姐打残，场面撑不到 6 秒。 */
+  function yuFight(star) {
+    var belt3 = ['belt', 'belt', 'belt'];
+    return ST.Battle.battle({
+      a: [{ id: 'templar', star: star, items: ['sapphire', 'sapphire', 'belt'], r: 3, c: 3 },
+          { id: 'falconer', star: 1, items: ['swiftboots', 'belt', 'belt'], r: 2, c: 7 }],
+      b: [{ id: 'stoneguard', star: 3, items: belt3, r: 4, c: 3 },
+          { id: 'stoneguard', star: 3, items: belt3, r: 4, c: 1 },
+          { id: 'stoneguard', star: 3, items: belt3, r: 5, c: 7 }]
+    }, 60607);
+  }
+
+  // ① 捆人的基本事实：谁被捆、捆多久、捆在哪
+  (function () {
+    var r = yuFight(2);
+    var yu = r.initial.units.filter(function (u) { return u.defId === 'templar'; })[0];
+    var pos = {};
+    r.initial.units.forEach(function (u) { pos[u.uid] = { r: u.r, c: u.c, side: u.side }; });
+    var roots = r.log.filter(function (e) { return e.type === 'root'; });
+    TH.ok('★ 放了技能就捆到了人（否则后面全是空断言）', roots.length > 0, roots.length + ' 条');
+    if (!roots.length) return;
+    TH.ok('★ 每一条都是 3 秒（数据里那个数）',
+      roots.every(function (e) { return Math.abs(e.dur - 3) < 1e-9; }), roots[0].dur + 's');
+    TH.ok('★ 捆的全是敌人（不会把自己人捆上）',
+      roots.every(function (e) { return pos[e.to] && pos[e.to].side !== pos[e.from].side; }));
+    /* ★★ 几何只在**第一次施法那一瞬间**验，因为只有那一刻"初始坐标 == 当时坐标"。
+       第一版拿初始坐标去验**所有**的 root，结果报出一串距离 4 ——
+       不是引擎错了，是雨姐和敌人都已经走动过了（她会追着敌人往前压）。
+       完整的半径判定（含对照组）在下面 ③ 里用静止场面对照着验。 */
+    var firstT = roots[0].t;
+    var firstRoots = roots.filter(function (e) { return e.t === firstT; });
+    var far = firstRoots.filter(function (e) {
+      var a = pos[e.from], b = pos[e.to];
+      return U.cheb(a.r, a.c, b.r, b.c) > 2;
+    });
+    TH.ok('★ 第一发捆到的全在雨姐 5×5 之内（半径 2）',
+      firstRoots.length > 0 && far.length === 0,
+      firstRoots.map(function (e) {
+        var a = pos[e.from], b = pos[e.to];
+        return U.cheb(a.r, a.c, b.r, b.c);
+      }).join(','));
+    /* ★★ 一条 root 事件**不能**同时是一条 stun：
+       两个事件类型分开，是为了让人不可能"顺手按眩晕去验"。
+       ★ 断言写成"雨姐从不产生 stun"而不是"全场没有 stun"：
+         这一场里猎鹰手带着大果，它的寒冰攒满 10 层会冻人（reason='freeze'）——
+         那是**另一条**机制，拿它当反例是拿错了对象。 */
+    TH.eq('★★ 雨姐捆人用的是 root 事件，她一个 stun 都不产生（这是两套机制）',
+      r.log.filter(function (e) { return e.type === 'stun' && e.from === yu.uid; }).length, 0);
+    TH.note('2 星这一场：' + roots.length + ' 条 root（第一发 ' + firstRoots.length +
+      ' 条），第一次 @' + U.round2(firstT) + 's');
+  })();
+
+  // ② 1 星既不会捆人，也不会打人回血
+  (function () {
+    var r = yuFight(1);
+    TH.eq('★ 1 星不会捆人（红薯粉丝是 2 星的事）',
+      r.log.filter(function (e) { return e.type === 'root'; }).length, 0);
+    TH.eq('★ 1 星的普攻也不会给队友回血（雨姐的关照是 3 星的事）',
+      r.log.filter(function (e) { return e.type === 'heal' && e.reason === 'noodle'; }).length, 0);
+  })();
+
+  // ③ ★★ 捆住 = 只挡走位、不挡出手（这一条是这个机制的定义）
+  (function () {
+    var r = yuFight(2);
+    var roots = r.log.filter(function (e) { return e.type === 'root'; });
+    TH.ok('这一场捆过人（否则后面全是空断言）', roots.length > 0, roots.length + ' 条');
+    if (!roots.length) return;
+
+    var pos = {};
+    r.initial.units.forEach(function (u) { pos[u.uid] = { r: u.r, c: u.c }; });
+    /* 用**第一条** root 的时间窗：那时候场面还是初始站位，一目了然。
+       ★ 用 `until` 而不是"t+3"：until 是引擎写出来的到期时刻，
+         拿它当窗口边界，等于顺带验了"窗口长度 == 数据里的 3 秒"。 */
+    var win = [roots[0].t, roots[0].until];
+    TH.ok('★ 窗口长度就是数据里的 3 秒', Math.abs((win[1] - win[0]) - 3) < 1e-9,
+      U.round2(win[1] - win[0]) + 's');
+
+    function uidAt(rr, cc) {
+      var out = null;
+      r.initial.units.forEach(function (u) {
+        if (u.r === rr && u.c === cc) out = u.uid;
+      });
+      return out;
+    }
+    var stuck = uidAt(4, 1);      // 离她 2 格：想动，但被捆住
+    var buddy = uidAt(4, 3);      // 贴着她：在射程内，本来就不需要动
+    var free = uidAt(5, 7);       // 离她 4 格：捆不到，对照组
+    TH.ok('三个实验对象都摆对了（贴着的 / 两格外的 / 圈外的）',
+      !!stuck && !!buddy && !!free, [stuck, buddy, free].join(','));
+
+    function movesOf(uid, from, to) {
+      return r.log.filter(function (e) {
+        return e.type === 'move' && e.who === uid && e.t >= from && e.t < to;
+      });
+    }
+
+    /* ① 被捆住、且本来想动的那个：窗口内一格都不许动 */
+    TH.eq('★★ 被捆住的敌人（离她 2 格、本来要冲上来）在 3 秒里一格都没动',
+      movesOf(stuck, win[0], win[1]).length, 0);
+    /* ② 对照组：同一时间、同一个 5×5 之外的那个，必须**正常走位**。
+       这一条才是"上一条不是空转"的证据 —— 没有它，上面那句"没动"
+       完全可能只是因为这一场里本来就没人需要动。 */
+    TH.ok('★★ 对照组（5×5 之外的敌人）在同一时间正常走位（证明"本来就要动"是真的）',
+      movesOf(free, win[0], win[1]).length > 0,
+      '圈外那个走了 ' + movesOf(free, win[0], win[1]).length + ' 次');
+    /* ③ 解捆之后，被捆的那个立刻恢复走位 */
+    TH.ok('★★ 解捆之后它立刻开始走（没动是"被钉住"，不是"它不想动"）',
+      movesOf(stuck, win[1], win[1] + 3).length > 0,
+      '解捆后 3 秒内走了 ' + movesOf(stuck, win[1], win[1] + 3).length + ' 次');
+    /* ④ 但**出手不受影响**：贴着她的那个在窗口内照样打她 */
+    var atkInWin = r.log.filter(function (e) {
+      return e.type === 'attack' && e.t >= win[0] && e.t < win[1] &&
+        (e.from === buddy || e.from === stuck);
+    });
+    TH.ok('★★ 被捆住的人**照样还手**（捆住只挡走位，不是眩晕）',
+      atkInWin.length > 0, '窗口内被捆的人出手 ' + atkInWin.length + ' 次');
+    TH.eq('★ 而且这 3 秒里没有任何人被打晕（两件事没混在一起）',
+      r.log.filter(function (e) {
+        return e.type === 'stun' && e.t >= win[0] && e.t < win[1];
+      }).length, 0);
+    TH.note('第一次捆人窗口 ' + U.round2(win[0]) + '~' + U.round2(win[1]) + 's：' +
+      '被捆的走了 0 次 / 圈外的走了 ' + movesOf(free, win[0], win[1]).length +
+      ' 次 / 被捆的出手 ' + atkInWin.length + ' 次');
+  })();
+
+  // ④ 3 星：只有"打被捆住的人"才回血，而且回给血量最低的队友
+  (function () {
+    var r = yuFight(3);
+    var yu = r.initial.units.filter(function (u) { return u.defId === 'templar'; })[0];
+    var maxHp = {}, side = {};
+    r.initial.units.forEach(function (u) {
+      maxHp[u.uid] = u.maxHp; side[u.uid] = u.side;
+    });
+    var heals = r.log.filter(function (e) { return e.type === 'heal' && e.reason === 'noodle'; });
+    TH.ok('★ 3 星的普攻真的在给队友回血', heals.length > 0, heals.length + ' 口');
+
+    /* 沿事件流重建血量 + 被捆状态，才能在每一口上验两件事：
+         · 施法者这一下打的是不是**被捆住的人**
+         · 收件人是不是当时**血量百分比最低**的自己人 */
+    var hp = {}, dead = {}, rootUntilOf = {};
+    var badPair = [], badTarget = [], badAmt = [], badSide = [];
+    var seen = 0;
+    function lowestAllyUid(who) {
+      var best = null, bestPct = 2;
+      for (var uid in hp) {
+        if (side[uid] !== side[who] || dead[uid]) continue;
+        var pct = hp[uid] / maxHp[uid];
+        if (best === null || pct < bestPct - 1e-9) { best = uid; bestPct = pct; }
+      }
+      return best;
+    }
+    r.log.forEach(function (e) {
+      if (e.type === 'root') { rootUntilOf[e.to] = e.until; }
+      if (e.type === 'death') dead[e.who] = true;
+      if (e.type === 'heal' && e.reason === 'noodle') {
+        seen++;
+        if (side[e.to] !== side[e.from]) badSide.push(e.to);
+        // 这一 tick 施法者打的是谁？
+        var atk = null;
+        for (var i = 0; i < r.log.length; i++) {
+          var a = r.log[i];
+          if (a.type === 'attack' && a.from === e.from && a.t === e.t) { atk = a; break; }
+        }
+        if (!atk) badPair.push('@' + U.round2(e.t));
+        else if (!(rootUntilOf[atk.to] > e.t)) {
+          badPair.push('@' + U.round2(e.t) + ' 打的是没被捆住的 ' + atk.to);
+        }
+        var want = lowestAllyUid(e.from);
+        if (want && want !== e.to) badTarget.push('@' + U.round2(e.t) + ' 回给了 ' + e.to + '，最低的是 ' + want);
+        if (e.amount > maxHp[e.to] * 0.08 + 1.05) {
+          badAmt.push(e.to + ' ' + e.amount + ' > ' + U.round2(maxHp[e.to] * 0.08));
+        }
+      }
+      if (e.hpAfter !== undefined) hp[e.to || e.who] = e.hpAfter;
+    });
+    TH.ok('★ 每一口都是给自己人的', badSide.length === 0, badSide.slice(0, 3).join(','));
+    TH.ok('★★ 每一口都发生在「这一下打的是被捆住的敌人」之后',
+      badPair.length === 0, badPair.slice(0, 3).join('　') || '全部对得上');
+    TH.ok('★★ 每一口都回给了当时**血量百分比最低**的队友',
+      badTarget.length === 0, badTarget.slice(0, 3).join('　') || '全部正确');
+    TH.ok('★ 每一口都不超过「收件人最大生命 × 8%」（被剩余血量截断是合法的）',
+      badAmt.length === 0, badAmt.slice(0, 3).join('　'));
+
+    /* ★★ 反面 + 正面，一次说清"什么时候该回、什么时候不该回"：
+       · 打被捆住的人 **且队里确实有缺口**（有人血没满）→ 必须回一口
+       · 打**没被捆住**的人 → 一口都不许回
+       第一版写的是"打被捆住的人里允许 20% 没回"，结果实测 36 次里 17 次没回 ——
+       那不是容差不够，是**断言没抓住真正的规则**：healUnit 见到满血直接返回 0。
+       所以先把"当时有没有缺口"算出来，判据就变成精确的了。 */
+    /* ★★ 先把 root 时间线整理出来：每个受害者 → [{t, until}]。
+       判"这一下打的是不是被捆住的人"要用**时间线**去算，不能顺着日志顺序读一个变量 ——
+       因为同一 tick 里事件的先后次序是这样的：
+         attack → (afterDamage 里法力满了，顺手放技能 → cast → root) → … → heal
+       也就是说 **root 可能排在 attack 后面、却排在 heal 前面**，
+       引擎在结算 noodleHeal 的那一刻看到的已经是新 root 了。
+       第一版顺着日志读 `rootUntilOf[e.to]`，于是在"她刚好在这一 tick 放技能"
+       的那 6 次上全判成了"打的是没被捆住的人"，凭空报出 6 次假失败。 */
+    var rootTL = {};
+    r.log.forEach(function (e) {
+      if (e.type !== 'root') return;
+      if (!rootTL[e.to]) rootTL[e.to] = [];
+      rootTL[e.to].push({ t: e.t, until: e.until });
+    });
+    function rootedAt(uid, t) {
+      var l = rootTL[uid];
+      if (!l) return false;
+      for (var i = 0; i < l.length; i++) {
+        if (l[i].t <= t + 1e-9 && l[i].until > t + 1e-9) return true;
+      }
+      return false;
+    }
+
+    var hp2 = {}, dead2 = {}, gapMiss = 0, gapHit = 0;
+    var unboundAttacks = 0, unboundHeals = 0, rootAttacks = 0, unboundWhy = [];
+    r.log.forEach(function (e) {
+      if (e.hpAfter !== undefined) hp2[e.to || e.who] = e.hpAfter;
+      if (e.type === 'death') dead2[e.who] = true;
+      if (e.type !== 'attack' || e.from !== yu.uid) return;
+      var isRoot = rootedAt(e.to, e.t);
+      var healed = r.log.some(function (h) {
+        return h.type === 'heal' && h.reason === 'noodle' && h.t === e.t && h.from === yu.uid;
+      });
+      if (!isRoot) {
+        unboundAttacks++;
+        if (healed) {
+          unboundHeals++;
+          if (unboundWhy.length < 6) unboundWhy.push('@' + U.round2(e.t) + ' 打 ' + e.to);
+        }
+        return;
+      }
+      rootAttacks++;
+      // 队里有没有"血没满"的自己人？（healUnit 的 room < 1 会直接返回 0）
+      var gap = false;
+      for (var uid in hp2) {
+        if (side[uid] !== side[yu.uid] || dead2[uid]) continue;
+        if (maxHp[uid] - hp2[uid] >= 1) { gap = true; break; }
+      }
+      if (gap) { if (healed) gapHit++; else gapMiss++; }
+    });
+    TH.ok('★ 这一场确实有"打被捆住的人、而且队里有缺口"的机会（否则下面那条是空断言）',
+      gapHit + gapMiss > 0, (gapHit + gapMiss) + ' 次');
+    TH.eq('★★ 只要队里有缺口，"打被捆住的人"就一定会回上一口（一次都不许漏）',
+      gapMiss, 0);
+    TH.ok('★★ 打**没被捆住**的敌人时一口都不回（这条把"每次普攻都回血"挡在门外）',
+      unboundHeals === 0, unboundAttacks + ' 次里回了 ' + unboundHeals + ' 次　' +
+      unboundWhy.join('　'));
+    TH.note('3 星这一场：' + heals.length + ' 口（打被捆住的人 ' + rootAttacks +
+      ' 次、其中有缺口 ' + (gapHit + gapMiss) + ' 次；打没捆住的 ' + unboundAttacks + ' 次）');
+
+    checkInvariants(r, '东北雨姐·3星', function (msg) {
+      TH.ok('不变量（东北雨姐 3 星）: ' + msg, false);
+    });
+  })();
+
+  /* ============================================================
+   * 5c12. 美团袋鼠（原「炼金师」/ alchemist）
+   *
+   *   技能「治疗外卖」：投掷一个外卖，治疗血量百分比最低的队友（数值一个字没动）。
+   *   1 星            没有被动，就是原来那个单奶
+   *   2 星「准时送达」 收到外卖的队友攻速 +20%，持续 5 秒
+   *   3 星「好评如潮」 **普通攻击**会治疗"被攻击的敌人 3×3 范围内"的友方单位
+   * ============================================================ */
+  TH.section('美团袋鼠 · 准时送达 / 好评如潮');
+
+  var Roo = ST.UNIT_BY_ID.alchemist;
+  TH.eq('单位已改名为美团袋鼠', Roo.name, '美团袋鼠');
+  TH.eq('id 仍然是 alchemist（levels.js 的阵容 + art/alchemist.png 都按 id 索引）',
+    Roo.id, 'alchemist');
+  TH.eq('技能已改名为「治疗外卖」', Roo.skill.name, '治疗外卖');
+  TH.eq('技能喊话是「投掷一个外卖」', Roo.skill.callout, '投掷一个外卖');
+  TH.ok('★ 技能机制一个字没动（heal / 目标血量最低 / 560）',
+    Roo.skill.kind === 'heal' && Roo.skill.target === 'lowest' && Roo.skill.amount === 560,
+    Roo.skill.kind + '/' + Roo.skill.target + '/' + Roo.skill.amount);
+  TH.eq('被动类型是 delivery', ST.passiveKind(Roo), 'delivery');
+  TH.eq('★ 1 星没有被动（名字是空的，界面据此走"升星预告"）',
+    ST.passiveName(Roo, 1), null);
+  TH.eq('2 星的名字', ST.passiveName(Roo, 2), '准时送达');
+  TH.eq('3 星的名字', ST.passiveName(Roo, 3), '准时送达 + 好评如潮');
+  TH.eq('★ 4 星的名字不会被夹没（两层都在）',
+    ST.passiveName(Roo, 4), '准时送达 + 好评如潮');
+  TH.eq('★ 2 星起才有外卖增益', Roo.passive.asBuffAt, 2);
+  TH.eq('★ 攻速 +20%', Roo.passive.asBuffPct, 0.20);
+  TH.eq('★ 持续 5 秒', Roo.passive.asBuffDur, 5);
+  TH.eq('★ 3 星起才有普攻送餐', Roo.passive.healAt, 3);
+  TH.eq('★ 每口 4% 最大生命', Roo.passive.healPct, 0.04);
+  TH.eq('★ 范围半径 1（= 3×3）', Roo.passive.radius, 1);
+
+  /* 场面：**开局之后一段时间内全场静止**。
+     ★ 为什么非要这样：3 星那条要验"治疗的是**被攻击敌人 3×3 内**的友方"。
+       一旦有人走位，初始坐标就不再是判定时的坐标，几何判据只能靠重建位置
+       （能写，但那是把校验器的活儿再做一遍）。
+       所以下面所有的几何断言都只取「第一次走位**之前**」的那些外卖单 ——
+       那段时间里坐标就是初始坐标，判据可以写得又短又硬。
+     站位（我方 0~3 行、敌方 4~7 行）：
+       我方：袋鼠 (2,3)、肉盾 (3,2) (3,3) (3,7)
+       敌方：豆包 3 星 (4,2) 和 (4,7)
+       → 三个肉盾各自贴着一个敌人（近战，射程内就地打）→ 不走位；
+         袋鼠射程 2，最近的敌人是 (4,2)（切比雪夫 2）→ 也不走位。
+       → 以 (4,2) 为中心的 3×3 = 行 3~5、列 1~3 → 圈里只有 (3,2) 和 (3,3)，
+         (3,7) 在圈外。这就是"该奶的奶了、不该奶的没奶"的对照组。
+     ★ 三个肉盾都带「和成天下5000精品大果」：它每秒自燃 6% 生命上限 ——
+       于是**每个人身上永远有缺口可回**（healUnit 见到满血会直接返回 0，
+       一个满血的队友就算在圈里也不会写出 heal 事件，那条对照就变成空断言了）。
+       代价是他们 16.7 秒左右会烧死自己，之后场上开始走位 ——
+       正好用"第一次走位之前的那些单"来切分。
+     ★ 敌人用豆包（治疗型、伤害低）而不是弓手：弓手一发狙击 2000 点魔法伤害，
+       会把 1520 血的肉盾直接秒了，场面撑不到几次普攻。 */
+  function rooFight(star) {
+    var belt3 = ['belt', 'belt', 'belt'];
+    var fruit = ['swiftboots', 'belt', 'belt'];
+    return ST.Battle.battle({
+      a: [{ id: 'alchemist', star: star, items: belt3, r: 2, c: 3 },
+          { id: 'stoneguard', star: 1, items: fruit, r: 3, c: 2 },
+          { id: 'stoneguard', star: 1, items: fruit, r: 3, c: 3 },
+          { id: 'stoneguard', star: 1, items: fruit, r: 3, c: 7 }],
+      b: [{ id: 'acolyte', star: 3, items: belt3, r: 4, c: 2 },
+          { id: 'acolyte', star: 3, items: belt3, r: 4, c: 7 }]
+    }, 31337);
+  }
+
+  // ① 场面确实是静止的（后面所有几何断言的前提）
+  (function () {
+    [1, 2, 3].forEach(function (star) {
+      var r = rooFight(star);
+      var mv = r.log.filter(function (e) { return e.type === 'move'; });
+      var firstMove = mv.length ? mv[0].t : Infinity;
+      var attacks = r.log.filter(function (e) { return e.type === 'attack'; });
+      TH.ok('★ ' + star + ' 星：第一次走位之前已经有足够多的普攻（几何断言有样本）',
+        attacks.filter(function (a) { return a.t < firstMove; }).length >= 8,
+        '第一次走位 @' + (firstMove === Infinity ? '从未' : U.round2(firstMove)) +
+        's，之前有 ' + attacks.filter(function (a) { return a.t < firstMove; }).length + ' 下普攻');
+    });
+    TH.note('美团袋鼠这三场里，单位开局就咬住目标、谁也不动 —— ' +
+      '直到带大果的肉盾把自己烧死（约 16.7 秒）之后才开始走位。');
+  })();
+
+  // ② 2 星：每一次施法都给"被送外卖的那个人"挂 +20% 攻速 5 秒
+  (function () {
+    var r = rooFight(2);
+    var roo = r.initial.units.filter(function (u) { return u.defId === 'alchemist'; })[0];
+    var casts = r.log.filter(function (e) { return e.type === 'cast' && e.from === roo.uid; });
+    var heals = r.log.filter(function (e) { return e.type === 'heal' && e.reason === 'skill'; });
+    var buffs = r.log.filter(function (e) { return e.type === 'buff' && e.reason === 'delivery'; });
+    TH.ok('这一场放出了治疗外卖（否则后面全是空断言）', casts.length > 0, casts.length + ' 次');
+    /* ★★ 外卖是"投出去"就成立的：队友满血时那一口不写 heal 事件，但加成照给。
+       所以配对的基准是**施法次数**，不是治疗条数 —— 第一版按治疗配对，
+       当场报「3 次加成 / 2 口奶」，看着像多送了一次，其实是规则如此。 */
+    TH.eq('★ 每一次施法恰好送出一份攻速加成', buffs.length, casts.length);
+    TH.ok('★ 外卖增益恰好等于数据里的 20% / 5 秒',
+      buffs.every(function (e) { return Math.abs(e.amount - 0.20) < 1e-9 && Math.abs(e.dur - 5) < 1e-9; }),
+      buffs.length ? (buffs[0].amount + ' / ' + buffs[0].dur + 's') : '—');
+    var badSide = buffs.filter(function (b) {
+      var u = r.initial.units.filter(function (x) { return x.uid === b.who; })[0];
+      return !u || u.side !== roo.side;
+    });
+    TH.eq('★ 外卖全部送给了自己人', badSide.length, 0);
+    /* ★★ 最容易被写错的一行：加成必须挂在**被奶的那个人**身上，不是施法者自己。
+       做法是先施法 → 选血量百分比最低的队友 → 奶他 → 加速他。
+       写成加速 `u`（自己）的话，画面上两个都是绿色数字、都回血，肉眼分不出。 */
+    var mismatch = buffs.filter(function (b) {
+      var h = heals.filter(function (x) { return x.t === b.t && x.from === b.from; })[0];
+      return !!h && h.to !== b.who;   // 这一 tick 真的奶出了血 → 收件人必须是同一个人
+    });
+    TH.ok('★★ 凡是这一 tick 真的奶出了血，被加速的就是被奶的那个人',
+      mismatch.length === 0, mismatch.length ? (mismatch.length + ' 次挂错了人') : '每次都一致');
+    var paired = buffs.filter(function (b) {
+      return heals.some(function (x) { return x.t === b.t && x.from === b.from; });
+    });
+    TH.ok('★ 大部分施法都真的奶出了血（否则上面那条是空断言）',
+      paired.length >= 1, paired.length + '/' + buffs.length + ' 次有对应的治疗事件');
+  })();
+
+  // ③ 1 星：既没有外卖增益，也没有普攻送餐
+  (function () {
+    var r = rooFight(1);
+    TH.eq('★ 1 星的治疗外卖不带攻速加成（准时送达是 2 星的事）',
+      r.log.filter(function (e) { return e.type === 'buff'; }).length, 0);
+    TH.eq('★ 1 星的普攻不会送外卖（好评如潮是 3 星的事）',
+      r.log.filter(function (e) { return e.type === 'heal' && e.reason === 'delivery'; }).length, 0);
+  })();
+
+  // ④ 2 星也还没有普攻送餐（门槛是分开的两层）
+  (function () {
+    var r = rooFight(2);
+    TH.eq('★ 2 星仍然没有普攻送餐（3 星才解锁）',
+      r.log.filter(function (e) { return e.type === 'heal' && e.reason === 'delivery'; }).length, 0);
+  })();
+
+  // ⑤ 3 星：每一次普攻都给"被攻击敌人 3×3 内"的友方送一单
+  (function () {
+    var r = rooFight(3);
+    var pos = {}, side = {};
+    r.initial.units.forEach(function (u) { pos[u.uid] = { r: u.r, c: u.c }; side[u.uid] = u.side; });
+    var roo = null;
+    r.initial.units.forEach(function (u) { if (u.defId === 'alchemist') roo = u; });
+    TH.ok('袋鼠在场（否则后面全是空断言）', !!roo);
+    if (!roo) return;
+    function maxHpOf(uid) {
+      for (var i = 0; i < r.initial.units.length; i++) {
+        if (r.initial.units[i].uid === uid) return r.initial.units[i].maxHp;
+      }
+      return 0;
+    }
+
+    var attacks = r.log.filter(function (e) { return e.type === 'attack' && e.from === roo.uid; });
+    var meals = r.log.filter(function (e) { return e.type === 'heal' && e.reason === 'delivery'; });
+    TH.ok('★ 袋鼠打了很多下普攻（否则下面全是空断言）', attacks.length >= 3, attacks.length + ' 下');
+    TH.ok('★ 3 星的普攻真的在送外卖', meals.length > 0, meals.length + ' 单');
+
+    /* ★★ 只取"第一次走位之前"的单：那段时间坐标 == 初始坐标。
+       之后的单不参与几何判定（但会数出来，报告里能看到跳过了多少）。 */
+    var moves = r.log.filter(function (e) { return e.type === 'move'; });
+    var firstMove = moves.length ? moves[0].t : Infinity;
+    var stable = meals.filter(function (m) { return m.t < firstMove; });
+    TH.ok('★ 静止窗口里有足够多的外卖单可以做几何判定（>= 6）',
+      stable.length >= 6, stable.length + ' 单（共 ' + meals.length +
+      ' 单，第二次走位起点 @' + (firstMove === Infinity ? '从未' : U.round2(firstMove)) + 's）');
+
+    var badPlace = [], badSide = [], badPair = [], badAmt = [];
+    stable.forEach(function (m) {
+      if (side[m.to] !== roo.side) badSide.push(m.to);
+      var atk = null;
+      for (var i = 0; i < r.log.length; i++) {
+        var e = r.log[i];
+        if (e.type === 'attack' && e.from === m.from && e.t === m.t) { atk = e; break; }
+      }
+      if (!atk) { badPair.push(U.round2(m.t)); return; }
+      var tp = pos[atk.to], mp = pos[m.to];
+      if (!tp || !mp) return;
+      if (U.cheb(mp.r, mp.c, tp.r, tp.c) > 1) {
+        badPlace.push(m.to + '(' + mp.r + ',' + mp.c + ') 离敌人(' + tp.r + ',' + tp.c + ') 太远');
+      }
+      var want = maxHpOf(m.to) * 0.04;
+      if (m.amount > want + 1.05) badAmt.push(m.to + ' ' + m.amount + ' > ' + U.round2(want));
+    });
+    TH.ok('★ 每一单都送给了自己人（不会给敌人送外卖）', badSide.length === 0, badSide.join(','));
+    TH.ok('★★ 每一单的收件人都在「被打中的那个敌人」周围 3×3 之内',
+      badPlace.length === 0, badPlace.slice(0, 4).join('　') || '全部在圈内');
+    TH.ok('★ 每一单都紧跟在同一 tick 的一次普攻上', badPair.length === 0,
+      badPair.slice(0, 4).join(','));
+    TH.ok('★ 每一口的量都不超过「收件人最大生命 × 4%」（被剩余血量截断是合法的）',
+      badAmt.length === 0, badAmt.slice(0, 4).join('　'));
+
+    /* ★★ 对照组：圈外那个队友（3,7）一次都不该被奶到。
+       这是"范围真的生效"的唯一证据 —— 只验"圈内的人被奶了"的话，
+       把实现写成"治疗全队"也照样全绿。
+       ★ 他也带了大果、也一直在掉血，所以"没被奶到"不是因为他满血。 */
+    var farHealed = stable.filter(function (m) { return pos[m.to].c === 7; });
+    TH.eq('★★ 站在 3×3 之外的那个队友一单都没收到（而且他确实在掉血）',
+      farHealed.length, 0);
+    var farBurns = r.log.filter(function (e) {
+      return e.type === 'selfburn' && e.who === Object.keys(pos).filter(function (k) {
+        return pos[k].c === 7 && pos[k].r === 3;
+      })[0];
+    });
+    TH.ok('★ 他确实有缺口可回（否则上面那条是空断言）', farBurns.length > 0,
+      farBurns.length + ' 次自燃');
+
+    var inHealed = stable.filter(function (m) { return pos[m.to].c === 2 || pos[m.to].c === 3; });
+    TH.ok('★ 圈里的两个队友都收到过外卖（不是只送最近的那个）',
+      inHealed.some(function (m) { return pos[m.to].c === 2; }) &&
+      inHealed.some(function (m) { return pos[m.to].c === 3; }),
+      '圈内共 ' + inHealed.length + ' 单');
+
+    /* ★★ 一次普攻可以同时喂饱好几个人 —— 这是"范围治疗"和"单体治疗"的分水岭。
+       实现写成只奶最近的一个人时，这条会红。 */
+    var byTick = {};
+    stable.forEach(function (m) { byTick[m.t] = (byTick[m.t] || 0) + 1; });
+    var maxAtOnce = 0, twoTicks = 0;
+    for (var k in byTick) {
+      if (byTick[k] > maxAtOnce) maxAtOnce = byTick[k];
+      if (byTick[k] >= 2) twoTicks++;
+    }
+    TH.ok('★★ 有过"一下普攻同时奶到 2 个队友"的时刻（不然就是单体治疗了）',
+      maxAtOnce >= 2, '单次最多 ' + maxAtOnce + ' 个（' + twoTicks + ' 次同时奶两个）');
+
+    TH.ok('★ 3 星同时保留 2 星那一层（外卖照样加速）',
+      r.log.filter(function (e) { return e.type === 'buff' && e.reason === 'delivery'; }).length > 0,
+      r.log.filter(function (e) { return e.type === 'buff'; }).length + ' 次增益');
+
+    checkInvariants(r, '美团袋鼠·3星', function (msg) {
+      TH.ok('不变量（美团袋鼠 3 星）: ' + msg, false);
+    });
+  })();
+
+  /* ============================================================
+   * 5c11. 冰冰冰（原「冰霜法师」/ frostmage）
+   *
+   *   技能「寒霜新星」一个字没动（aoe / 260 / 半径 1）。
+   *   1 星            没有被动，技能就是原来的 3×3 寒霜新星
+   *   2 星「冻手冻脚」 被技能打中的敌人**额外冰冻 1.5 秒**
+   *   3 星「千里冰封」 技能改成**打全体敌人**（不再只看目标格附近）
+   * ============================================================ */
+  TH.section('冰冰冰 · 冻手冻脚 / 千里冰封');
+
+  var ICE = ST.UNIT_BY_ID.frostmage;
+  TH.eq('单位已改名为冰冰冰', ICE.name, '冰冰冰');
+  TH.eq('id 仍然是 frostmage（levels.js 的 4 处阵容 + art/frostmage.png 都按 id 索引）',
+    ICE.id, 'frostmage');
+  TH.eq('★ emoji 是**三个**冰（不是 .length 那种数法）',
+    ST.U.emojiCount(ICE.emoji), 3);
+  /* ★ 单图形的 emoji 不能被误判成多个 —— 这是 emojiCount 存在的全部理由：
+     `'❄️'.length === 2`（雪花 + 变体选择符 U+FE0F），
+     照 length 判会把 21 个单 emoji 的棋子全部白缩一档。 */
+  TH.eq('★ 单个 ❄️ 不会被数成两个（变体选择符不算图形）',
+    ST.U.emojiCount('❄️'), 1);
+  TH.eq('★ 单个 🧊 也不会被数成两个（代理对只算一个图形）',
+    ST.U.emojiCount('🧊'), 1);
+  TH.ok('★ 三个 emoji 真的会缩一档（不然会横着冲出卡片）',
+    ST.U.emojiScale(3) < ST.U.emojiScale(2) && ST.U.emojiScale(2) < ST.U.emojiScale(1),
+    ST.U.emojiScale(1) + ' / ' + ST.U.emojiScale(2) + ' / ' + ST.U.emojiScale(3));
+  TH.ok('★ 技能一个字没动（寒霜新星 / aoe / 260 / 半径 1）',
+    ICE.skill.name === '寒霜新星' && ICE.skill.kind === 'aoe' &&
+    ICE.skill.damage === 260 && ICE.skill.radius === 1,
+    ICE.skill.name + '/' + ICE.skill.kind + '/' + ICE.skill.damage);
+  TH.eq('被动类型是 frost', ST.passiveKind(ICE), 'frost');
+  TH.eq('★ 1 星没有被动（名字是空的，界面据此走"升星预告"）',
+    ST.passiveName(ICE, 1), null);
+  TH.eq('2 星的名字', ST.passiveName(ICE, 2), '冻手冻脚');
+  TH.eq('3 星的名字', ST.passiveName(ICE, 3), '冻手冻脚 + 千里冰封');
+  TH.eq('★ 4 星的名字不会被夹没（两层都在）',
+    ST.passiveName(ICE, 4), '冻手冻脚 + 千里冰封');
+  TH.eq('★ 2 星起才有技能冰冻', ICE.passive.freezeAt, 2);
+  TH.eq('★ 冰冻 1.5 秒', ICE.passive.freezeDur, 1.5);
+  TH.eq('★ 3 星起技能改成打全体', ICE.passive.allAt, 3);
+
+  /* 场面：**四个彼此不相邻**的敌人（两两切比雪夫距离 >= 2），
+     我方四个肉盾一人咬住一个 —— 谁都不会走位，场面 60 秒不动。
+     ★ 为什么必须"彼此不相邻"：寒霜新星是「目标格周围 3×3」，
+       敌人挨在一起的话 1 星也能一次打到好几个，"3 星打全体"就验不出来了。
+       现在 3×3 里最多只有一个敌人 → **1/2 星每次施法只打得到 1 个**，
+       而 3 星一次打到全部存活者，两者的差别一眼可辨。
+     ★ 为什么双方都带 3 条腰带：血厚到打不死的话事件流最干净；
+       实际上冰冰冰还是会杀掉几个，所以下面的判据是**按事件流重建存活数**，
+       而不是假定"一直是 4 个"（假定的写法会在有人倒下那一刻开始假红）。 */
+  function iceFight(star) {
+    var items = ['belt', 'belt', 'belt'];
+    return ST.Battle.battle({
+      a: [{ id: 'frostmage', star: star, items: items, r: 2, c: 3 },
+          { id: 'stoneguard', star: 1, items: items, r: 3, c: 0 },
+          { id: 'stoneguard', star: 1, items: items, r: 3, c: 2 },
+          { id: 'stoneguard', star: 1, items: items, r: 3, c: 4 },
+          { id: 'stoneguard', star: 1, items: items, r: 3, c: 6 }],
+      b: [{ id: 'bowman', star: 1, items: items, r: 4, c: 0 },
+          { id: 'bowman', star: 1, items: items, r: 4, c: 2 },
+          { id: 'bowman', star: 1, items: items, r: 4, c: 4 },
+          { id: 'bowman', star: 1, items: items, r: 4, c: 6 }]
+    }, 777);
+  }
+
+  /**
+   * 沿事件流走一遍，把每一次施法整理成：
+   *   { t, hits, alive, surv[], dead[] }
+   *   hits  这一发打到了几个人
+   *   alive 这一发**开始之前**对面还活着几个人
+   *   surv  被打中且活下来的人
+   *   dead  被打中而且这一下就死了的人
+   *
+   * ★★ 为什么用"沿日志遍历"而不是"按时间戳比"：同一 tick 里
+   *    先有队友的普攻把一个人打死、再有冰冰冰施法，两种情况的时间戳
+   *    完全一样，按 `e.t < cast.t` 去数存活数会多算一个，断言假红。
+   *    按**日志顺序**走就没有这个歧义（skill 事件和紧跟其后的 death
+   *    是同一次结算里发出的）。这条坑在别的机制上已经踩过一次。
+   */
+  function iceCasts(r) {
+    var ice = null;
+    for (var i0 = 0; i0 < r.initial.units.length; i0++) {
+      if (r.initial.units[i0].defId === 'frostmage') { ice = r.initial.units[i0]; break; }
+    }
+    if (!ice) return { uid: null, casts: [], frost: [] };
+    var alive = {};
+    for (var i1 = 0; i1 < r.initial.units.length; i1++) {
+      var iu = r.initial.units[i1];
+      if (iu.side !== ice.side) alive[iu.uid] = true;   // 对面的存活表
+    }
+    var casts = [], cur = null;
+    for (var i2 = 0; i2 < r.log.length; i2++) {
+      var e = r.log[i2];
+      if (e.type === 'skill' && e.from === ice.uid) {
+        if (!cur || cur.t !== e.t) {
+          cur = { t: e.t, hits: 0, alive: 0, surv: [], dead: [] };
+          for (var k in alive) cur.alive++;            // 施法开始前的存活数
+          casts.push(cur);
+        }
+        cur.hits++;
+        if (e.hpAfter > 0) cur.surv.push(e.to); else cur.dead.push(e.to);
+      } else if (e.type === 'death' && alive[e.who] !== undefined) {
+        delete alive[e.who];
+      }
+    }
+    var frost = r.log.filter(function (x) {
+      return x.type === 'stun' && x.reason === 'frost';
+    });
+    return { uid: ice.uid, casts: casts, frost: frost };
+  }
+  /** 「谁@哪一 tick 被冻了」的集合 */
+  function frostKeySet(frost) {
+    var s = {};
+    frost.forEach(function (e) { s[e.to + '@' + e.t] = true; });
+    return s;
+  }
+
+  // ① 3 星：技能打全体 —— 每一发打到的人数 == 发之前对面活着的人数
+  (function () {
+    var r = iceFight(3);
+    var I = iceCasts(r);
+    TH.ok('这一场冰冰冰放出了技能（否则后面全是空断言）', I.casts.length > 0,
+      I.casts.length + ' 次');
+    if (!I.casts.length) return;
+    var wrong = I.casts.filter(function (c) { return c.hits !== c.alive; })
+      .map(function (c) { return '@' + U.round2(c.t) + ' 打 ' + c.hits + ' 活 ' + c.alive; });
+    TH.ok('★★ 3 星每一发技能都打到了**全部**存活敌人（不是只打目标格周围）',
+      wrong.length === 0, wrong.slice(0, 3).join('　') || '全部吻合');
+    TH.ok('★ 而且次数确实超过了"3×3 里最多一个"这个上限（>= 3 才算真的验证到了）',
+      I.casts.some(function (c) { return c.hits >= 3; }),
+      '最多一次打到 ' + Math.max.apply(null, I.casts.map(function (c) { return c.hits; })) + ' 个');
+    TH.note('3 星每一次施法：' + I.casts.map(function (c) {
+      return U.round2(c.t) + 's→' + c.hits + '/' + c.alive;
+    }).join('　'));
+  })();
+
+  // ② 1 星 / 2 星：仍然只打目标格周围 3×3（敌人彼此不相邻 → 每次都只打到 1 个）
+  (function () {
+    [1, 2].forEach(function (star) {
+      var I = iceCasts(iceFight(star));
+      TH.ok(star + ' 星放出了技能（否则下面那条是空断言）', I.casts.length > 0,
+        I.casts.length + ' 次');
+      var over = I.casts.filter(function (c) { return c.hits > 1; });
+      TH.ok('★ ' + star + ' 星的寒霜新星仍然只打目标格周围 3×3（敌人分散时不可能是多个）',
+        over.length === 0,
+        over.length ? (over.length + ' 次打到了多个：' +
+          over.map(function (c) { return c.hits; }).join(',')) : '每次都只打到 1 个');
+    });
+  })();
+
+  // ③ 2 星：被技能打中的人都冻 1.5 秒；活下来的都要有，死了的都不该有
+  (function () {
+    var r = iceFight(2);
+    var I = iceCasts(r);
+    TH.ok('这一场冻过人（否则后面全是空断言）', I.frost.length > 0,
+      I.frost.length + ' 次冰冻');
+    if (!I.frost.length) return;
+    TH.ok('★ 每一次技能冰冻都是 1.5 秒（数据里那个数，不是写死的）',
+      I.frost.every(function (e) { return Math.abs(e.dur - 1.5) < 1e-9; }),
+      I.frost.length ? I.frost[0].dur + 's' : '—');
+    var keys = frostKeySet(I.frost);
+    var miss = [], wrongDead = [];
+    I.casts.forEach(function (c) {
+      c.surv.forEach(function (uid) {
+        if (!keys[uid + '@' + c.t]) miss.push(uid + '@' + U.round2(c.t));
+      });
+      c.dead.forEach(function (uid) {
+        if (keys[uid + '@' + c.t]) wrongDead.push(uid + '@' + U.round2(c.t));
+      });
+    });
+    TH.ok('★★ 被技能打中而且活下来的人**每一个**都被冻上了（不是只冻第一个）',
+      miss.length === 0, miss.slice(0, 4).join('　') || '全部冻上了');
+    TH.ok('★ 被这一发打死的**尸体不会被冻**（给尸体挂眩晕会多出一条指向死人的事件）',
+      wrongDead.length === 0, wrongDead.slice(0, 4).join('　') || '没有冻到尸体');
+    TH.note('2 星：' + I.casts.length + ' 次施法，' + I.frost.length + ' 次冰冻');
+  })();
+
+  // ④ 1 星没有冰冻；3 星也带着 2 星那层（星级是叠加的，不是替换）
+  (function () {
+    var I1 = iceCasts(iceFight(1));
+    TH.eq('★ 1 星的技能不会冰冻（冻手冻脚是 2 星的事）', I1.frost.length, 0);
+    var I3 = iceCasts(iceFight(3));
+    TH.ok('★ 3 星同时保留 2 星的冰冻（3 星 = 1 星 + 2 星 + 千里冰封）',
+      I3.frost.length > 0, I3.frost.length + ' 次');
+    TH.ok('★ 3 星的冰冻同样只落在"被这一发打中而且没死"的人身上',
+      (function () {
+        var keys = frostKeySet(I3.frost), miss = 0;
+        I3.casts.forEach(function (c) {
+          c.surv.forEach(function (uid) { if (!keys[uid + '@' + c.t]) miss++; });
+        });
+        return miss === 0;
+      })(), '漏冻 ' + I3.frost.length + ' 次里的若干次');
+  })();
+
+  // ⑤ 不变量：新事件（reason='frost'）必须过校验器
+  (function () {
+    [1, 2, 3].forEach(function (star) {
+      checkInvariants(iceFight(star), '冰冰冰·' + star + '星', function (msg) {
+        TH.ok('不变量（冰冰冰 ' + star + ' 星）: ' + msg, false);
+      });
+    });
+    TH.note('冰冰冰 1/2/3 星三场随机对局的事件流都过了不变量检查');
+  })();
+
+  /* ============================================================
+   * 5c9. 孙笑川（原「血月屠夫」/ butcher）
+   *
+   *   技能「血月斩」一个字没动。
+   *   1 星「天皇」      自身 3×3 内的队友 +20% 吸血率（不含他自己）
+   *   2 星「儒雅随和」  技能造成的**所有**伤害 100% 转化为自己的治疗
+   *   3 星「安排上了」  被自己击败的敌人以 20% 生命倒戈成我方单位
+   *                     —— **对有复活能力的单位无效**
+   * ============================================================ */
+  TH.section('孙笑川 · 天皇 / 儒雅随和 / 安排上了');
+
+  var SUN = ST.UNIT_BY_ID.butcher;
+  TH.eq('单位已改名为孙笑川', SUN.name, '孙笑川');
+  TH.eq('id 仍然是 butcher（levels.js 的 9 处阵容 + art/butcher.png 都按 id 索引）',
+    SUN.id, 'butcher');
+  TH.ok('★ 技能一个字没动（血月斩 / aoe / 580 / 半径 1）',
+    SUN.skill.name === '血月斩' && SUN.skill.kind === 'aoe' &&
+    SUN.skill.damage === 580 && SUN.skill.radius === 1,
+    SUN.skill.name + '/' + SUN.skill.kind + '/' + SUN.skill.damage);
+  TH.eq('被动类型是天皇', ST.passiveKind(SUN), 'mikado');
+  /* ★★ 这一条和豆包/老牧师**不一样**：他们 1 星没有被动（names 从 2 开始），
+     而孙笑川 1 星就有「天皇」。写错的话 1 星那一行会变成"升星预告"。 */
+  TH.eq('★ 1 星就有被动，而且名字就是「天皇」', ST.passiveName(SUN, 1), '天皇');
+  TH.eq('2 星的名字', ST.passiveName(SUN, 2), '天皇 + 儒雅随和');
+  TH.eq('3 星的名字', ST.passiveName(SUN, 3), '天皇 + 儒雅随和 + 安排上了');
+  TH.eq('★ 光环半径 1（= 3×3）', SUN.passive.auraRadius, 1);
+  TH.eq('★ 光环给队友 +20% 吸血', SUN.passive.auraLifesteal, 0.20);
+  TH.eq('★ 2 星起：技能伤害转治疗', SUN.passive.skillHealAt, 2);
+  TH.eq('★ 转化比例是 100%', SUN.passive.skillHealPct, 1.00);
+  TH.eq('★ 3 星起：击败的敌人倒戈', SUN.passive.convertAt, 3);
+  TH.eq('★ 倒戈时以 20% 生命复活', SUN.passive.convertHpPct, 0.20);
+
+  /* ---------- ① 天皇光环：只有 3×3 内的队友吃到吸血 ----------
+   * ★ 对照组是**同一个场面、只把孙笑川挪远**（切比雪夫距离 > 1）。
+   *   不设对照组的话，"队友有吸血"可能来自别的东西（装备/羁绊），验不出来。
+   * ★ 队友特意不带血饮剑 —— 它的 lifesteal 本来是 0，
+   *   所以任何一条 'lifesteal' 治疗都只可能来自光环。
+   *
+   * ★★ 队友**必须带一颗大果**（每秒自燃 6% 生命上限），这是探出来的：
+   *   第一版给队友带了三条腰带 —— 结果它血又厚、而敌人**从来不打它**
+   *   （孙笑川是近战，自己一路走到最前面，敌人的索敌永远选中他），
+   *   于是队友**从头到尾没掉过血**，`healUnit` 见到满血直接返回 0，
+   *   一条 lifesteal 事件都没有 —— 而"光环没生效"和"没有治疗缺口"
+   *   在日志里长得**一模一样**。
+   *   ★ 教训：验"回血类"效果时，一定要先确认**真的有缺口可回**；
+   *     否则断言是在测"血量满不满"，不是在测那个效果。
+   *
+   * ★★ 站位也必须锁死，否则测不出"3×3 之外没有"：
+   *   第二版想把孙笑川放到角落来制造"远离"，结果**他自己一路走过去**了 ——
+   *   两个都是近战，都会向敌人靠拢，1.4 秒之后就又贴在一起，
+   *   于是"近"和"远"两组都拿到 23 次吸血，看起来像光环是全队光环。
+   *   现在改成"**每人各自咬住一个相邻的敌人**"：
+   *     孙笑川 (3,0) 咬 (4,0)、队友 (3,N) 咬 (4,N)，双方都有相邻目标
+   *     就都不会再挪动 —— 距离想设多远就设多远，而且完全确定。
+   *   唯一变量只有队友那一列（1 = 贴着，3 = 隔三格）。 */
+  (function () {
+    /* 敌人用 1 星山岳 + 三腰带（3064 血、近战）：够肉，撑得住 30 秒，
+       而且它会**咬住**贴上来的人不再移动 —— 这正是我们要的"锁死站位"。 */
+    function foe(c) { return { id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: c }; }
+    var ALLY = ['swiftboots', 'belt', 'belt'];
+    function auraFight(allyCol) {
+      return ST.Battle.battle({
+        a: [{ id: 'butcher', star: 1, r: 3, c: 0 },
+            { id: 'dagger', star: 3, items: ALLY, r: 3, c: allyCol }],
+        b: [foe(0), foe(allyCol)]
+      }, 7788);
+    }
+    function lsHeals(r, uid) {
+      return r.log.filter(function (e) {
+        return e.type === 'heal' && e.reason === 'lifesteal' && e.from === uid;
+      });
+    }
+    var near = auraFight(1);           // 队友在 (3,1)：切比雪夫 1 → 在光环里
+    var far = auraFight(3);            // 队友在 (3,3)：切比雪夫 3 → 光环外
+    var allyNear = near.initial.units.filter(function (u) { return u.defId === 'dagger'; })[0];
+    var allyFar = far.initial.units.filter(function (u) { return u.defId === 'dagger'; })[0];
+    TH.eq('★ 对照组的队友自己**没有**吸血（否则下面那条是假的）',
+      Math.round(allyNear.lifesteal * 100) + '/' + Math.round(allyFar.lifesteal * 100), '0/0');
+    TH.ok('★ 两组的站位确实一个是 1 格、一个是 3 格',
+      U.cheb(3, 1, 3, 0) === 1 && U.cheb(3, 3, 3, 0) === 3,
+      U.cheb(3, 1, 3, 0) + ' / ' + U.cheb(3, 3, 3, 0));
+    /* ★ 先确认这两场里"真的有缺口可回" —— 没有这一步，
+       下面两条会在"队友满血"时假绿（这正是第一版的翻车方式）。 */
+    var burnNear = near.log.filter(function (e) {
+      return e.type === 'selfburn' && e.who === allyNear.uid;
+    }).length;
+    var burnFar = far.log.filter(function (e) {
+      return e.type === 'selfburn' && e.who === allyFar.uid;
+    }).length;
+    TH.ok('★ 这两场里队友确实都在掉血（有缺口才谈得上吸血）',
+      burnNear > 0 && burnFar > 0, burnNear + ' / ' + burnFar + ' 次自燃');
+    var nNear = lsHeals(near, allyNear.uid).length;
+    var nFar = lsHeals(far, allyFar.uid).length;
+    TH.ok('★ 站在孙笑川 3×3 里的队友会吸血（光环真的生效）', nNear > 0,
+      nNear + ' 次吸血治疗');
+    TH.eq('★ 站到 3×3 之外就没有了（光环**不是**全队光环）', nFar, 0);
+    TH.note('天皇光环：贴着他 ' + nNear + ' 次吸血 / 隔三格 ' + nFar + ' 次');
+
+    /* ★ 顺带验一条容易写错的：**光环不给孙笑川自己**。
+       文案写的是"队友"，而且奶龙 3 星的光环也是跳过自己（a === u）。 */
+    var sunSelf = near.log.filter(function (e) {
+      return e.type === 'heal' && e.reason === 'lifesteal' &&
+             e.from === 'a0' && e.to === 'a0';
+    });
+    TH.eq('★ 光环不给自己（文案写的是"队友"）', sunSelf.length, 0);
+
+    // 这两场都要过严格校验器（不然"招安/复活"那套模型没被跑到）
+    checkInvariants(near, '孙笑川光环·贴着他', function (msg) {
+      TH.ok('不变量（光环·贴着）: ' + msg, false);
+    });
+    checkInvariants(far, '孙笑川光环·挪远', function (msg) {
+      TH.ok('不变量（光环·挪远）: ' + msg, false);
+    });
+  })();
+
+  /* ---------- ② 2 星：技能造成的伤害全额回血 ---------- */
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'butcher', star: 2, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'titan', star: 1, items: ['belt', 'belt', 'belt'], r: 4, c: 3 }]
+    }, 4455);
+    var heals = r.log.filter(function (e) {
+      return e.type === 'heal' && e.reason === 'skillHeal' && e.from === 'a0';
+    });
+    var casts = r.log.filter(function (e) { return e.type === 'cast' && e.from === 'a0'; });
+    TH.ok('这一场他放出了技能（否则下面全是空断言）', casts.length > 0, casts.length + ' 次施法');
+    TH.ok('★ 技能伤害真的转成了自己的治疗', heals.length > 0, heals.length + ' 次技能回血');
+
+    /* ★ 逐次对账：这一 tick 的技能伤害总和 × 100%，但**不能超过缺的血**。
+       只断言"有回血"太弱 —— 回 1 点也叫有回血。 */
+    var badAmt = [], sample = '';
+    for (var h = 0; h < heals.length; h++) {
+      var he = heals[h];
+      var sum = 0;
+      for (var k = 0; k < r.log.length; k++) {
+        var e2 = r.log[k];
+        if (e2.type === 'skill' && e2.from === 'a0' && e2.t === he.t) sum += e2.dmg;
+      }
+      var before = U.round2(he.hpAfter - he.amount);
+      var room = he.hpMax - before;
+      var want = Math.min(sum, room);
+      if (Math.abs(he.amount - want) > 1.5) {
+        badAmt.push('t=' + U.round2(he.t) + ' 期望 ' + U.round2(want) + ' 实际 ' + he.amount);
+      }
+      if (!sample) {
+        sample = 't=' + U.round2(he.t) + '　技能伤害合计 ' + U.round2(sum) +
+                 '　回血 ' + U.round2(he.amount) + '（当时缺 ' + U.round2(room) + '）';
+      }
+    }
+    TH.eq('★ 每一次回血量 = 那一 tick 的技能伤害合计（上限是当时缺的血）',
+      badAmt.length, 0);
+    if (badAmt.length) TH.note('对不上的：' + badAmt.slice(0, 3).join(' / '));
+    TH.note('儒雅随和：' + sample);
+
+    checkInvariants(r, '孙笑川2星·技能回血', function (msg) {
+      TH.ok('不变量（2星技能回血）: ' + msg, false);
+    });
+  })();
+
+  /* ---------- ③ 3 星：击败的敌人倒戈 ---------- */
+  (function () {
+    /* 场面：孙笑川 3 星 + 两个队友 vs 一堆脆皮（1 星荣誉 500 血，
+       他一刀 382、血月斩 580，都能秒 —— 好让他真的拿到击杀）。 */
+    var r = ST.Battle.battle({
+      a: [{ id: 'butcher', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 },
+          { id: 'medic', star: 1, r: 0, c: 0 }],
+      b: [{ id: 'bowman', star: 1, r: 4, c: 3 },
+          { id: 'bowman', star: 1, r: 4, c: 4 },
+          { id: 'bowman', star: 1, r: 4, c: 5 },
+          { id: 'bowman', star: 1, r: 5, c: 3 },
+          { id: 'bowman', star: 1, r: 5, c: 4 },
+          { id: 'bowman', star: 1, r: 5, c: 5 }]
+    }, 9090);
+    var conv = r.log.filter(function (e) { return e.type === 'convert'; });
+    TH.ok('★ 他击败的敌人真的倒戈了', conv.length > 0, conv.length + ' 个');
+
+    var sun = r.initial.units.filter(function (u) { return u.defId === 'butcher'; })[0];
+    TH.ok('★ 倒戈的全都是他本人击败的（不是队友杀的）',
+      conv.every(function (e) { return e.from === sun.uid; }),
+      conv.map(function (e) { return e.from; }).join(','));
+    TH.ok('★ 倒戈时是以 20% 生命站起来',
+      conv.every(function (e) { return Math.abs(e.hp - U.round2(e.hpMax * 0.2)) < 1.5; }),
+      conv.length ? (conv[0].hp + '/' + conv[0].hpMax) : '—');
+    TH.ok('★ 倒戈之后站在**我方**半场',
+      conv.every(function (e) { return ST.Battle.sideOfRow(e.r) === e.toSide; }),
+      conv.length ? ('(' + conv[0].r + ',' + conv[0].c + ') → ' + conv[0].toSide) : '—');
+
+    /* ★★ 端到端：倒戈的人**真的替我们打仗**。
+       只验"发了一条 convert 事件"是不够的 —— 那可能只是改了数据、
+       而在寻敌时还被当成敌人（这正是忘了挪 st.side 数组时的现象）。 */
+    var foughtBack = 0;
+    for (var i = 0; i < conv.length; i++) {
+      var uid = conv[i].who;
+      for (var j = 0; j < r.log.length; j++) {
+        var e3 = r.log[j];
+        if (e3.type !== 'attack' || e3.from !== uid) continue;
+        var tgt = r.initial.units.filter(function (u) { return u.uid === e3.to; })[0];
+        if (tgt && tgt.side === conv[i].fromSide) { foughtBack++; break; }
+      }
+    }
+    TH.ok('★ 倒戈的人之后会**打它原来的队友**（阵营真的换了，不只是改了个字段）',
+      foughtBack > 0, foughtBack + '/' + conv.length + ' 个倒戈单位参战了');
+
+    checkInvariants(r, '孙笑川3星·招安', function (msg) {
+      TH.ok('不变量（3星招安）: ' + msg, false);
+    });
+  })();
+
+  /* ---------- ④ 排除条件：有复活能力的单位不能被招安 ---------- */
+  (function () {
+    /* 牢大（2 星：既有坠机、又有复活次数）—— 孙笑川把它打死时，
+       它该走**自己的**坠机→复活，而不是被招安。 */
+    var r = ST.Battle.battle({
+      a: [{ id: 'butcher', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'brute', star: 2, r: 4, c: 3 }]
+    }, 5150);
+    var conv = r.log.filter(function (e) { return e.type === 'convert'; });
+    var revived = r.log.filter(function (e) { return e.type === 'revive'; });
+    TH.ok('这一场牢大确实被打死过（否则这条没验到）',
+      r.log.some(function (e) { return e.type === 'death' && e.who === 'b0'; }));
+    TH.eq('★ 有复活能力的单位不会被招安（它走自己的坠机→复活）', conv.length, 0);
+    TH.ok('★ 而且它确实是自己站起来的（证明上面不是"没打死"）', revived.length > 0,
+      revived.length + ' 次复活');
+    TH.note('牢大 vs 孙笑川：招安 ' + conv.length + ' 次 / 它自己复活 ' + revived.length + ' 次');
+
+    checkInvariants(r, '孙笑川3星·牢大不被招安', function (msg) {
+      TH.ok('不变量（牢大不被招安）: ' + msg, false);
+    });
+  })();
+
+  /* ---------- ⑤ 排除条件：老牧师救回来的人，也不能再被招安 ----------
+   * ★ 这个场面必须让**第一次死亡不是孙笑川打的** ——
+   *   否则第一次就被招安走了，根本走不到"被牧师救活、再被打死"这一步。
+   *   所以队里放一个大嘴（荣誉 3 星）负责先杀人。 */
+  (function () {
+    var r = ST.Battle.battle({
+      a: [{ id: 'butcher', star: 3, items: ['belt', 'belt', 'belt'], r: 0, c: 0 },
+          { id: 'bowman', star: 3, items: ['belt', 'belt', 'belt'], r: 3, c: 3 }],
+      b: [{ id: 'medic', star: 2, items: ['belt', 'belt', 'belt'], r: 5, c: 5 },
+          { id: 'dagger', star: 1, r: 4, c: 3 }]
+    }, 6262);
+    var saved = r.log.filter(function (e) { return e.type === 'reviveAlly' && e.ok; });
+    TH.ok('这一场老牧师确实救过人（否则这条没验到）', saved.length > 0,
+      saved.length + ' 次');
+    if (saved.length) {
+      var who = saved[0].who;
+      var deathsOf = r.log.filter(function (e) { return e.type === 'death' && e.who === who; });
+      var convOf = r.log.filter(function (e) { return e.type === 'convert' && e.who === who; });
+      TH.eq('★ 被老牧师救回来的人第二次倒下时**不会**被招安', convOf.length, 0);
+      TH.note('被牧师救的是 ' + who + '：它死了 ' + deathsOf.length + ' 次，被招安 ' +
+        convOf.length + ' 次');
+    }
+    checkInvariants(r, '孙笑川3星·牧师救过的不招安', function (msg) {
+      TH.ok('不变量（牧师救过的不招安）: ' + msg, false);
+    });
   })();
 
   /* ============================================================
@@ -6189,7 +7745,7 @@
   TH.section('noTraits 开关');
 
   // 要验证「面板真的没被加成」，就得挑一组只激活一个羁绊的棋子。
-  // 石卫 + 长枪兵：铁卫 2（+30 护甲），另外两个羁绊各只有 1 个，不激活。
+  // 石卫 + 电棍：铁卫 2（+30 护甲），另外两个羁绊各只有 1 个，不激活。
   // （一开始我用了 4 个铁卫棋子，结果巨兽也凑够 2 个把血量抬了 20%，
   //   断言「两边血量相同」当场就炸了 —— 控制变量没做干净。）
   var pairIron = [{ id: 'stoneguard', star: 2 }, { id: 'spearman', star: 2 }];
@@ -6267,6 +7823,11 @@
      在混沌系统里会把底层 5% 左右的偏斜放大成几十个百分点。
      实测对局上限提到 60 秒之后，这套阵容从 58% 掉到 30%，
      而同一条曲线在**不掺任何新机制**的对照阵容上是 53~56%（正常）。
+     ★ 后续读数（同一套阵容、同一批种子，只是棋子改了几轮）：
+       58% → 30% → 49% → **38%**。这套阵容里**有冰冰冰**
+       （它这一版新拿了「2 星技能附带 1.5 秒冰冻」），
+       一次冰冻就能改掉后面几十 tick 的全部走位和出手 ——
+       混沌系统里读数跳几十个百分点是常态，不是新机制在帮某一方。
 
      真正干净的公平性证据在下面那条「纯镜像探针」里：
      两个 2 星牢大单挑是 A 22 / B 22 —— 完全对称。
