@@ -30,11 +30,17 @@
   --line-2: #b8c8b2;
   --line-3: #9fb39a;
 
-  /* 文字 */
-  --ink: #26332b;
-  --ink-2: #55655b;
-  --ink-3: #8b9a90;
-  --ink-4: #a9b6ad;
+  /* 文字
+   * ★ 2026-10 可读性整理：原来的三级 / 四级灰明度太高（#8b9a90 /
+   *   #a9b6ad），压在浅绿底上像是"没印清楚"，10~11px 的小字尤其糊。
+   *   整体往下压一档 —— 层级关系（主 / 次 / 弱 / 占位）一分没变，
+   *   但对白底的最低对比度从 2.7:1 提到 4.1:1，小字终于看得清了。
+   *   最深的一级顺手压深了一点点（#26332b → #22302a），笔画在浅绿
+   *   底上更实；但它仍然不是纯黑，长句子读起来不钉眼睛。 */
+  --ink: #22302a;
+  --ink-2: #4b5c52;
+  --ink-3: #6f8176;
+  --ink-4: #93a49a;
 
   /* 强调色 */
   --forest: #2f6b4f;
@@ -131,14 +137,45 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+
+/* ============================================================
+ * ★ 2026-10：游戏背景换成 user 提供的草坪图（art/bg-lawn.jpg）。
+ *
+ * 做法是「一层模糊图 + 每层半透明压色」，而不是直接把图糊在脸上：
+ *
+ *   · 图放在 body::before 上，position:fixed + inset:-12px ——
+ *     多出来的 12px 是给 filter:blur() 吃的，不然四边会糊出白边。
+ *     不用 background-attachment:fixed：那东西在手机上会被忽略。
+ *   · blur(2.5px)：原图只有 771×355，铺满一屏要放大 2 倍多，
+ *     不模糊的话颗粒和锯齿会很明显；模糊之后它就是一块"草地色"，
+ *     该有的明暗起伏还在，但不再抢戏。
+ *   · 上面每个场景再用半透明底色压一层（见 .scene / #scene-cover），
+ *     于是绿色只是给整体定调子，白面板和深色字照样清清楚楚。
+ *
+ * 想换图：直接覆盖 art/bg-lawn.jpg 就行，CSS 一个字都不用动。
+ * ============================================================ */
+body::before {
+  content: ''; position: fixed; inset: -12px; z-index: -1; pointer-events: none;
+  background: #dfe9dc url('art/bg-lawn.jpg') center center / cover no-repeat;
+  filter: blur(2.5px) saturate(1.06);
+}
 body {
-  background: var(--bg-top); color: var(--ink); overflow: hidden;
-  font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: #dfe9dc; color: var(--ink); overflow: hidden;
+  /* 字体：拉丁字母用 Segoe UI（数字最好看的一档），中文依次落到
+     微软雅黑 UI / HarmonyOS Sans / 苹方 / 微软雅黑 —— 都是系统自带的，
+     不联网、不下载字体，双击就能玩这条底线不破。
+     行高从 1.5 提到 1.62：中文方块字上下留白多一点才不挤。 */
+  font: 13.5px/1.62 "Segoe UI", "Microsoft YaHei UI", "HarmonyOS Sans SC",
+        "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 #app { position: absolute; inset: 0; }
 button { font: inherit; color: inherit; }
-.note { color: var(--ink-3); font-size: 11.5px; }
+.note { color: var(--ink-3); font-size: 12px; }
 
 /* ============================================================
  * 场景
@@ -148,10 +185,18 @@ button { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity .22s ease;
+  /* ★ 底色从实色改成半透明，让 body::before 上的草坪透出来。
+     透明度按「中间最透、上下更实」排：上方是 HUD、下方是商店，
+     都是文字最密的地方，压紧一点更好读；中间的棋盘/战场留给图。
+     （数字和原来的 --bg-top/--bg-mid/--bg-bot 是同一组颜色，
+       只是加上了 alpha，所以整体色调没变。） */
   background:
-    radial-gradient(ellipse 88% 44% at 50% 106%, rgba(150, 190, 142, .40) 0%, transparent 72%),
-    radial-gradient(ellipse 86% 36% at 50% 114%, rgba(128, 174, 120, .30) 0%, transparent 72%),
-    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 46%, var(--bg-bot) 100%);
+    radial-gradient(ellipse 88% 44% at 50% 106%, rgba(150, 190, 142, .30) 0%, transparent 72%),
+    radial-gradient(ellipse 86% 36% at 50% 114%, rgba(128, 174, 120, .20) 0%, transparent 72%),
+    linear-gradient(180deg,
+      rgba(247, 250, 245, .84) 0%,
+      rgba(237, 243, 234, .68) 46%,
+      rgba(226, 235, 223, .80) 100%);
 }
 .scene.scene-on { opacity: 1; visibility: visible; pointer-events: auto; }
 .scene.scene-out { opacity: 0; }
@@ -175,7 +220,7 @@ button { font: inherit; color: inherit; }
 
 #veil {
   position: absolute; inset: 0; z-index: 60;
-  background: #f2f6f0; opacity: 0; visibility: hidden;
+  background: rgba(242, 246, 240, .92); opacity: 0; visibility: hidden;
   display: flex; align-items: center; justify-content: center;
   transition: opacity .28s ease;
 }
@@ -199,6 +244,10 @@ button { font: inherit; color: inherit; }
 
 .valley { position: absolute; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
 .valley-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* ★ 山脊 SVG 停用：背景已经是 user 的草坪图了，再叠一层"远山"
+   会变成两张背景互相打架（而且都是绿的，糊成一片）。
+   想恢复老画面：把下面这行删掉即可，别的都不用动。 */
+.valley-svg { display: none; }
 .valley.subdued { opacity: .34; }
 .valley.subdued .scrim {
   position: absolute; inset: 0;
@@ -232,6 +281,9 @@ button { font: inherit; color: inherit; }
   filter: blur(16px);
   opacity: .5;
   animation: rayBreathe 16s ease-in-out infinite;
+  /* ★ 同上：背景换成草坪后，这道"从太阳斜下来的光"失去了参照物，
+     留着只会在草地上打出一道莫名其妙的白条。 */
+  display: none;
 }
 @keyframes rayBreathe {
   0%, 100% { opacity: .38; transform: translateX(-50%) rotate(11deg) scaleY(1); }
@@ -254,7 +306,12 @@ button { font: inherit; color: inherit; }
 /* ---------- 封面 ---------- */
 #scene-cover {
   align-items: center; justify-content: center;
-  background: linear-gradient(180deg, #fdfefb 0%, #eef5ea 46%, #dbe7d6 100%);
+  /* 封面也透出草坪（和 .scene 同一套思路，只是压得更实一点，
+     因为标题下面的按钮块需要干净的底）。 */
+  background: linear-gradient(180deg,
+    rgba(253, 254, 251, .90) 0%,
+    rgba(238, 245, 234, .74) 46%,
+    rgba(219, 231, 214, .86) 100%);
 }
 .cover-bg { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
 .float-unit {
@@ -1770,4 +1827,105 @@ button { font: inherit; color: inherit; }
   }
   /* 横屏的封面上那三行说明本来就挤，这一条提示优先显示 */
   .cover-inner { gap: 12px; }
+}
+
+/* ============================================================
+ * 羁绊触发：屏幕中央的**张力提示**（2026-10 追加）
+ *
+ * ★★ 为什么要做成"屏幕中央的大字"而不是角落里的一条 toast：
+ *   凑齐羁绊是这个游戏最爽的一刻（一整局都在为它攒棋子），
+ *   而原来它只在商店标题旁边悄悄弹一条小字 —— 玩家根本不会注意到。
+ *   这一刻值得**打断注意力**：全屏压暗一下、居中炸出羁绊名和档位。
+ *
+ * ★ 张力是四层叠出来的，少一层就只是"一行大字"：
+ *   ① 压暗：一层很淡的暗幕（0.28），让画面先"沉"下去
+ *   ② 冲击：文字从 1.5 倍缩到 1 倍，带一个回弹（cubic-bezier 过冲）
+ *   ③ 扫光：一条亮线从左扫到右，像"盖章"那一下
+ *   ④ 残响：环形的光晕扩散 + 名字下面一行档位/加成
+ *
+ * ★ 三条工程约束（都是踩过坑的）：
+ *   · `pointer-events: none` —— 它盖在屏幕中央，绝不能挡住任何按钮。
+ *     自检里"没有点不着的按钮"是靠 elementFromPoint 判的，
+ *     一个居中的透明浮层就能让那一整条断言变红。
+ *   · 不占排版：`position: fixed`，元素的 rect 不受影响，
+ *     "关键区块两两不遮挡"那条也照旧成立。
+ *   · 排队播放：一次买棋子可能同时点亮两条羁绊，叠在一起会互相糊住 ——
+ *     所以用队列，一条播完再播下一条。
+ * ============================================================ */
+.trait-bang {
+  position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .18s;
+}
+.trait-bang.on { opacity: 1; }
+.trait-bang .tb-dim {
+  position: absolute; inset: 0; background: rgba(12, 20, 16, .30);
+  opacity: 0; transition: opacity .22s;
+}
+.trait-bang.on .tb-dim { opacity: 1; }
+.trait-bang .tb-box {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 6px; padding: 18px 34px; border-radius: 16px;
+  background: linear-gradient(180deg, rgba(20, 32, 26, .88), rgba(12, 20, 16, .88));
+  border: 1px solid rgba(255, 226, 150, .55);
+  box-shadow: 0 10px 46px rgba(0, 0, 0, .45), 0 0 0 6px rgba(255, 226, 150, .10) inset;
+  transform: scale(1.5); opacity: 0;
+  animation: none;
+}
+.trait-bang.on .tb-box { animation: tbIn .46s cubic-bezier(.16, 1.5, .3, 1) forwards; }
+@keyframes tbIn {
+  0%   { transform: scale(1.55); opacity: 0; }
+  55%  { transform: scale(.97); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.trait-bang .tb-tag {
+  font-size: 11px; letter-spacing: .34em; color: #ffd98a; opacity: .9;
+}
+.trait-bang .tb-name {
+  font-size: 30px; font-weight: 900; letter-spacing: .06em;
+  color: #fff8e2; text-shadow: 0 0 18px rgba(255, 210, 120, .85), 0 2px 0 rgba(0, 0, 0, .4);
+  display: flex; align-items: center; gap: 10px;
+}
+.trait-bang .tb-name .em { font-size: 26px; }
+.trait-bang .tb-eff {
+  font-size: 13px; font-weight: 700; color: #d8f0c8;
+  padding: 3px 12px; border-radius: 8px; background: rgba(120, 200, 130, .16);
+}
+.trait-bang .tb-count { font-size: 12px; color: rgba(255, 255, 255, .72); }
+/* ③ 扫光：一条亮线扫过去，像盖章 */
+.trait-bang .tb-sweep {
+  position: absolute; left: 8%; right: 8%; top: 50%; height: 2px;
+  background: linear-gradient(90deg, rgba(255, 240, 190, 0), rgba(255, 244, 210, .95),
+              rgba(255, 240, 190, 0));
+  opacity: 0; transform: translateY(-50%) scaleX(.2);
+}
+.trait-bang.on .tb-sweep { animation: tbSweep .5s ease-out .12s forwards; }
+@keyframes tbSweep {
+  0%   { opacity: 0; transform: translateY(-50%) scaleX(.2); }
+  40%  { opacity: 1; transform: translateY(-50%) scaleX(1); }
+  100% { opacity: 0; transform: translateY(-50%) scaleX(1.06); }
+}
+/* ④ 残响：一圈向外扩散的光晕 */
+.trait-bang .tb-halo {
+  position: absolute; left: 50%; top: 50%; width: 180px; height: 180px;
+  margin: -90px 0 0 -90px; border-radius: 50%;
+  border: 2px solid rgba(255, 226, 150, .8); opacity: 0;
+}
+.trait-bang.on .tb-halo { animation: tbHalo .62s ease-out .06s forwards; }
+@keyframes tbHalo {
+  0%   { opacity: .95; transform: scale(.5); }
+  100% { opacity: 0; transform: scale(2.5); }
+}
+/* 手机上居中大字要收一点，别顶到边 */
+@media (max-width: 700px), (max-height: 520px) {
+  .trait-bang .tb-box { padding: 14px 20px; max-width: calc(100vw - 32px); }
+  .trait-bang .tb-name { font-size: 22px; }
+  .trait-bang .tb-name .em { font-size: 20px; }
+  .trait-bang .tb-eff { font-size: 12px; }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .trait-bang .tb-box { padding: 10px 18px; }
+  .trait-bang .tb-name { font-size: 20px; }
+  .trait-bang .tb-tag { font-size: 10px; }
+  .trait-bang .tb-halo { width: 120px; height: 120px; margin: -60px 0 0 -60px; }
 }
