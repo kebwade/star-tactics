@@ -147,7 +147,12 @@
   H.traitText = function (entry) {
     var t = entry.trait;
     var on = entry.tier >= 0;
-    var short = t.emoji + ' ' + t.name + ' ' + entry.count;
+    /* ★ 2026-10：名字太长就**只留 emoji**（后面跟人数）。
+       羁绊小条挤在商店标题那一行里，「你觉得你是职业选手吗」这种名字
+       一出来就把整行顶掉、还把旁边的按钮挤走。
+       完整名字照旧在 title（长按/悬停）和「阵容详解」里，信息一点没少。 */
+    var label = t.name.length > 3 ? '' : (t.name + ' ');
+    var short = t.emoji + label + entry.count;
     var full = t.emoji + ' ' + t.name + ' ' + entry.count + ' 个：' +
       (on ? H.modsText(entry.mods) : '还差 ' + (entry.need - entry.count) + ' 个才生效');
     var next = '';
