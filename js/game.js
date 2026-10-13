@@ -3342,16 +3342,59 @@
 
     beginRound();
     UI.show('scene-game');
-    /* ★★ 第一次进关自动翻一遍新手指引。
-     *   ★ 时机放在 UI.show 之后一点点：场景的入场动画大约 420ms，
-     *     指引和它叠在一起会出现"弹窗在抖动"的观感。
-     *   ★ 只自动弹一次（localStorage 记一笔）；之后随时可以点
-     *     商店那边的「❓ 指引」再看 —— 所以这里**不需要**"不再提示"以外的任何设置。
-     *   ★ localStorage 读不到（隐私模式/本地文件）时 `guideSeen()` 返回 true，
-     *     也就是宁可不弹，也不要每次进来都弹 —— 那比没有引导更烦人。 */
-    if (!guideSeen()) {
-      setTimeout(function () { if (!UI.hasModal()) openGuide(0); }, 520);
-    }
+    /* ★★ 横屏提醒：进游戏**之前**就把话说清楚。
+     *   横屏不是不能用（仍然沿用竖屏那套单列布局，可以上下滚），
+     *   而是"准备界面天生需要纵向空间"—— 棋盘 4 行 + 备战池 + 商店卡，
+     *   890px 高的竖屏刚好，390px 高的横屏永远排不下。
+     *   ★ 一次会话只提醒一次（localStorage 记一笔）：玩家已经知道就别再烦他，
+     *     真要每次都弹，那比横屏本身更烦。 */
+    maybeWarnLandscape(function () {
+      /* ★ 第一次进关自动翻一遍新手指引。
+       *   ★ 等横屏提示关掉之后再弹（`after` 回调）：两个弹窗叠在一起会互相盖住，
+       *     而且先看"建议竖屏"再看"怎么玩"才是对的顺序。
+       *   ★ 只自动弹一次（localStorage 记一笔）；之后随时可以点
+       *     商店那边的「❓ 指引」再看。
+       *   ★ localStorage 读不到（隐私模式/本地文件）时 guideSeen() 返回 true，
+       *     也就是宁可不弹，也不要每次进来都弹 —— 那比没有引导更烦人。 */
+      if (guideSeen()) return;
+      setTimeout(function () { if (!UI.hasModal()) openGuide(0); }, 280);
+    });
+  }
+
+  /* ---------- 横屏提醒 ----------
+   * ★ 横屏不是不能用（仍然沿用竖屏那套单列布局，可以上下滚），
+   *   而是"准备界面天生需要纵向空间"：棋盘 4 行 + 备战池 + 商店卡，
+   *   890px 高的竖屏刚好，390px 高的横屏永远排不下。
+   * ★ 只提醒一次（localStorage），而且**只在真的要弹的时候才记账**——
+   *   先记账再弹的话，一旦那次被别的弹窗挡掉，这条提示就永远不会出现了。 */
+  var ROTATE_KEY = 'st_rotate_notice';
+
+  function isLandscapePhone() {
+    var w = window.innerWidth || 0, h = window.innerHeight || 0;
+    return h > 0 && w > h && h <= 560;
+  }
+
+  function maybeWarnLandscape(after) {
+    after = after || function () {};
+    var seen = false;
+    try { seen = window.localStorage.getItem(ROTATE_KEY) === '1'; } catch (e) { seen = false; }
+    if (!isLandscapePhone() || seen) { after(); return; }
+    setTimeout(function () {
+      UI.modal({
+        title: '建议竖屏游玩',
+        body: '<p>本作的准备界面（<b>棋盘 + 备战池 + 商店</b>）是按竖屏排的：' +
+              '棋盘要 4 行，备战池和商店各占一条，竖屏 844 高刚好放得下；' +
+              '横屏只有 390 高，怎么排都会有面板需要上下滚动。</p>' +
+              '<p>横屏<b>照样能玩</b>（可以上下滚），但把手机转成竖屏会舒服很多。</p>',
+        actions: [{
+          label: '知道了，继续玩', kind: 'primary',
+          onClick: function () {
+            try { window.localStorage.setItem(ROTATE_KEY, '1'); } catch (e) { /* 无所谓 */ }
+            after();
+          }
+        }]
+      });
+    }, 420);
   }
 
   Game.start = start;
