@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>竖屏布局体检（不是自检套件，是量尺寸用的）</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; }
+  #report { font: 12px/1.45 Consolas, monospace; white-space: pre; margin: 0; padding: 8px; }
+  /* 被测量的 iframe 挪到屏幕外：仍然参与排版和渲染，但不会挡住报告 */
+  #stage { position: absolute; left: -4000px; top: 0; }
+  iframe { border: 0; display: block; }
+</style>
+</head>
+<body>
+<pre id="report">audit running...</pre>
+<div id="stage"><iframe id="fr" src="../index.html"></iframe></div>
+<script>
+(function () {
+  var W = 390, H = 844;             // iPhone 14 / 常见竖屏
+  var fr = document.getElementById('fr');
+  fr.style.width = W + 'px';
+  fr.style.height = H + 'px';
+
+  var out = [];
+  function line(s) { out.push(s); }
+  function pad(s, n) { s = String(s); while (s.length < n) s += ' '; return s; }
+  function r2(v) { return Math.round(v * 10) / 10; }
+
+  function dump(name, el, win) {
+    if (!el) { line('  ' + pad(name, 22) + '  <不存在>'); return; }
+    var b = el.getBoundingClientRect();
+    var st = win.getComputedStyle(el);
+    var vh = win.innerHeight, vw = win.innerWidth;
+    var flags = [];
+    if (b.bottom > vh + 0.5) flags.push('底部超出' + r2(b.bottom - vh) + 'px');
+    if (b.top < -0.5) flags.push('顶部超出');
+    if (b.right > vw + 0.5) flags.push('右侧超出' + r2(b.right - vw) + 'px');
+    if (b.height < 1) flags.push('高度为0');
+    if (st.display === 'none') flags.push('display:none');
+    if (st.overflowY === 'auto' || st.overflowY === 'scroll') {
+      if (el.scrollHeight > el.clientHeight + 1) flags.push('内部要滚动(' + el.scrollHeight + '>' + el.clientHeight + ')');
+    }
+    line('  ' + pad(name, 22) + ' top=' + pad(r2(b.top), 8) + ' h=' + pad(r2(b.height), 8) +
+         ' bottom=' + pad(r2(b.bottom), 8) + (flags.length ? '   <<< ' + flags.join(' / ') : ''));
+  }
+
+  function fonts(win, doc) {
+    var sel = ['.hud-stage-name', '.hs-val', '.hs-note', '.shop-title', '.sc-name', '.sc-cost',
+               '.board-label', '.bench-title', '.bench-hint', '.panel-head span', '.btn-fight',
+               '.bb-text b', '.bb-text em', '.trait-mini .tm-chip', '.note', '.ec-name', '.ec-hint'];
+    for (var i = 0; i < sel.length; i++) {
+      var el = doc.querySelector(sel[i]);
+      if (!el) { line('  ' + pad(sel[i], 22) + '  <无>'); continue; }
+      var st = win.getComputedStyle(el);
+      line('  ' + pad(sel[i], 22) + ' ' + pad(st.fontSize, 8) + ' weight=' + pad(st.fontWeight, 5) +
+           ' color=' + pad(st.color, 22) + ' lh=' + st.lineHeight);
+    }
+  }
+
+  function taps(win, doc) {
+    var els = doc.querySelectorAll('button, .cell, .sc-card, .bench-cell, .trait-mini');
+    var small = [];
+    for (var i = 0; i < els.length; i++) {
+      var b = els[i].getBoundingClientRect();
+      if (b.width < 1 || b.height < 1) continue;
+      if (b.width < 34 || b.height < 34) {
+        small.push((els[i].id || els[i].className) + ' ' + r2(b.width) + 'x' + r2(b.height));
+      }
+    }
+    line('  小于 34px 的点击目标 ' + small.length + ' 个：' + (small.length ? small.slice(0, 12).join(' | ') : '无'));
+  }
+
+  function overlapCheck(win, doc, aSel, bSel, label) {
+    var a = doc.querySelector(aSel), b = doc.querySelector(bSel);
+    if (!a || !b) { line('  ' + label + ': <缺元素>'); return; }
+    var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    var ov = !(ra.bottom <= rb.top + 0.5 || rb.bottom <= ra.top + 0.5 ||
+               ra.right <= rb.left + 0.5 || rb.right <= ra.left + 0.5);
+    line('  ' + label + ': ' + (ov ? '★ 重叠 ★' : '不重叠') +
+         '  (a ' + r2(ra.top) + '-' + r2(ra.bottom) + ', b ' + r2(rb.top) + '-' + r2(rb.bottom) + ')');
+  }
+
+  function measure(tag) {
+    var win = fr.contentWindow, doc = fr.contentDocument;
+    var vh = win.innerHeight, vw = win.innerWidth;
+    line('');
+    line('============================================================');
+    line('【' + tag + '】视口 ' + vw + ' x ' + vh + '   设备像素比 ' + win.devicePixelRatio);
+    line('  documentElement.scrollHeight = ' + doc.documentElement.scrollHeight +
+         (doc.documentElement.scrollHeight > vh + 1 ? '   <<< 整页超出视口 ' + (doc.documentElement.scrollHeight - vh) + 'px' : ''));
+    var cs = win.getComputedStyle(doc.documentElement);
+    line('  --cell = ' + cs.getPropertyValue('--cell') + '   --shop-card = ' + cs.getPropertyValue('--shop-card') +
+         '   --bench-cell = ' + cs.getPropertyValue('--bench-cell'));
+  }
+
+  function runCover() {
+    var win = fr.contentWindow, doc = fr.contentDocument;
+    measure('封面');
+    var sc = doc.getElementById('scene-cover');
+    line('  scene-cover: scrollHeight=' + sc.scrollHeight + ' clientHeight=' + sc.clientHeight +
+         (sc.scrollHeight > sc.clientHeight + 1 ? '   <<< 封面要滚动' : ''));
+    dump('logo h1', doc.querySelector('.logo h1'), win);
+    dump('logo-sub', doc.querySelector('.logo-sub'), win);
+    dump('logo-tag', doc.querySelector('.logo-tag'), win);
+    dump('rotate-note', doc.getElementById('rotate-note'), win);
+    dump('cover-menu', doc.querySelector('.cover-menu'), win);
+    dump('menu-btn#1', doc.getElementById('btn-pve'), win);
+    dump('menu-btn#2', doc.getElementById('btn-pvp'), win);
+    dump('menu-btn#3', doc.getElementById('btn-settings'), win);
+    dump('cover-progress', doc.getElementById('cover-progress'), win);
+    dump('cover-foot', doc.querySelector('.cover-foot'), win);
+    taps(win, doc);
+  }
+
+  function runGame() {
+    var win = fr.contentWindow, doc = fr.contentDocument;
+    measure('准备界面');
+    var sc = doc.getElementById('scene-game');
+    line('  scene-game: scrollHeight=' + sc.scrollHeight + ' clientHeight=' + sc.clientHeight +
+         (sc.scrollHeight > sc.clientHeight + 1 ? '   <<< 准备界面要滚动 ' + (sc.scrollHeight - sc.clientHeight) + 'px' : '   (一屏放得下)'));
+    dump('hud', doc.querySelector('.hud'), win);
+    dump('prep-shop', doc.querySelector('.prep-shop'), win);
+    dump('  shop-head', doc.querySelector('.shop-head'), win);
+    dump('  shop-row', doc.getElementById('shop-row'), win);
+    dump('  第1张卡', doc.querySelector('.shop-card'), win);
+    dump('  shop-actions', doc.querySelector('.shop-actions'), win);
+    dump('prep-main', doc.querySelector('.prep-main'), win);
+    dump('  side.left', doc.querySelector('.prep-side.left'), win);
+    dump('  board-center', doc.querySelector('.board-center'), win);
+    dump('  board-wrap', doc.querySelector('.board-wrap'), win);
+    dump('  grid', doc.getElementById('player-half'), win);
+    dump('  side.right', doc.querySelector('.prep-side.right'), win);
+    dump('  btn-fight', doc.getElementById('btn-fight'), win);
+    dump('prep-bench', doc.querySelector('.prep-bench'), win);
+    dump('  bench', doc.getElementById('bench'), win);
+    dump('  bench-cell#1', doc.querySelector('.bench-cell'), win);
+    line('');
+    line('  -- 区块之间的重叠检查 --');
+    overlapCheck(win, doc, '.hud', '.prep-shop', 'HUD vs 商店');
+    overlapCheck(win, doc, '.prep-shop', '.board-center', '商店 vs 棋盘');
+    overlapCheck(win, doc, '.board-center', '.prep-bench', '棋盘 vs 备战池');
+    overlapCheck(win, doc, '.board-center', '.prep-side.right', '棋盘 vs 右栏');
+    overlapCheck(win, doc, '.board-center', '.prep-side.left', '棋盘 vs 左栏');
+    line('');
+    line('  -- 字号 --');
+    fonts(win, doc);
+    line('');
+    line('  -- 点击目标 --');
+    taps(win, doc);
+  }
+
+  function finish() {
+    document.getElementById('report').textContent = out.join('\n') + '\n###VERDICT### AUDIT DONE\n';
+  }
+
+  fr.onload = function () {
+    // 等游戏初始化（虚拟时间下 setTimeout 会被快进，不会真的等）
+    setTimeout(function () {
+      try { runCover(); } catch (e) { line('封面测量异常: ' + e.message); }
+      try {
+        var d = fr.contentDocument;
+        d.getElementById('btn-pve').click();
+      } catch (e) { line('点开始异常: ' + e.message); }
+      setTimeout(function () {
+        try { runGame(); } catch (e) { line('准备界面测量异常: ' + e.message); }
+        finish();
+      }, 500);
+    }, 600);
+  };
+})();
+</script>
+</body>
+</html>
