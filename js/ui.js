@@ -382,6 +382,15 @@
         bgmDead = true; bgmEl = null;
         if (musicOn) synthStart();    // 文件没了 → 退回合成音乐
       });
+      /* ★ 媒体一准备好就补一次播放。
+         第一次点"人机模式"的时候，这个 m4a 往往还没解码完，
+         那一刻 play() 会因为"元素里还没有可播数据"被拒 ——
+         而原来只挂了一个一次性的 pointerdown，被拒之后就再也不会试了，
+         表现就是"点了没声"。所以这几个事件都要兜住。 */
+      el.addEventListener("loadedmetadata", bgmKick);
+      el.addEventListener("loadeddata", bgmKick);
+      el.addEventListener("canplay", bgmKick);
+      el.addEventListener("canplaythrough", bgmKick);
       document.body.appendChild(el);
       try { el.load(); } catch (e2) {}
       bgmEl = el;
@@ -402,6 +411,44 @@
       if (pr && pr.catch) pr.catch(function () { /* 等下一次用户交互 */ });
     } catch (e) {}
   }
+
+  /**
+   * "想要音乐但还没响" → 再试一次播放。
+   * 自动播放策略会把没经过用户交互的 play() 拒掉，这里只负责重试，不报错。
+   */
+  function bgmKick() {
+    if (musicOn && bgmEl && bgmEl.paused) bgmPlay();
+  }
+
+  /*
+   * ★ 常驻的交互监听（不是一次性的）。
+   *   原来的写法是：game.js 挂一个一次性的 pointerdown，点一下 → musicStart，
+   *   然后这个监听自己注销。问题是那一次点击经常正好撞上"文件还没解码完"，
+   *   play() 被拒，而监听已经没了 —— 于是整局都没有背景音乐。
+   *   现在改成：只要还没响，任何一次点击 / 按键 / 切回前台都再试一次。
+   */
+  var bgmKickBound = false;
+  function bgmArmRetry() {
+    if (bgmKickBound) return;
+    bgmKickBound = true;
+    var evs = ["pointerdown", "touchstart", "keydown", "click"];
+    for (var i = 0; i < evs.length; i++) document.addEventListener(evs[i], bgmKick, true);
+    document.addEventListener("visibilitychange", bgmKick);
+  }
+
+  /**
+   * 进封面就开音乐（game.js 在 boot 时调用）。
+   *   ① 先直接尝试播一次 —— 浏览器允许（用户以前跟这个页面交互过）就直接响了；
+   *   ② 不允许也不当回事：挂上"任何一次交互都再试"的兜底，
+   *      外加"媒体就绪时补一次"，两条路都堵死才算放不出来。
+   */
+  S.autoMusic = function () {
+    if (vol.music <= 0.001) return;
+    musicOn = true;
+    bgmEnsure();          // 提前创建 + preload，让解码先跑起来
+    bgmArmRetry();
+    bgmPlay();            // 现在就试一次
+  };
 
   S.musicStart = function () {
     musicOn = true;
