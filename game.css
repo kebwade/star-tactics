@@ -401,6 +401,40 @@ button { font: inherit; color: inherit; }
 }
 .shop-head .spacer { flex: 1; }
 
+/* ============================================================
+ * 羁绊小条（2026-10 新增）
+ *
+ * ★★ 它解决的是一个**反馈缺失**的问题：羁绊是这个游戏最主要的变强手段，
+ *   而原来只在「选中 / 羁绊」面板里露一半 —— 玩家凑够第二档往往完全没注意到。
+ *   放在商店标题这一行：那里本来就有一条空白（手机上的概率条是隐藏的），
+ *   而且"买棋子 → 羁绊变化"这两件事在视线里挨着。
+ *
+ * ★ 三种状态各自一个视觉：
+ *     生效  → 绿底绿边（on）
+ *     差几个 → 灰底，并写 "2/3"
+ *     一个没有 → 只显示「羁绊」两个字（不占地方）
+ * ============================================================ */
+.trait-mini {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  max-width: 62%; padding: 3px 8px; min-height: 28px;
+  border-radius: 9px; cursor: pointer; text-align: left;
+  background: rgba(255, 255, 255, .55); border: 1px solid var(--line-2);
+  font: inherit;
+}
+.trait-mini:hover { border-color: var(--forest-2); background: #fff; }
+.trait-mini .tm-empty { font-size: 11.5px; color: var(--ink-3); }
+.tm-chip {
+  font-size: 11.5px; font-weight: 700; line-height: 1; white-space: nowrap;
+  padding: 4px 7px; border-radius: 7px;
+  background: rgba(120, 130, 125, .12); color: var(--ink-3);
+  border: 1px solid rgba(120, 130, 125, .18);
+}
+.tm-chip.on {
+  background: rgba(47, 107, 79, .14); color: var(--forest);
+  border-color: rgba(47, 107, 79, .35);
+  box-shadow: 0 0 0 1px rgba(47, 107, 79, .06) inset;
+}
+
 /* 卡牌一排 + 刷新/升级一列（金铲铲也是这个布局） */
 .shop-body {
   display: flex; gap: 16px; justify-content: center; align-items: stretch;
@@ -1514,3 +1548,225 @@ button { font: inherit; color: inherit; }
   .shop-card:hover, .menu-btn:hover, .big-btn:hover { transform: none; }
 }
 
+
+/* ============================================================
+ * 新手引导 / 阵容详解（2026-10 新增）
+ *
+ * ★ 两个都用**通用弹窗**（UI.modal），所以没有新的浮层元素要维护：
+ *   这里只负责"弹窗里面长什么样"。
+ * ★ 手机上这两块必须能滚：内容比屏幕高是常态（横屏尤其），
+ *   所以正文区自己 overflow-y，标题和按钮固定在上下两端。
+ * ============================================================ */
+.guide-box, .comp-box { display: flex; flex-direction: column; gap: 10px; }
+.guide-head { display: flex; align-items: center; gap: 10px; }
+.guide-icon { font-size: 26px; line-height: 1; }
+.guide-title { font-size: 16px; font-weight: 800; color: var(--ink); }
+.guide-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
+.guide-list li { font-size: 13.5px; line-height: 1.65; color: var(--ink-2); }
+.guide-dots { display: flex; gap: 6px; justify-content: center; padding-top: 2px; }
+.guide-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(120, 130, 125, .25);
+}
+.guide-dot.on { background: var(--forest); transform: scale(1.25); }
+
+.comp-h {
+  font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--ink-3);
+  padding-left: 8px; border-left: 3px solid var(--forest-2);
+}
+.comp-empty { font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+.comp-units { display: flex; flex-wrap: wrap; gap: 7px; }
+.cu-chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 5px 9px; border-radius: 9px;
+  background: rgba(255, 255, 255, .68); border: 1px solid var(--line-2);
+}
+.cu-chip b { font-size: 13px; color: var(--ink); }
+.cu-chip i { font-size: 11px; color: var(--brass); font-weight: 800; font-style: normal; }
+.cu-chip em { font-size: 10.5px; color: var(--ink-3); font-style: normal; }
+.comp-traits { display: flex; flex-direction: column; gap: 6px; }
+.ct-line {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  padding: 7px 10px; border-radius: 9px;
+  background: rgba(120, 130, 125, .08); border: 1px solid rgba(120, 130, 125, .16);
+}
+.ct-line.on { background: rgba(47, 107, 79, .10); border-color: rgba(47, 107, 79, .30); }
+.ct-head { font-size: 13px; font-weight: 800; color: var(--ink); }
+.ct-ef { font-size: 12.5px; color: var(--ink-2); }
+.ct-next { font-size: 11.5px; color: var(--forest-2); font-weight: 700; }
+.comp-advice { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.comp-advice li { font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+
+/* ============================================================
+ * 开战时闪一下的羁绊条（战斗画面）
+ *
+ * ★★ 绝对定位、压在画布**上沿**：画布是正方形的，纵向高度是它唯一的瓶颈，
+ *   任何"占一行高度"的东西都会把棋盘压小 —— 所以这一条绝不能进排版流。
+ * ★ 只在开战那一刻出现 2.6 秒，之后淡出并 pointer-events: none，
+ *   不会挡住暂停/重播这些控件。
+ * ============================================================ */
+.trait-flash {
+  position: absolute; left: 50%; top: 6px; transform: translate(-50%, -8px);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 10px; border-radius: 10px;
+  background: rgba(18, 26, 22, .72); backdrop-filter: blur(3px);
+  opacity: 0; pointer-events: none; transition: opacity .28s, transform .28s;
+  z-index: 5; max-width: calc(100% - 16px);
+}
+.trait-flash.on { opacity: 1; transform: translate(-50%, 0); }
+.tf-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tf-who { font-size: 11px; font-weight: 800; color: #fff; opacity: .85; }
+.tf-line.mine .tf-who { color: #a8e6a0; }
+.tf-line.foe .tf-who { color: #f0a8a0; }
+.tf-tag {
+  font-size: 11px; font-weight: 700; color: #f2f6f2;
+  padding: 2px 6px; border-radius: 6px; background: rgba(255, 255, 255, .14);
+}
+.trait-flash .trait-none { font-size: 11px; color: rgba(255, 255, 255, .6); }
+.combat-stage { position: relative; }
+
+/* ============================================================
+ * 手机横屏重做（2026-10）
+ *
+ * ★★ 横屏只有一个问题：**矮**。844×390 上视口只有 390px，
+ *   而准备区原来是一条竖列（棋盘 → 备战池 → 选中 → 装备 → 开战 →
+ *   情报 → 战报），总高约 800px —— 玩家每回合都要上下滚，
+ *   一屏里只看得到棋盘，买牌和开战全在屏幕外面。
+ *
+ * ★ 改成**两栏 + 通栏底栏**：
+ *     左栏（46%）  棋盘 → 备战池（摆站位就在这两块之间来回拖）
+ *     右栏         情报/选中/装备 · 战报/开战
+ *     底栏（通栏） 商店 + 刷新/买经验 + 羁绊/指引/阵容
+ *   于是"买 → 摆 → 开战"三件事在**同一屏**里全能碰到。
+ *
+ * ★ 尺寸上只动两处：
+ *     · 格子按**左栏宽度**算（不是整屏宽度）—— 左栏只有 46%，
+ *       照整屏算会得到 90px 的格子，把棋盘撑出左栏
+ *     · 上限压到 38px：横屏纵向只有 390，棋盘（4 行）得给下面
+ *       的备战池和商店留位置
+ * ★ 「画布宽度 = 布阵盘宽度」这条不变式**自动成立**：两边读的都是 --cell。
+ * ============================================================ */
+@media (orientation: landscape) and (max-height: 560px) {
+  :root {
+    --cell-w: calc((46vw - 64px) / 8);
+    --arena-w: calc((46vw - 64px) / 8);
+    --cell-max: 38px;
+    --cell-chrome: 200px;
+    --bench-cell: 38px;
+    --shop-card: 74px;
+    --shop-h: 94px;
+    --shop-card-max: 74px;
+  }
+
+  #scene-game {
+    display: grid;
+    grid-template-columns: minmax(0, 46%) minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    align-content: start;
+    column-gap: 12px; row-gap: 6px;
+    padding: 6px 14px 10px;
+  }
+
+  #scene-game > .hud { grid-area: 1 / 1 / 2 / -1; }
+  /* 商店通栏压在最底下：买牌是最频繁的动作，放拇指最容易够到的地方 */
+  .prep-shop { grid-area: 4 / 1 / 5 / -1; padding: 0; }
+  /* ★ 中间区摊平，让棋盘/备战池/两条侧栏都成为网格项 */
+  .prep-main { display: contents; }
+  .board-center { grid-area: 2 / 1 / 3 / 2; margin: 0; }
+  .prep-bench   { grid-area: 3 / 1 / 4 / 2; padding: 2px 0 0; }
+  .prep-side.left  { grid-area: 2 / 2 / 3 / 3; display: flex; flex-direction: column;
+                     gap: 6px; min-width: 0; overflow: hidden; }
+  .prep-side.right { grid-area: 3 / 2 / 4 / 3; display: flex; flex-direction: column;
+                     gap: 6px; min-width: 0; overflow: hidden; }
+
+  .board-label { font-size: 9.5px; margin-bottom: 3px; }
+
+  /* 侧栏里的块：横屏高度紧，装饰性说明收掉，只留能点的和关键数字 */
+  .intel-strip { padding: 6px 8px; }
+  .intel-strip .ec-hint, .intel-strip .ec-arch { display: none; }
+  .panel-head { padding: 5px 8px; font-size: 11.5px; }
+  .sel-bar { padding: 6px 8px; }
+  .item-row { padding: 6px 8px; }
+  .mini-log { max-height: none; }
+  .log-panel { min-height: 0; }
+
+  /* 开战：横屏**不吸底**（吸底会压在棋盘/商店上），就在右栏里 */
+  .action-bar { position: static; margin: 0; padding: 6px 0 0; background: none; }
+  .action-bar .hint { display: none; }
+  .btn-fight { width: 100%; min-height: 44px; font-size: 15px; }
+
+  /* 商店：卡一横排，两个大按钮竖贴在右边 */
+  .prep-shop .shop-head { margin-bottom: 5px; }
+  .shop-body { flex-direction: row; gap: 10px; align-items: stretch; }
+  .shop-row { gap: 6px; flex: 1 1 auto; min-width: 0; }
+  .shop-actions { flex-direction: column; width: 150px; gap: 6px; }
+  .big-btn { min-height: 44px; padding: 5px 8px 5px 34px; }
+  .big-btn .bb-icon { font-size: 17px; left: 8px; }
+  .big-btn .bb-text b { font-size: 12px; }
+  .big-btn .bb-text em { display: none; }
+  .big-btn .bb-cost { top: 4px; right: 6px; font-size: 10px; padding: 0 5px; }
+  .shop-head .odds { display: none; }
+  .shop-title { font-size: 11.5px; }
+  .trait-mini { max-width: 52%; min-height: 26px; padding: 2px 6px; }
+  .tm-chip { font-size: 10.5px; padding: 3px 5px; }
+
+  .bench-head { margin-bottom: 3px; }
+  .bench { gap: 5px; }
+
+  /* 战斗场景：沿用竖屏那一套，只把间距压紧，让 390px 里多露出一块画布 */
+  .combat-body { padding: 4px 14px 10px; gap: 6px; }
+  .play-bar { gap: 6px; }
+  .ticker { max-height: 96px; }
+
+  /* 弹窗：横屏只有 390 高，正文必须能自己滚（标题和按钮留在两端） */
+  .modal { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 20px);
+           display: flex; flex-direction: column; padding: 14px 16px; }
+  .modal-title { margin-bottom: 10px; font-size: 15px; }
+  .modal-body { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .modal-acts { margin-top: 12px; }
+  .guide-list li { font-size: 13px; }
+  .comp-traits { gap: 4px; }
+  .ct-line { padding: 5px 8px; }
+}
+
+/* 横屏 + 更矮（667×375 之类）：再压一档 */
+@media (orientation: landscape) and (max-height: 400px) {
+  :root { --cell-max: 34px; --shop-card: 66px; --shop-h: 84px; --bench-cell: 34px; }
+  .tf-line { gap: 4px; }
+  .tf-tag { font-size: 10px; padding: 1px 4px; }
+}
+
+/* ============================================================
+ * 手机：商店标题那一行现在有 4 件事（商店 / 羁绊小条 / 指引 / 阵容 / 锁定）
+ *
+ * ★★ 390px 宽塞不下五个元素 —— 实测：商店 40 + 羁绊小条 242 +
+ *   三个按钮各 80 = 482px，超了 130px，结果是**按钮被挤成竖条**、
+ *   文字全被压掉。处理办法是让"信息"和"按钮"各让一步：
+ *     · 羁绊小条只留 34% 宽，**里面横向滚动**（chip 不换行）
+ *     · 指引/阵容两个按钮在手机上**只留图标**（❓ / 📋），
+ *       图标本身就是自解释的，省下来的 90px 全给羁绊和锁定
+ * ============================================================ */
+@media (max-width: 700px), (max-height: 520px) {
+  .trait-mini {
+    max-width: 34%; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .trait-mini::-webkit-scrollbar { display: none; }
+  .tm-chip { flex: none; }
+  #btn-guide .bt-txt, #btn-comp .bt-txt { display: none; }
+  #btn-guide, #btn-comp { padding: 4px 8px; }
+  .shop-head { gap: 6px; }
+}
+
+/* 横屏：羁绊小条可以宽一点（横屏横向有余） */
+@media (orientation: landscape) and (max-height: 560px) {
+  .trait-mini { max-width: 46%; flex-wrap: wrap; overflow: visible; }
+  #btn-guide .bt-txt, #btn-comp .bt-txt { display: inline; }
+  #btn-guide, #btn-comp { padding: 3px 8px; }
+}
+
+/* 商店标题那一行的概率条：宽了就把羁绊挤没了，所以让它自己收缩 */
+.shop-head .odds { min-width: 0; overflow: hidden; }
+@media (min-width: 701px) {
+  .trait-mini { max-width: 46%; }
+}
