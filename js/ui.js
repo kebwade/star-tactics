@@ -201,7 +201,7 @@
   var actx = null, masterGain = null, sfxGain = null, musicGain = null;
   var vol = { master: 0.7, sfx: 0.8, music: 0.3 };
   var lastHit = 0;
-  var musicTimer = 0, musicStep = 0;
+  var synthTimer = 0, musicStep = 0;
 
   function ensure() {
     try {
@@ -234,6 +234,11 @@
   S.setVolume = function (key, v) {
     vol[key] = Math.max(0, Math.min(1, v));
     applyVol();
+    // 背景音乐走的是 <audio>，不经过 WebAudio 的 masterGain，
+    // 所以音量变化要单独同步给它一次。
+    if (bgmEl) bgmEl.volume = bgmVolume();
+    // 拖着音乐条从 0 往上拉时，如果之前因为"音乐音量为 0"没启动过，顺手启动
+    if (key === "music" && musicOn && vol.music > 0.001) bgmPlay();
   };
   S.getVolume = function (key) { return vol[key]; };
 
@@ -330,37 +335,118 @@
     if (strong) tone({ f0: 160, f1: 80, dur: 0.12, type: 'square', vol: 0.07 });
   };
 
-  /* ---------- 背景音乐：一段慢速五声音阶琶音，循环 ---------- */
-  var SCALE = [220, 261.6, 293.7, 349.2, 392, 440, 523.3];
-  var PATTERN = [0, 2, 4, 2, 5, 4, 2, 1, 0, 2, 3, 4];
+  /* ============================================================
+   * 背景音乐
+   *
+   * ★ 2026-10：从「现场合成」换成**外部音频循环** audio/bgm.m4a
+   *   （user 提供的视频里那条音轨，约 16 秒，循环播放）。
+   *   下面那段五声音阶琶音**保留**，但只在音频文件读不出来时兜底。
+   *
+   * 几个必须照顾到的点：
+   *   · 不走 WebAudio 的 createMediaElementSource：本作是双击 index.html
+   *     用 file:// 打开的，file:// 下的媒体会被当成跨域，接进 WebAudio 会
+   *     **直接静音**（表现是"进度在动但没声"，非常难查）。所以直接播
+   *     <audio>，音量用 el.volume 控制。
+   *   · 浏览器不允许自动播放有声媒体：第一次点击/按键时才 play()，
+   *     被拒绝也不报错，下次交互再补一次。
+   *   · play() 在部分浏览器返回 Promise，被策略挡下会 reject ——
+   *     必须显式 catch，否则控制台一片红。
+   * ============================================================ */
+  var BGM_SRC = "audio/bgm.m4a";
+  var bgmEl = null;       // <audio> 元素（懒创建）
+  var bgmDead = false;    // 文件确认不可用，不再重试
+  var musicOn = false;    // "想要音乐"这个意图（不代表此刻真的在响）
+
+  /**
+   * 音乐音量 = 总音量 × 音乐音量。
+   * 再乘 2 是因为音乐文件本身已经是成品的响度，而默认设置是
+   * 总 0.75 × 音乐 0.30 —— 直接相乘只有 0.22 偏小；乘 2 之后是 0.45，
+   * 正好是"听得见但不抢戏"的伴奏音量。
+   */
+  function bgmVolume() {
+    return Math.max(0, Math.min(1, vol.master * vol.music * 2));
+  }
+
+  function bgmEnsure() {
+    if (bgmEl || bgmDead) return bgmEl;
+    try {
+      var el = document.createElement("audio");
+      el.src = BGM_SRC;
+      el.loop = true;                 // ★ 循环
+      el.preload = "auto";
+      el.volume = bgmVolume();
+      el.setAttribute("playsinline", "");
+      el.style.display = "none";
+      // 只有真的解码不出来才判死刑（加载慢不算）
+      el.addEventListener("error", function () {
+        bgmDead = true; bgmEl = null;
+        if (musicOn) synthStart();    // 文件没了 → 退回合成音乐
+      });
+      document.body.appendChild(el);
+      try { el.load(); } catch (e2) {}
+      bgmEl = el;
+      return el;
+    } catch (e) {
+      bgmDead = true; bgmEl = null;
+      return null;
+    }
+  }
+
+  function bgmPlay() {
+    var el = bgmEnsure();
+    if (!el) { synthStart(); return; }
+    el.volume = bgmVolume();
+    if (!el.paused) return;
+    try {
+      var pr = el.play();
+      if (pr && pr.catch) pr.catch(function () { /* 等下一次用户交互 */ });
+    } catch (e) {}
+  }
 
   S.musicStart = function () {
-    if (musicTimer) return;
-    if (!ensure()) return;
-    musicStep = 0;
-    musicTimer = setInterval(function () {
-      if (vol.music <= 0.001 || !musicGain) return;
-      var n = SCALE[PATTERN[musicStep % PATTERN.length]];
-      tone({ f0: n, dur: 1.6, type: 'sine', vol: 0.075, bus: 'music' });
-      // 每 4 拍加一个低音
-      if (musicStep % 4 === 0) {
-        tone({ f0: n / 2, dur: 2.2, type: 'triangle', vol: 0.055, bus: 'music' });
-      }
-      musicStep++;
-    }, 620);
+    musicOn = true;
+    bgmPlay();
   };
 
   S.musicStop = function () {
-    if (musicTimer) { clearInterval(musicTimer); musicTimer = 0; }
+    musicOn = false;
+    synthStop();
+    if (bgmEl) { try { bgmEl.pause(); bgmEl.currentTime = 0; } catch (e) {} }
   };
 
-  S.musicPlaying = function () { return !!musicTimer; };
+  S.musicPlaying = function () { return musicOn; };
+
+  /* ---------- 兜底：一段慢速五声音阶琶音，循环 ---------- */
+  var SCALE = [220, 261.6, 293.7, 349.2, 392, 440, 523.3];
+  var PATTERN = [0, 2, 4, 2, 5, 4, 2, 1, 0, 2, 3, 4];
+
+  function synthStart() {
+    if (synthTimer || bgmEl) return;   // 音频文件能用就不合成
+    if (!ensure()) return;
+    musicStep = 0;
+    synthTimer = setInterval(function () {
+      if (vol.music <= 0.001 || !musicGain) return;
+      var n = SCALE[PATTERN[musicStep % PATTERN.length]];
+      tone({ f0: n, dur: 1.6, type: "sine", vol: 0.075, bus: "music" });
+      // 每 4 拍加一个低音
+      if (musicStep % 4 === 0) {
+        tone({ f0: n / 2, dur: 2.2, type: "triangle", vol: 0.055, bus: "music" });
+      }
+      musicStep++;
+    }, 620);
+  }
+
+  function synthStop() {
+    if (synthTimer) { clearInterval(synthTimer); synthTimer = 0; }
+  }
 
   /* 第一次用户交互时解锁音频（浏览器自动播放策略） */
   UI.unlockAudio = function () {
     ensure();
-    document.removeEventListener('pointerdown', UI.unlockAudio);
-    document.removeEventListener('keydown', UI.unlockAudio);
+    // 浏览器规定"先有用户交互才准出声"：第一次点击时把背景音乐补上
+    if (musicOn) bgmPlay();
+    document.removeEventListener("pointerdown", UI.unlockAudio);
+    document.removeEventListener("keydown", UI.unlockAudio);
   };
   document.addEventListener('pointerdown', UI.unlockAudio);
   document.addEventListener('keydown', UI.unlockAudio);
