@@ -30,7 +30,7 @@
    * drop                    通关掉落的装备 id（可空）
    *
    * ★ 设计这两组阵容踩过的坑（第一版整条曲线是废的）：
-   *   我给敌人配了成型的羁绊（比如狂战 5 → 全队 +60% 攻速），
+   *   我给敌人配了成型的羁绊（比如【唯有饮者留其名】2 档 → 全队 +30% 攻击力），
    *   却给「参考玩家阵容」配了一堆没有协同的散卡。
    *   结果第 1 关 0% 过关率、第 6~10 关全是 0%，而第 5 关又 100%。
    *
@@ -41,7 +41,7 @@
   var LEVELS = [
     {
       name: '见习剑士', title: '第一关 · 热身', emoji: '🗡️', color: '#8fa3b8',
-      arch: '散兵', hint: '两个没怎么练过的新人，连羁绊都没凑齐。',
+      arch: '散兵（未成档）', hint: '两个没怎么练过的新人，连羁绊都没凑齐。',
       threat: 1,
       comp: [
         { id: 'bowman', star: 1 }, { id: 'acolyte', star: 1 }
@@ -50,7 +50,7 @@
     },
     {
       name: '林间游侠', title: '第二关 · 远方来的箭', emoji: '🏹', color: '#6fbf73',
-      arch: '游侠 / 医者', hint: '远程加个会回血的，前排是空的。冲上去就行。',
+      arch: '散兵（未成档）', hint: '远程加个会回血的，前排是空的。冲上去就行。',
       threat: 1,
       comp: [
         { id: 'bowman', star: 1 }, { id: 'acolyte', star: 1 }, { id: 'vine', star: 1 }
@@ -59,7 +59,7 @@
     },
     {
       name: '铁匠学徒', title: '第三关 · 会打铁的也扛揍', emoji: '⚒️', color: '#9db86a',
-      arch: '铁卫 2 档', hint: '前排比前两关硬，护甲有加成，代价是没什么输出。',
+      arch: '散兵（未成档）', hint: '前排比前两关硬，代价是没什么输出。',
       threat: 2,
       comp: [
         { id: 'spearman', star: 1 },
@@ -69,7 +69,7 @@
     },
     {
       name: '沙盗头目', title: '第四关 · 人多势众', emoji: '🐺', color: '#a8763f',
-      arch: '狂战 / 影袭', hint: '四个人，攻速叠起来很难缠。',
+      arch: '曼巴精神 1 档', hint: '四个人，凑出了【曼巴精神】，全队攻速叠起来很难缠。',
       threat: 2,
       comp: [
         { id: 'dagger', star: 1 },
@@ -79,7 +79,7 @@
     },
     {
       name: '寒霜法师', title: '第五关 · 别站成一堆', emoji: '❄️', color: '#6cc6e8',
-      arch: '秘术 / 医者', hint: '范围法术为主，前排也补了装。站位散开能少挨不少。',
+      arch: '冰火两重天 1 档 / 沙雕网友 1 档', hint: '范围法术为主，前排也补了装。站位散开能少挨不少。',
       threat: 3,
       comp: [
         { id: 'frostmage', star: 1, items: ['spellbook'] },
@@ -91,7 +91,7 @@
     },
     {
       name: '血月佣兵', title: '第六关 · 五个人一起冲', emoji: '🪓', color: '#c0392b',
-      arch: '狂战 4 档', hint: '五个人，狂战羁绊已经凑满一档，装备也齐了。前排顶不住会被瞬间清空。',
+      arch: '曼巴精神 2 档 / 唯有饮者留其名 1 档', hint: '五个人，【曼巴精神】到 2 档、【唯有饮者留其名】也开了，装备还齐。前排顶不住会被瞬间清空。',
       threat: 3,
       comp: [
         { id: 'dagger', star: 1, items: ['giantblade'] },
@@ -104,7 +104,7 @@
     },
     {
       name: '圣殿卫队', title: '第七关 · 一堵会回血的墙', emoji: '🏛️', color: '#d8c47a',
-      arch: '铁卫 / 守护', hint: '开局全队带护盾，护甲也拉满了。硬拼物理是拼不过的。',
+      arch: '打工人 1 档 / 你觉得你是职业选手吗 1 档', hint: '【打工人】到 1 档，全队血厚、护甲也高。硬拼物理是拼不过的。',
       threat: 3,
       comp: [
         { id: 'stoneguard', star: 2, items: ['dragonscale'] },
@@ -116,7 +116,7 @@
     },
     {
       name: '深渊教团', title: '第八关 · 法术强度拉满', emoji: '🕳️', color: '#8a6fd0',
-      arch: '秘术 4 档', hint: '秘术凑满一档，全队法术强度 +75%。魔抗装该拿出来了。',
+      arch: '神人 1 档', hint: '这关全是法系，还凑出了【神人】（全队 +40 魔抗）。魔抗装该拿出来了。',
       threat: 4,
       comp: [
         { id: 'abyss', star: 1, items: ['spellbook', 'sapphire', 'belt'] },
@@ -130,7 +130,7 @@
     },
     {
       name: '巨兽领主', title: '第九关 · 血厚得离谱', emoji: '🐘', color: '#6e7b88',
-      arch: '巨兽 4 档', hint: '全员加最大生命，前排是两个巨型单位。磨不动就别硬磨。',
+      arch: '抽象工作室 1 档 / 曼巴精神 1 档', hint: '前排是两个巨型单位，还凑了【抽象工作室】和【曼巴精神】。磨不动就别硬磨。',
       threat: 4,
       comp: [
         { id: 'titan', star: 2, items: ['belt'] },
@@ -144,7 +144,7 @@
     },
     {
       name: '钟离之主', title: '第十关 · 最终试炼', emoji: '🗿', color: '#d8b45f',
-      arch: 'BOSS · 铁卫 / 巨兽', hint: '钟离亲自坐镇。前面所有的准备都是为了这一关。',
+      arch: '沙雕网友 1 档 / 二次元 1 档', hint: '钟离亲自坐镇。前面所有的准备都是为了这一关。',
       threat: 4,
       // 注意：山岳现在是 5 费、1 星就有 1800 血。
       // 这里刻意只给 2 星、而且不带装备 —— 3 星是 5832 血 + 115 护甲，
@@ -181,7 +181,7 @@
      * ------------------------------------------------------------ */
     {
       name: '独眼巨魔', title: '第十一关 · 四费登场', emoji: '👹', color: '#a8763f',
-      arch: '狂战 / 巨兽', hint: '第一个四费核心。血厚、还带范围伤害，别站成一排。',
+      arch: '曼巴精神 2 档 / 唯有饮者留其名 1 档', hint: '第一个四费核心。血厚、还带范围伤害，别站成一排。',
       threat: 4,
       comp: [
         { id: 'butcher', star: 2, items: ['belt', 'giantblade'] },
@@ -193,7 +193,7 @@
     },
     {
       name: '沙漠商队', title: '第十二关 · 箭如雨下', emoji: '🏜️', color: '#d8b45f',
-      arch: '游侠 4 档', hint: '清一色远程，攻击力叠满。前排只有一层，冲进去就散。',
+      arch: '百步穿杨 2 档 / 你觉得你是职业选手吗 2 档', hint: '清一色远程，【百步穿杨】和【你觉得你是职业选手吗】都到 2 档，攻击力叠满。前排只有一层，冲进去就散。',
       threat: 4,
       comp: [
         { id: 'deadeye', star: 2, items: ['giantblade', 'huntereye'] },
@@ -205,7 +205,7 @@
     },
     {
       name: '秘境学者', title: '第十三关 · 法术强度拉满', emoji: '🔮', color: '#8a6fd0',
-      arch: '秘术 4 档', hint: '技能伤害翻倍，一轮齐射能秒掉你的后排。',
+      arch: '神人 1 档 / 医者仁心 1 档', hint: '法系满编（【神人】+【医者仁心】），一轮齐射能秒掉你的后排。',
       threat: 4,
       comp: [
         { id: 'abyss', star: 2, items: ['spellbook', 'sapphire'] },
@@ -218,7 +218,7 @@
     },
     {
       name: '铁卫军团', title: '第十四关 · 打不穿', emoji: '🏯', color: '#8d9aa8',
-      arch: '铁卫 4 档', hint: '全队 +100 护甲。物理输出在这关几乎打不动人。',
+      arch: '打工人 1 档 / 海鲜市场 1 档', hint: '全队护甲很高（【打工人】+【海鲜市场】），物理输出在这关几乎打不动人。',
       threat: 4,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
@@ -231,7 +231,7 @@
     },
     {
       name: '双生刺客', title: '第十五关 · 暴击流', emoji: '🗡️', color: '#e06a6a',
-      arch: '影袭 4 档', hint: '全队 +55% 暴击率。输出看运气，但运气好的时候一下就没了。',
+      arch: '百步穿杨 1 档 / 曼巴精神 1 档', hint: '【百步穿杨】+【曼巴精神】都在，输出看运气，但运气好的时候一下就没了。',
       threat: 5,
       comp: [
         { id: 'blademaster', star: 2, items: ['giantblade', 'huntereye', 'infinity'] },
@@ -244,7 +244,7 @@
     },
     {
       name: '兽群之王', title: '第十六关 · 七人围猎', emoji: '🐗', color: '#6fae5e',
-      arch: '巨兽 3 档', hint: '七个人，全队生命 +45%。想赢就得先扛住第一轮。',
+      arch: '抽象工作室 1 档 / 曼巴精神 1 档', hint: '七个人，血上限堆得很高（【抽象工作室】+【曼巴精神】）。想赢就得先扛住第一轮。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'belt'] },
@@ -257,7 +257,7 @@
     },
     {
       name: '苍穹射手', title: '第十七关 · 贯穿之矢', emoji: '🏹', color: '#5fb3a1',
-      arch: '游侠 4 / 秘术', hint: '四费神射手的贯穿箭打一整条线，站成直线就是白送。',
+      arch: '百步穿杨 2 档 / 你觉得你是职业选手吗 2 档', hint: '四费神射手的贯穿箭打一整条线，站成直线就是白送。',
       threat: 5,
       comp: [
         { id: 'deadeye', star: 3, items: ['giantblade', 'huntereye', 'infinity'] },
@@ -271,7 +271,7 @@
     },
     {
       name: '深渊回响', title: '第十八关 · 范围轰炸', emoji: '🕳️', color: '#6b5fa8',
-      arch: '秘术 4 / 医者', hint: '三个范围技能叠在一起，站位稍微密一点就团灭。',
+      arch: '医者仁心 2 档 / 神人 1 档', hint: '法系满编（【医者仁心】到 2 档），三个范围技能叠在一起，站位稍微密一点就团灭。',
       threat: 5,
       comp: [
         { id: 'abyss', star: 3, items: ['spellbook', 'sapphire'] },
@@ -286,7 +286,7 @@
     },
     {
       name: '钢铁洪流', title: '第十九关 · 钟离坐镇', emoji: '⛰️', color: '#7a8794',
-      arch: '铁卫 4 / 巨兽 3', hint: '五费钟离带满护甲魔抗，后面还跟着两个奶。',
+      arch: '打工人 1 档 / 海鲜市场 1 档', hint: '五费钟离带满护甲魔抗，后面还跟着两个奶。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
@@ -305,7 +305,7 @@
     },
     {
       name: '血月军团', title: '第二十关 · 八人满编', emoji: '🌑', color: '#c0392b',
-      arch: '狂战 4 / 影袭 4', hint: '八个成型棋子，攻速和暴击双满档。这是后半程的分水岭。',
+      arch: '唯有饮者留其名 2 档 / 曼巴精神 2 档', hint: '八个成型棋子，【唯有饮者留其名】和【曼巴精神】双双到 2 档。这是后半程的分水岭。',
       threat: 5,
       comp: [
         { id: 'blademaster', star: 2, items: ['swiftboots', 'giantblade', 'huntereye'] },
@@ -318,7 +318,7 @@
     },
     {
       name: '钟离近卫', title: '第二十一关 · 不动如山', emoji: '🗿', color: '#6e7b88',
-      arch: '铁卫 4 / 医者 3', hint: '钟离配三个奶。伤害不够的阵容会在这里被活活耗死。',
+      arch: '医者仁心 2 档 / 打工人 1 档', hint: '钟离配三个奶（【医者仁心】2 档 + 【打工人】），伤害不够的阵容会在这里被活活耗死。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
@@ -333,7 +333,7 @@
     },
     {
       name: '万剑之影', title: '第二十二关 · 雪峰降临', emoji: '⚔️', color: '#b06fa8',
-      arch: '狂战 5 / 影袭 5', hint: '五费张雪峰带队，万剑归宗是范围技能。他一个人能清掉你半队。',
+      arch: '唯有饮者留其名 2 档 / 百步穿杨 1 档', hint: '五费张雪峰带队，万剑归宗是范围技能。他一个人能清掉你半队。',
       threat: 5,
       comp: [
         { id: 'blademaster', star: 3, items: ['giantblade', 'huntereye', 'infinity'] },
@@ -358,7 +358,7 @@
     },
     {
       name: '无冕之王', title: '第二十三关 · 双五费', emoji: '👑', color: '#d8b45f',
-      arch: '全体系混编', hint: '钟离和张雪峰同时在对面。这是无尽模式之前的最后一道筛子。',
+      arch: '神人 1 档 / 百步穿杨 1 档', hint: '钟离和张雪峰同时在对面。这是无尽模式之前的最后一道筛子。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak'] },
@@ -373,7 +373,7 @@
     },
     {
       name: '巴巴博弈', title: '第二十四关 · 最终试炼', emoji: '🎲', color: '#e06a6a',
-      arch: 'BOSS · 满编精英', hint: '八人满编、八费神装、三个五费核心。打穿这一关，无尽模式就开了。',
+      arch: '神人 2 档 / 唯有饮者留其名 1 档', hint: '八人满编、八费神装、三个五费核心。打穿这一关，无尽模式就开了。',
       threat: 5,
       comp: [
         { id: 'titan', star: 2, items: ['dragonscale', 'voidcloak', 'belt'] },
@@ -391,24 +391,24 @@
   /**
    * 参考玩家阵容：一个有在认真玩的玩家，打到这一关时大概能凑出什么。
    *
-   * 刻意做成**一条连贯的成型路线**（便宜的狂战影袭开局，一路补强），
+   * 刻意做成**一条连贯的成型路线**（便宜的抽象/曼巴开局，一路补强），
    * 而不是「每一关随便挑几个强卡」—— 后者跑出来的难度曲线没有参考价值，
    * 因为真实玩家不会那么配队。
    *
    * 用来卡难度曲线，而不是用来证明游戏简单。
    */
   var REFERENCE = [
-    // L1：刚开局，两个 1 费，凑出狂战 2 档
+    // L1：刚开局，两个 1 费（羁绊还没成档 —— 第 1 关本来就不该有羁绊压力）
     [{ id: 'dagger', star: 1 }, { id: 'wolfrider', star: 1 }],
 
-    // L2：第三个棋子，狂战 + 影袭双 2 档
+    // L2：第三个棋子，开始凑【曼巴精神】（三个成员的羁绊）
     [{ id: 'dagger', star: 1 }, { id: 'wolfrider', star: 1 }, { id: 'bowman', star: 1 }],
 
     // L3：第一个 2 星 + 第一件装备
     [{ id: 'dagger', star: 2, items: ['giantblade'] },
      { id: 'wolfrider', star: 1 }, { id: 'bowman', star: 1 }],
 
-    // L4：铺到 4 人口，狂战影袭各 3 档
+    // L4：铺到 4 人口，曼巴精神开档（狼王 + 鹰佐）
     [{ id: 'dagger', star: 2, items: ['giantblade'] }, { id: 'wolfrider', star: 2 },
      { id: 'bowman', star: 1 }, { id: 'twinblade', star: 1 }],
 
@@ -417,12 +417,12 @@
      { id: 'wolfrider', star: 2, items: ['swiftboots'] },
      { id: 'bowman', star: 2 }, { id: 'twinblade', star: 1 }],
 
-    // L6：第五个人，狂战凑到 4 档（全队 +60% 攻速）
+    // L6：第五个人（牢大），曼巴精神 3 人 = 2 档（全队 +55% 攻速 / +15% 暴击）
     [{ id: 'dagger', star: 2, items: ['giantblade'] },
      { id: 'wolfrider', star: 2, items: ['swiftboots'] },
      { id: 'bowman', star: 2 }, { id: 'twinblade', star: 1 }, { id: 'brute', star: 1 }],
 
-    // L7：三件装备，影袭也凑到 4 档（全队 +55% 暴击）
+    // L7：三件装备，鹰佐升 2 星
     [{ id: 'dagger', star: 2, items: ['giantblade', 'huntereye'] },
      { id: 'wolfrider', star: 2, items: ['swiftboots'] },
      { id: 'bowman', star: 2 }, { id: 'twinblade', star: 2 }, { id: 'brute', star: 1 }],
@@ -445,7 +445,7 @@
      { id: 'twinblade', star: 2 }, { id: 'brute', star: 1 }],
 
     /* ------------------------------------------------------------
-     * L11 ~ L24：同一套「狂战影袭」核心一路补强到八人满编。
+     * L11 ~ L24：同一套「曼巴精神 + 唯有饮者留其名」核心一路补强到八人满编。
      *
      * ★ 为什么坚持用**同一条**成长线，而不是每关换一套：
      *   参考阵容代表「一个有在认真玩的玩家」，他打到第 20 关时手里
@@ -458,7 +458,7 @@
      *   强度是单调的（levelcurve 有断言守着）：
      *   星级 + 装备件数 × 0.6 必须逐关不减。
      * ------------------------------------------------------------ */
-    // L11：七人口，补上游侠系的猎鹰手
+    // L11：七人口，补上雪豹系的丁真（雪豹 / 百步穿杨 各开 1 档）
     [{ id: 'blademaster', star: 2, items: ['giantblade', 'huntereye', 'infinity'] },
      { id: 'dagger', star: 2, items: ['swiftboots', 'bloodthirst'] },
      { id: 'wolfrider', star: 2 }, { id: 'bowman', star: 2 }, { id: 'twinblade', star: 2 },
