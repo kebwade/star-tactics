@@ -1061,9 +1061,16 @@
 
         var band = UI.el('div', 'sc-nameband');
         band.appendChild(UI.el('div', 'sc-name', d.name));
+        /* ★ 2026-10：羁绊词条太长就只留 emoji（和商店头上那条一样的规则）。
+           实测「电棍」这张卡：羁绊写全名是「你觉得你是职业选手吗 · 打工人」，
+           在 67px 宽的卡上折成三行，把整个名字带顶到卡片外面 ——
+           连**角色名**都被 overflow:hidden 切掉了（用户报的"ui 把名字挡住"）。
+           完整名字在卡片的 title（悬停/长按）和「阵容详解」里，信息不丢。 */
         band.appendChild(UI.el('div', 'sc-traits', d.traits.map(function (t) {
-          return ST.TRAIT_BY_ID[t].name;
-        }).join(' · ')));
+          var tr = ST.TRAIT_BY_ID[t];
+          if (!tr) return t;
+          return tr.emoji + (tr.name.length > 4 ? '' : (' ' + tr.name));
+        }).join('  ')));
         card.appendChild(band);
 
         var afford = G.gold >= d.cost && firstFreeBench() >= 0;
@@ -3404,15 +3411,22 @@
      *   ★ 一次会话只提醒一次（localStorage 记一笔）：玩家已经知道就别再烦他，
      *     真要每次都弹，那比横屏本身更烦。 */
     maybeWarnLandscape(function () {
-      /* ★ 第一次进关自动翻一遍新手指引。
-       *   ★ 等横屏提示关掉之后再弹（`after` 回调）：两个弹窗叠在一起会互相盖住，
-       *     而且先看"建议竖屏"再看"怎么玩"才是对的顺序。
-       *   ★ 只自动弹一次（localStorage 记一笔）；之后随时可以点
-       *     商店那边的「❓ 指引」再看。
-       *   ★ localStorage 读不到（隐私模式/本地文件）时 guideSeen() 返回 true，
-       *     也就是宁可不弹，也不要每次进来都弹 —— 那比没有引导更烦人。 */
+      /* ★★ 新手指引**不再自动弹出**（2026-10 返工）。
+       *
+       *   原来第一次进关会在 280ms 后自动翻开指引弹窗。问题是它是**模态**：
+       *   正好压在棋盘上，棋子的名字和站位全被盖住 —— 用户报的
+       *   "ui 把角色名字挡住"就是它；自检里的拖拽用例也是被它挡下来的
+       *   （elementFromPoint 命中的是 modal-wrap，拖拽全部失败）。
+       *
+       *   现在改成：只弹一条**不挡任何东西**的提示，把"怎么开始"写清楚，
+       *   想细看就点商店那一行的「❓ 指引」。
+       *   仍然只提示一次（localStorage 记一笔）。 */
       if (guideSeen()) return;
-      setTimeout(function () { if (!UI.hasModal()) openGuide(0); }, 280);
+      setTimeout(function () {
+        if (UI.hasModal()) return;
+        rememberGuide();
+        UI.toast("第一次玩？点「❓ 指引」看 7 页图文教程（羁绊 / 站位 / 装备 / 升星）", "info");
+      }, 600);
     });
   }
 
