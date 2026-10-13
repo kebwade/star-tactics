@@ -427,49 +427,51 @@
    */
   function presetComps() {
     return {
-      // 铁卫 4（+100 护甲）+ 巨兽 3（+45% 生命）+ 守护 2 + 医者 2
-      '铁卫巨兽': [
+      /* ★★ 2026-10：羁绊全面改版之后，这五套**照着新羁绊重配**。
+       *   每套都注明了"凑的是哪条羁绊、到几档、吃多少加成"，
+       *   数值直接对着 js/traits.js 抄，改羁绊时这里要跟着一起看。 */
+      // 二次元 2（护甲 +45 / 开局 160 盾）+ 雪豹 2（+20% 生命）+ 打工人 4（+42% 生命 / +45 护甲）
+      '岩王雪豹': [
         { id: 'titan', star: 1, items: ['dragonscale', 'belt'] },
-        { id: 'ironwall', star: 2 }, { id: 'stoneguard', star: 2 },
-        { id: 'crossbow', star: 2 }, { id: 'vine', star: 2 },
+        { id: 'stoneguard', star: 2 }, { id: 'ironwall', star: 2 },
+        { id: 'spearman', star: 2 }, { id: 'templar', star: 2 },
         { id: 'medic', star: 1, items: ['holygrail'] }
       ],
-      // 秘术 4（+75% 法术强度）+ 医者 3 + 守护 2 —— 后排轰炸
-      '秘术爆破': [
-        { id: 'abyss', star: 1, items: ['spellbook', 'sapphire'] },
-        { id: 'frostmage', star: 2 }, { id: 'windcaller', star: 2 },
-        { id: 'alchemist', star: 2 }, { id: 'ironwall', star: 2 },
+      // 人工智能 3（+75% 法术强度）+ 医者仁心 3（每秒 3% 回血）—— 后排轰炸
+      '人工智能': [
+        { id: 'earthwarden', star: 1, items: ['spellbook', 'sapphire'] },
+        { id: 'acolyte', star: 2 }, { id: 'frostmage', star: 2 },
+        { id: 'pyromancer', star: 2 }, { id: 'ironwall', star: 2 },
         { id: 'medic', star: 1, items: ['holygrail'] }
       ],
-      // 狂战 5（+60% 攻速）+ 影袭 4（+55% 暴击）—— 玻璃大炮，成型最快
-      '狂战影袭': [
+      // 唯有饮者留其名 4（+70% 攻击力）+ 曼巴精神 3（+55% 攻速 / +15% 暴击）
+      '饮者曼巴': [
         { id: 'blademaster', star: 1, items: ['swiftboots', 'giantblade'] },
         { id: 'twinblade', star: 2, items: ['huntereye'] },
         { id: 'dagger', star: 2 }, { id: 'brute', star: 2 },
-        { id: 'bowman', star: 2 }, { id: 'wolfrider', star: 1 }
+        { id: 'butcher', star: 1 }, { id: 'wolfrider', star: 1 }
       ],
-      // 游侠 4（+60% 攻击力）+ 影袭 2 + 守护 2 —— 靠一个石卫当前排
-      '游侠医者': [
+      // 百步穿杨 3（+45% 攻击力 / +15% 暴击）+ 你觉得你是职业选手吗 3（+60% 攻击力）
+      'cnfps': [
         { id: 'deadeye', star: 1, items: ['giantblade', 'huntereye'] },
-        { id: 'falconer', star: 2, items: ['swiftboots'] },
-        { id: 'bowman', star: 2 }, { id: 'crossbow', star: 2 },
-        { id: 'stoneguard', star: 2 }, { id: 'earthwarden', star: 1 }
+        { id: 'crossbow', star: 2, items: ['swiftboots'] },
+        { id: 'bowman', star: 2 }, { id: 'falconer', star: 2 },
+        { id: 'spearman', star: 2 }, { id: 'stoneguard', star: 2 }
       ],
       /* ★ 2026-10 新增：**王决** —— ZMJJKK 单核。
        *
        *   设计思路（5 费单核阵容的标准形状）：
        *     · ZMJJKK 是唯一的输出点，开局满充能直接开大 → 全队都为它服务
-       *     · 游侠 3（+35% 攻击力）给激光加基数（激光每下是"攻击力 × 50%"）
-       *     · 秘术 2（+35% 法术强度）不管用（激光是物理），所以第二羁绊选
-       *       **影袭 2（+15% 暴击）**：10 倍攻速下暴击触发得最密，
-       *       这是这套阵容里最划算的一件小事
-       *     · 前排只留一个石卫 + 一个奶：ZMJJKK 自己站后排，
-       *       50% 移速加成让它自己会找角度
+       *     · 超频 2-3（+30%/+65% 攻速）：它的激光每发只吃 25% 攻击力，
+       *       所以**攻速比攻击力值**（10 倍攻速之下再叠攻速，收益是乘出来的）
+       *     · 康神开播了 2（再 +35% 攻速）：这一条只要有陈兴裕 + ZMJJKK 两个人就成
+       *     · 前排只留一个石卫 + 一个奶：ZMJJKK 站后排，50% 移速加成让它自己找角度
        *   ★ 1 星就够打：被动「世一决」是"开局满充能"，不需要养到 2 星才成型。 */
       '王决': [
         { id: 'zmjjkk', star: 1, items: ['giantblade', 'huntereye', 'swiftboots'] },
-        { id: 'falconer', star: 2 }, { id: 'bowman', star: 2 },
-        { id: 'dagger', star: 2, items: ['huntereye'] },
+        { id: 'crossbow', star: 2, items: ['swiftboots'] },
+        { id: 'blademaster', star: 1 },
+        { id: 'bowman', star: 2 },
         { id: 'stoneguard', star: 2, items: ['dragonscale', 'belt'] },
         { id: 'medic', star: 1, items: ['holygrail'] }
       ]
@@ -1134,14 +1136,14 @@
         if (unit.startFullMana) unit.mana = unit.maxMana;
         out.push(unit);
       }
-      // 守护羁绊：开局全队护盾
+      // 羁绊给的开局护盾（红薯粉丝 / 海鲜市场 / 二次元 都是这一类）
       for (var s = 0; s < out.length; s++) {
         out[s].shield += startShield;
         out[s].shielding += startShield;
       }
       /* ★★ 丁真 3 星「小马珍珠」：开局多一层**按生命上限算**的护盾。
        *
-       *   放在这里（而不是上面那张字段表里）的理由和守护羁绊一样：
+       *   放在这里（而不是上面那张字段表里）的理由和那份'羁绊开局护盾'一样：
        *   小马的数额 = 生命上限 × 50%，而 maxHp 要等装备/羁绊全部结算完才算得准。
        *   ★ 写两条事件：
        *     · `shield` —— 让血条旁边那截白条长出来（和羁绊护盾走同一类事件）
@@ -4607,7 +4609,7 @@
       }
     }
 
-    /* ---------- 医者羁绊：持续回血 ---------- */
+    /* ---------- 羁绊给的全队回血（医者仁心 / 神人）：按比例持续回 ---------- */
     function regenTick() {
       for (var i = 0; i < st.units.length; i++) {
         var u = st.units[i];
