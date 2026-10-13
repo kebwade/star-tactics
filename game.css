@@ -139,28 +139,21 @@
 html, body { height: 100%; margin: 0; }
 
 /* ============================================================
- * ★ 2026-10：游戏背景换成 user 提供的草坪图（art/bg-lawn.jpg）。
+ * ★ 2026-10：游戏背景 = user 提供的草坪图（art/bg-lawn.jpg）。
  *
- * 做法是「一层模糊图 + 每层半透明压色」，而不是直接把图糊在脸上：
+ * ★★ 返工记录：第一版把图放在 body::before 上并加了 blur(2.5px)，
+ *    想让它"柔一点、不抢戏"。结果手机上**明显卡顿** —— 全屏 filter
+ *    会让浏览器每帧做一次模糊合成，滚动时掉帧。
+ *    现在直接铺在 body 上：一次绘制、没有额外图层、没有 filter。
+ *    放大后的颗粒感靠上面那层 68%~90% 的白色压色盖掉，看不出来。
  *
- *   · 图放在 body::before 上，position:fixed + inset:-12px ——
- *     多出来的 12px 是给 filter:blur() 吃的，不然四边会糊出白边。
- *     不用 background-attachment:fixed：那东西在手机上会被忽略。
- *   · blur(2.5px)：原图只有 771×355，铺满一屏要放大 2 倍多，
- *     不模糊的话颗粒和锯齿会很明显；模糊之后它就是一块"草地色"，
- *     该有的明暗起伏还在，但不再抢戏。
- *   · 上面每个场景再用半透明底色压一层（见 .scene / #scene-cover），
- *     于是绿色只是给整体定调子，白面板和深色字照样清清楚楚。
- *
+ * 压色在 .scene / #scene-cover 上（半透明渐变），所以草坪只是给整体
+ * 定个调子，白面板和深色字照样清清楚楚。
  * 想换图：直接覆盖 art/bg-lawn.jpg 就行，CSS 一个字都不用动。
  * ============================================================ */
-body::before {
-  content: ''; position: fixed; inset: -12px; z-index: -1; pointer-events: none;
-  background: #dfe9dc url('art/bg-lawn.jpg') center center / cover no-repeat;
-  filter: blur(2.5px) saturate(1.06);
-}
 body {
-  background: #dfe9dc; color: var(--ink); overflow: hidden;
+  background: #dfe9dc url('art/bg-lawn.jpg') center center / cover no-repeat;
+  color: var(--ink); overflow: hidden;
   /* 字体：拉丁字母用 Segoe UI（数字最好看的一档），中文依次落到
      微软雅黑 UI / HarmonyOS Sans / 苹方 / 微软雅黑 —— 都是系统自带的，
      不联网、不下载字体，双击就能玩这条底线不破。
@@ -185,7 +178,7 @@ button { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity .22s ease;
-  /* ★ 底色从实色改成半透明，让 body::before 上的草坪透出来。
+  /* ★ 底色从实色改成半透明，让 body 上的草坪透出来。
      透明度按「中间最透、上下更实」排：上方是 HUD、下方是商店，
      都是文字最密的地方，压紧一点更好读；中间的棋盘/战场留给图。
      （数字和原来的 --bg-top/--bg-mid/--bg-bot 是同一组颜色，
@@ -435,6 +428,9 @@ button { font: inherit; color: inherit; }
 
 .icon-btn {
   width: 34px; height: 34px; padding: 0; cursor: pointer; font-size: 15px;
+  /* ★ flex:none：窄屏（320px）上 HUD 一挤就把这个按钮压到 29px 宽，
+     短边 <30px 就点不准了。禁止收缩，宁可让旁边的关卡名去省略号。 */
+  flex: 0 0 auto;
   background: #ffffff; border: 1px solid var(--line-2); border-radius: 9px;
   box-shadow: var(--sh-1);
   display: inline-flex; align-items: center; justify-content: center;
@@ -473,7 +469,7 @@ button { font: inherit; color: inherit; }
  * ============================================================ */
 .trait-mini {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  max-width: 62%; padding: 3px 8px; min-height: 28px;
+  max-width: 62%; padding: 3px 8px; min-height: 32px;
   border-radius: 9px; cursor: pointer; text-align: left;
   background: rgba(255, 255, 255, .55); border: 1px solid var(--line-2);
   font: inherit;
@@ -1576,13 +1572,13 @@ button { font: inherit; color: inherit; }
  *    这属于"为了修一个问题制造了另一个问题"。
  *
  * ★ 所以按高度分两档：
- *     高屏（≥700px）：吸底 —— 拇指够得着，而且内容排得下、不会盖住谁；
- *     矮屏（<700px）：排到 HUD / 商店之后、棋盘之前（order: 0）——
+ *     高屏（≥821px）：吸底 —— 拇指够得着，而且内容排得下、不会盖住谁；
+ *     矮屏（<821px）：排到 HUD / 商店之后、棋盘之前（order: 0）——
  *                     开战永远在第一屏，而且**谁都不挡**。
  *   横屏手机（844×390）也走这一条：那里内容总高约 800px、视口只有 390px，
  *   吸底的话按钮正好压在棋盘上（实测棋盘 T328~492、按钮 T321~373）。
  */
-@media (max-width: 700px) and (max-height: 700px),
+@media (max-width: 700px) and (max-height: 820px),
        (max-height: 520px) and (min-aspect-ratio: 1/1) {
   .action-bar { position: static; order: 0; margin-top: 8px; }
 }
@@ -1931,97 +1927,64 @@ button { font: inherit; color: inherit; }
 }
 
 /* ============================================================
- * ★★★ 竖屏手机 · 2026-10 重排（放在文件最末尾，覆盖上面所有零散的手机补丁）
+ * 竖屏手机 · 尺寸与字号（2026-10 返工版）
  *
- * 为什么要新开一块：手机样式是一层一层打补丁打出来的
- * （1378 / 1562 / 1585 / 1594 / 1696 / 1772 / 1787 / 1795 … 各一块，
- *   后一块盖前一块），"某条规则到底生没生效"已经看不出来了。
- * 与其继续往上叠，不如在末尾写一块完整的竖屏布局，用
- * orientation: portrait 把横屏排除在外 —— 横屏那套原样不动。
+ * ★★ 这一版**只改尺寸，一根手指都不碰排版顺序**。为什么推翻了上一版：
+ *    上一版我在文件末尾重排了 order、还把开战条写成 sticky，结果自检里
+ *    「关键区块互不遮挡」在 6 种手机尺寸下全挂（实测 "备战池×开战条=10636"
+ *    "棋盘×开战条=11611"）—— 吸底条浮在内容上面，把棋盘和备战池盖住了。
+ *    而原来那套「高屏吸底 / 矮屏把开战条提到最前」的两档规则
+ *    （见 1503 行和 1585 行的注释）本来就是自洽的，自检全绿。
+ *    所以这里不再重排，也不动 .action-bar。
  *
- * 实测（390×844 无头浏览器量出来的）抓到三个真 bug：
- *   ① 备战池 9 格放不下：repeat(9, 37px) + gap 9 = 405px，容器只有 350px
- *      —— 整排左右各被切掉约 28px，最边上那格一半在屏幕外。
- *   ② 商店 5 张同样放不下：5×66.8 + 4×14 = 390px > 350px，
- *      第一张和最后一张各被切掉 20px。
- *   ③ 「开战」按钮 y=774、**对手情报 y=865 直接在屏幕外** ——
- *      准备阶段最该看的就是"对面什么阵容"，结果要往下滚才看得到。
- *   根因是①②都在用 (100vw - 常数) 硬算宽度，而那个常数漏算了 gap。
- *
- * 重排三条原则：
- *   · 一行放 n 个格子就写 repeat(n, minmax(0, 1fr))，**永远不许溢出**；
- *     格子自身宽度只用于给里面的立绘定尺寸，不再决定排版宽度。
- *   · 第一屏必须装下"能打牌"的全部要素：
- *     HUD / 商店 / 对手情报 / 棋盘 / 备战池 + **常驻底部的开战按钮**。
- *   · 其余（选中·羁绊 / 装备 / 回合记录）排到后面，滚一下就有。
- *
- * 尺寸都刻意留了余量：桌面浏览器给 .scene 留了约 15px 的滚动条宽度，
- * 手机是悬浮滚动条（不占宽）。按"更窄的那个"算，两边都不会溢出。
+ * 保留的改动只有四类，每一类都有实测数据：
+ *   ① 一行 n 格写 repeat(n, minmax(0,1fr))：原来备战池 9×37px + 8×9px 间距
+ *      = 405px 塞进 350px 的容器，整排左右各被切掉 28px；商店 5 张
+ *      5×66.8 + 4×14 = 390px > 350px，第一张和最后一张各切 20px。
+ *   ② 左右边距 20px → 8px。★ 格子间距 --gap 保持 8px **不能改小**：
+ *      棋子卡牌比格子大 6px（.u 的 width: cell+6px），间距小于 6px
+ *      相邻卡牌就会互相压住 —— 这正是上一版把 --gap 改成 4px 之后
+ *      看起来"错位"的原因。
+ *   ③ 手指点得着的尺寸：羁绊条 28px 高、指引/阵容 32px 高 → 40px；
+ *      回封面/设置 34px → 42px，而且禁止被 HUD 压扁（flex: none）。
+ *   ④ 小字不小于 12px：棋盘说明 10 → 12、备战池提示 10.5 → 12 …
  * ============================================================ */
 @media (max-width: 700px) and (orientation: portrait) {
   :root {
-    /* 格子间距 8 → 4：省下来的宽度全给棋盘（格子 36px → 41px，约 +14%） */
-    --gap: 4px;
-    --cell-w: calc((100vw - 60px) / 8);
-    --arena-w: calc((100vw - 60px) / 8);
+    /* 格子：8 格 × 38px + 7 × 8px 间距 = 360px，比场景宽度留出十几像素余量
+       （桌面浏览器还会给滚动条留 15px，按窄的那个算，两边都不会溢出） */
+    --cell-w: calc((100vw - 84px) / 8);
+    --arena-w: calc((100vw - 84px) / 8);
     --cell-max: 76px;
-    /* 商店 5 张 / 备战池 9 格：这两个值只给里面的立绘定尺寸，
-       排版宽度由 1fr 说了算（所以两者不一致也不会溢出）。 */
     --shop-card-max: 108px;
+    /* 下面两个只给格子里的立绘定尺寸，排版宽度由 1fr 决定 —— 
+       所以就算算得不准，也只是立绘差一两像素，绝不会溢出。 */
     --shop-card: calc((100vw - 56px) / 5);
-    --shop-h: calc((100vw - 56px) / 5 * 1.30);
+    --shop-h: calc((100vw - 56px) / 5 * 1.28);
     --bench-cell: calc((100vw - 64px) / 9);
   }
 
-  /* 左右边距 20px → 8px：棋盘/商店/备战池一起多出 24px 可用宽度 */
+  /* 左右边距 20px → 8px：棋盘/商店/备战池一起多出 24px */
   .prep-shop { padding: 6px 8px 0; }
   .prep-bench { padding: 0 8px 8px; }
   .board-center { padding: 0 4px; }
 
-  /* ---------- ① 一行 n 格：1fr 兜底，绝不溢出 ---------- */
+  /* ---------- ① 一行 n 格：1fr 兜底，永不溢出 ---------- */
   .shop-row { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
   .shop-card { width: var(--shop-card); }
-  .bench { grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; }
+  .bench { grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 5px; }
   .bench-cell { width: var(--bench-cell); height: var(--bench-cell); max-width: 100%; }
   .bench-card { width: calc(var(--bench-cell) + 4px); height: calc(var(--bench-cell) + 6px); }
 
-  /* ---------- ② 第一屏的排序 ----------
-     DOM 顺序是「左栏(情报/选中/装备) → 棋盘 → 右栏(记录/开战) → 备战池」，
-     这里用 order 重排成：对面是谁 → 我的阵 → 我手上有什么 → 细节 → 开战。 */
-  .hud { order: -3; }
-  .prep-shop { order: -2; }
-  .intel-strip { order: -1; }
-  .board-center { order: 0; }
-  .prep-bench { order: 1; }
-  .sel-panel { order: 2; }
-  .item-panel { order: 3; }
-  .log-panel { order: 4; }
-  .action-bar { order: 5; }
-
-  /* ---------- ③ 开战按钮常驻底部 ----------
-     整屏最该点得到的东西，绝不能"滚下去才看见"。
-     sticky bottom：往下滚时它一直贴着屏幕底边，滚到最底才回到自己的位置。 */
-  .action-bar {
-    position: sticky; bottom: 0; z-index: 6;
-    margin: 0 -8px; padding: 8px;
-    background: linear-gradient(180deg,
-      rgba(247, 250, 245, 0) 0%, rgba(247, 250, 245, .92) 38%, rgba(247, 250, 245, .98) 100%);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-  }
-  .btn-fight { width: 100%; min-height: 50px; font-size: 17px; }
-
-  /* ---------- ④ 手指点得着的尺寸 ----------
-     实测这几个原来只有 28~34px 高（推荐 ≥44px）：
-     羁绊条 40.9×27.9、指引/阵容 33.7×31.9、锁定 67.8×31.9、回封面/设置 33.9×33.9。 */
-  .icon-btn { width: 42px; height: 42px; font-size: 18px; }
-  .btn-sm { min-height: 36px; padding: 0 10px; }
+  /* ---------- ③ 手指点得着（都 ≥ 40px） ---------- */
+  .icon-btn { width: 42px; height: 42px; font-size: 18px; flex: 0 0 auto; }
+  .shop-head .btn-sm { min-height: 40px; padding: 0 10px; }
+  #btn-guide, #btn-comp { min-height: 40px; min-width: 44px; padding: 0 6px; }
+  #btn-lock { min-height: 40px; }
   .trait-mini { min-height: 36px; padding: 0 10px; }
   .shop-head { gap: 6px; margin-bottom: 6px; }
 
-  /* ---------- ⑤ 小字别小于 12px ----------
-     实测 .board-label 10px、.bench-hint 10.5px、.hud-stage-name 11px：
-     手机上属于"看得见但读不清"。 */
+  /* ---------- ④ 小字不小于 12px ---------- */
   .hud-stage-name { font-size: 12.5px; }
   .hud-stage-sub { font-size: 11px; }
   .hud-field { font-size: 11.5px; }
@@ -2034,20 +1997,105 @@ button { font: inherit; color: inherit; }
   .intel-strip .ec-arch { font-size: 12px; }
   .panel-head span { font-size: 12.5px; }
 
-  /* ---------- ⑥ 省一点高度，把余量让给棋盘 ---------- */
-  .big-btn { min-height: 56px; }
+  /* ---------- 省高度，把余量让给棋盘 ---------- */
+  .big-btn { min-height: 52px; }
   .shop-body { gap: 8px; }
   .prep-bench .bench-head { margin-bottom: 5px; }
+
+  /* ---------- ★ 商店不再吸顶 ----------
+     它是**不透明**的一条（1788 行那套），往下滚的时候正好压在棋盘上，
+     把棋子的名字挡住 —— 用户报的"ui 把角色名字挡住"就是这里。
+     这一版让它跟着滚：第一屏本来就看得见它，要买牌滚回顶上就行。 */
+  .prep-shop { position: static; }
 }
-/* 竖屏补丁（接着上面那块）：商店那一行的三个小按钮
- * ★ 为什么单独再写一遍：`.shop-head .btn-sm { min-height: 32px }`（1566 行）
- *   和 `#btn-guide, #btn-comp { padding: 3px 8px }`（1733 行）的选择器
- *   都比我的 `.btn-sm` 更具体 —— CSS 里"更具体"是压过"更靠后"的，
- *   所以实测它们仍然是 33.7×31.9（手指点不准）。
- *   这里用同级 + 更靠后的写法顶回来。 */
+
+/* ============================================================
+ * 手机性能：关掉会让 GPU 掉帧的效果（2026-10）
+ *
+ * 实测这四样是"卡顿"的主要来源，共同点是**每帧都要重新合成**：
+ *   · 全屏 filter: blur() 的背景层          （已改成直接铺图，见 body）
+ *   · 一堆 backdrop-filter 毛玻璃（8 处）    ← 手机上最贵的一项
+ *   · 两条 22px 模糊 + 无限动画的雾带
+ *   · 14 个带 filter 的浮动立绘、5 费卡的 box-shadow 呼吸光晕
+ *     （box-shadow 动画是**重绘**不是合成，每帧重画一张卡）
+ * 关掉之后观感几乎没变（那些层本来就压了 68%~90% 的白），
+ * 但滚动和进商店明显跟手了。
+ * ============================================================ */
+@media (max-width: 700px), (hover: none) and (pointer: coarse) {
+  *, *::before, *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .mist-band { display: none; }
+  .float-unit { filter: none; }
+  .shop-card.cost5 { animation: none; }
+}
+/* ============================================================
+ * 竖屏第三轮修正（2026-10）—— 全部来自实测数字
+ *
+ * ① 羁绊小条被挤成 43px（实测）：「商店 / 羁绊条 / 指引 / 阵容 / 锁定」
+ *    挤在一行里，只有羁绊条允许收缩，于是它被压到 43px 宽 —— 里面的
+ *    chip 直接看不见了（用户说的"羁绊词条太长"其实是这个：不是字长，
+ *    是**框太窄**）。给它一个最小宽度，让中间的弹性空档去让位。
+ *
+ * ② 商店卡上的名字被裁：卡只有 67px 宽，名字区 49px。
+ *    「Dank1ng」「ZMJJKK」这种连着的拉丁字母没有断行机会 → 直接被
+ *    overflow:hidden 切掉（用户说的"ui 把角色名字挡住"）。
+ *    字号跟着卡宽走 + 允许任意位置断行，两行也放得下。
+ *
+ * ③ 再省 20~30px 高度：吸底的开战条是按设计吸在屏幕底的，
+ *    内容每高 1px，它就要多往上压 1px —— 压到「装备栏」上就违反
+ *    "关键区块互不遮挡"。所以面板标题的内边距、商店卡高度都收一点。
+ * ============================================================ */
 @media (max-width: 700px) and (orientation: portrait) {
-  .shop-head .btn-sm { min-height: 40px; padding: 0 10px; }
-  #btn-guide, #btn-comp { min-height: 40px; min-width: 44px; padding: 0 6px; }
-  #btn-lock { min-height: 40px; }
-  .hud .icon-btn { width: 42px; height: 42px; }
+  /* ① 羁绊条不许再被压扁 */
+  .trait-mini {
+    min-width: 92px; overflow: hidden; flex-wrap: nowrap;
+    min-height: 38px; padding: 0 8px;
+  }
+  .trait-mini .tm-chip { padding: 3px 6px; font-size: 11.5px; }
+  .shop-head .spacer { flex: 1 1 0; min-width: 0; }
+
+  /* ② 商店卡上的名字：跟着卡宽缩，长的可以断行 */
+  .sc-name {
+    font-size: calc(var(--shop-card) * 0.19);
+    line-height: 1.15; overflow-wrap: anywhere; word-break: break-word;
+  }
+  .sc-nameband { padding: 16px 6px 7px; }
+  .sc-traits, .sc-trait { font-size: calc(var(--shop-card) * 0.155); }
+
+  /* ③ 再省一点高度 */
+  :root { --shop-h: calc((100vw - 56px) / 5 * 1.20); }
+  .panel-head { padding: 5px 10px; }
+  .bench-hint { font-size: 11.5px; line-height: 1.4; }
+  .big-btn { min-height: 50px; }
+  .sel-bar, .item-row, .mini-log { min-height: 0; }
 }
+/* 竖屏第四轮：再抠掉十几像素，让吸底的开战条完全不压到「装备栏」
+ * （实测安卓常见竖屏还差 3.5px：装备栏×开战条=1304）。
+ * 吸底条是按设计吸在屏幕底的，内容每高 1px 它就得多往上压 1px。 */
+@media (max-width: 700px) and (orientation: portrait) {
+  :root { --shop-h: calc((100vw - 56px) / 5 * 1.14); }
+  .panel-head { padding: 4px 10px; }
+  .big-btn { min-height: 48px; }
+  .bench-hint { font-size: 11.5px; line-height: 1.35; }
+  .sel-bar { padding: 6px 10px; }
+}
+/* 竖屏第五轮：商店卡上的名字要放得下两行
+ * ★ 实测「愤怒的普通人」在 67px 宽的卡上会折成两行（31.5px 高），
+ *   上一轮把 --shop-h 压到 1.14（卡片 76px 高）之后，名字带就顶出卡片了
+ *   （卡片是 overflow:hidden，看起来就是"名字被吃掉一截"）。
+ *   卡片高度回到 1.20，名字带自己的上下内边距收窄，两行才装得下。 */
+@media (max-width: 700px) and (orientation: portrait) {
+  :root { --shop-h: calc((100vw - 56px) / 5 * 1.20); }
+  .sc-nameband { padding: 12px 6px 5px; }
+  /* 浮动立绘只留 4 个：14 个无限动画 + 每个一层合成，手机上纯属浪费 */
+  .cover-bg .float-unit:nth-child(n+5) { display: none; }
+}
+/* 商店卡上的羁绊小字：不加行数上限
+ * ★ 一开始想用 -webkit-line-clamp 硬压两行，但自检里有一条
+ *   「没有被切掉的文字」—— 任何 overflow:hidden 吃掉字都会被它抓到，
+ *   而且那是**真的**在丢信息。正确的做法是从源头把字变短：
+ *   长词条只留 emoji（见 game.js 里 sc-traits 的生成处），
+ *   实测 5 张卡的羁绊小字都稳定在一行，"名字带顶出卡片"的问题就没了。
+ */
