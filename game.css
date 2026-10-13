@@ -1929,3 +1929,125 @@ button { font: inherit; color: inherit; }
   .trait-bang .tb-tag { font-size: 10px; }
   .trait-bang .tb-halo { width: 120px; height: 120px; margin: -60px 0 0 -60px; }
 }
+
+/* ============================================================
+ * ★★★ 竖屏手机 · 2026-10 重排（放在文件最末尾，覆盖上面所有零散的手机补丁）
+ *
+ * 为什么要新开一块：手机样式是一层一层打补丁打出来的
+ * （1378 / 1562 / 1585 / 1594 / 1696 / 1772 / 1787 / 1795 … 各一块，
+ *   后一块盖前一块），"某条规则到底生没生效"已经看不出来了。
+ * 与其继续往上叠，不如在末尾写一块完整的竖屏布局，用
+ * orientation: portrait 把横屏排除在外 —— 横屏那套原样不动。
+ *
+ * 实测（390×844 无头浏览器量出来的）抓到三个真 bug：
+ *   ① 备战池 9 格放不下：repeat(9, 37px) + gap 9 = 405px，容器只有 350px
+ *      —— 整排左右各被切掉约 28px，最边上那格一半在屏幕外。
+ *   ② 商店 5 张同样放不下：5×66.8 + 4×14 = 390px > 350px，
+ *      第一张和最后一张各被切掉 20px。
+ *   ③ 「开战」按钮 y=774、**对手情报 y=865 直接在屏幕外** ——
+ *      准备阶段最该看的就是"对面什么阵容"，结果要往下滚才看得到。
+ *   根因是①②都在用 (100vw - 常数) 硬算宽度，而那个常数漏算了 gap。
+ *
+ * 重排三条原则：
+ *   · 一行放 n 个格子就写 repeat(n, minmax(0, 1fr))，**永远不许溢出**；
+ *     格子自身宽度只用于给里面的立绘定尺寸，不再决定排版宽度。
+ *   · 第一屏必须装下"能打牌"的全部要素：
+ *     HUD / 商店 / 对手情报 / 棋盘 / 备战池 + **常驻底部的开战按钮**。
+ *   · 其余（选中·羁绊 / 装备 / 回合记录）排到后面，滚一下就有。
+ *
+ * 尺寸都刻意留了余量：桌面浏览器给 .scene 留了约 15px 的滚动条宽度，
+ * 手机是悬浮滚动条（不占宽）。按"更窄的那个"算，两边都不会溢出。
+ * ============================================================ */
+@media (max-width: 700px) and (orientation: portrait) {
+  :root {
+    /* 格子间距 8 → 4：省下来的宽度全给棋盘（格子 36px → 41px，约 +14%） */
+    --gap: 4px;
+    --cell-w: calc((100vw - 60px) / 8);
+    --arena-w: calc((100vw - 60px) / 8);
+    --cell-max: 76px;
+    /* 商店 5 张 / 备战池 9 格：这两个值只给里面的立绘定尺寸，
+       排版宽度由 1fr 说了算（所以两者不一致也不会溢出）。 */
+    --shop-card-max: 108px;
+    --shop-card: calc((100vw - 56px) / 5);
+    --shop-h: calc((100vw - 56px) / 5 * 1.30);
+    --bench-cell: calc((100vw - 64px) / 9);
+  }
+
+  /* 左右边距 20px → 8px：棋盘/商店/备战池一起多出 24px 可用宽度 */
+  .prep-shop { padding: 6px 8px 0; }
+  .prep-bench { padding: 0 8px 8px; }
+  .board-center { padding: 0 4px; }
+
+  /* ---------- ① 一行 n 格：1fr 兜底，绝不溢出 ---------- */
+  .shop-row { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .shop-card { width: var(--shop-card); }
+  .bench { grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; }
+  .bench-cell { width: var(--bench-cell); height: var(--bench-cell); max-width: 100%; }
+  .bench-card { width: calc(var(--bench-cell) + 4px); height: calc(var(--bench-cell) + 6px); }
+
+  /* ---------- ② 第一屏的排序 ----------
+     DOM 顺序是「左栏(情报/选中/装备) → 棋盘 → 右栏(记录/开战) → 备战池」，
+     这里用 order 重排成：对面是谁 → 我的阵 → 我手上有什么 → 细节 → 开战。 */
+  .hud { order: -3; }
+  .prep-shop { order: -2; }
+  .intel-strip { order: -1; }
+  .board-center { order: 0; }
+  .prep-bench { order: 1; }
+  .sel-panel { order: 2; }
+  .item-panel { order: 3; }
+  .log-panel { order: 4; }
+  .action-bar { order: 5; }
+
+  /* ---------- ③ 开战按钮常驻底部 ----------
+     整屏最该点得到的东西，绝不能"滚下去才看见"。
+     sticky bottom：往下滚时它一直贴着屏幕底边，滚到最底才回到自己的位置。 */
+  .action-bar {
+    position: sticky; bottom: 0; z-index: 6;
+    margin: 0 -8px; padding: 8px;
+    background: linear-gradient(180deg,
+      rgba(247, 250, 245, 0) 0%, rgba(247, 250, 245, .92) 38%, rgba(247, 250, 245, .98) 100%);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .btn-fight { width: 100%; min-height: 50px; font-size: 17px; }
+
+  /* ---------- ④ 手指点得着的尺寸 ----------
+     实测这几个原来只有 28~34px 高（推荐 ≥44px）：
+     羁绊条 40.9×27.9、指引/阵容 33.7×31.9、锁定 67.8×31.9、回封面/设置 33.9×33.9。 */
+  .icon-btn { width: 42px; height: 42px; font-size: 18px; }
+  .btn-sm { min-height: 36px; padding: 0 10px; }
+  .trait-mini { min-height: 36px; padding: 0 10px; }
+  .shop-head { gap: 6px; margin-bottom: 6px; }
+
+  /* ---------- ⑤ 小字别小于 12px ----------
+     实测 .board-label 10px、.bench-hint 10.5px、.hud-stage-name 11px：
+     手机上属于"看得见但读不清"。 */
+  .hud-stage-name { font-size: 12.5px; }
+  .hud-stage-sub { font-size: 11px; }
+  .hud-field { font-size: 11.5px; }
+  .hud-stat .hs-val { font-size: 13px; }
+  .board-label { font-size: 12px; }
+  .board-midline > span { font-size: 11px; }
+  .bench-hint { font-size: 12px; line-height: 1.5; }
+  .big-btn .bb-text b { font-size: 13.5px; }
+  .big-btn .bb-text em { font-size: 11.5px; }
+  .intel-strip .ec-arch { font-size: 12px; }
+  .panel-head span { font-size: 12.5px; }
+
+  /* ---------- ⑥ 省一点高度，把余量让给棋盘 ---------- */
+  .big-btn { min-height: 56px; }
+  .shop-body { gap: 8px; }
+  .prep-bench .bench-head { margin-bottom: 5px; }
+}
+/* 竖屏补丁（接着上面那块）：商店那一行的三个小按钮
+ * ★ 为什么单独再写一遍：`.shop-head .btn-sm { min-height: 32px }`（1566 行）
+ *   和 `#btn-guide, #btn-comp { padding: 3px 8px }`（1733 行）的选择器
+ *   都比我的 `.btn-sm` 更具体 —— CSS 里"更具体"是压过"更靠后"的，
+ *   所以实测它们仍然是 33.7×31.9（手指点不准）。
+ *   这里用同级 + 更靠后的写法顶回来。 */
+@media (max-width: 700px) and (orientation: portrait) {
+  .shop-head .btn-sm { min-height: 40px; padding: 0 10px; }
+  #btn-guide, #btn-comp { min-height: 40px; min-width: 44px; padding: 0 6px; }
+  #btn-lock { min-height: 40px; }
+  .hud .icon-btn { width: 42px; height: 42px; }
+}
