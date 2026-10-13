@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>竖屏尺寸精查 v5</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; }
+  #report { font: 12px/1.4 Consolas, monospace; white-space: pre; margin: 0; padding: 8px; }
+  #stage { position: absolute; left: -4000px; top: 0; }
+  iframe { border: 0; display: block; }
+</style>
+</head>
+<body>
+<pre id="report">running...</pre>
+<div id="stage"><iframe id="fr" src="../index.html" width="390" height="844"></iframe></div>
+<script>
+(function () {
+  var out = [];
+  function L(s) { out.push(s); }
+  function r(v) { return Math.round(v * 10) / 10; }
+
+  function box(win, el, label) {
+    if (!el) { L('  ' + label + ': <无>'); return; }
+    var st = win.getComputedStyle(el);
+    L('  ' + label.padEnd(26) + ' clientW=' + String(el.clientWidth).padEnd(6) +
+      ' scrollW=' + String(el.scrollWidth).padEnd(6) + ' offsetW=' + String(el.offsetWidth).padEnd(6) +
+      ' overflowX=' + String(st.overflowX).padEnd(8) + ' display=' + String(st.display).padEnd(9) +
+      ' flex=' + st.flex + ' pad=' + st.paddingLeft + '/' + st.paddingRight + ' gap=' + st.gap);
+  }
+
+  var fr = document.getElementById('fr');
+  fr.onload = function () {
+    setTimeout(function () {
+      var win = fr.contentWindow, doc = fr.contentDocument;
+      try { doc.getElementById('btn-pve').click(); } catch (e) { L('点开始异常 ' + e.message); }
+      setTimeout(function () {
+        try {
+          var de = doc.documentElement;
+          L('视口 innerWidth=' + win.innerWidth + '  innerHeight=' + win.innerHeight);
+          L('documentElement clientW=' + de.clientWidth + ' scrollW=' + de.scrollWidth);
+          var cs = win.getComputedStyle(de);
+          ['--cell', '--cell-w', '--arena-w', '--cell-max', '--cell-r', '--gap',
+           '--shop-card', '--shop-h', '--bench-cell', '--cell-chrome'].forEach(function (k) {
+            L('  ' + k.padEnd(14) + ' = ' + cs.getPropertyValue(k).replace(/\s+/g, ' ').trim());
+          });
+          L('');
+          var sc = doc.getElementById('scene-game');
+          L('scene-game clientW=' + sc.clientWidth + ' scrollW=' + sc.scrollWidth + ' clientH=' + sc.clientHeight + ' scrollH=' + sc.scrollHeight);
+          box(win, doc.querySelector('.prep-main'), '.prep-main');
+          box(win, doc.querySelector('.board-center'), '.board-center');
+          box(win, doc.querySelector('.board-wrap'), '.board-wrap');
+          box(win, doc.getElementById('player-half'), '#player-half 棋盘');
+          box(win, doc.getElementById('bench'), '#bench 备战池');
+          box(win, doc.getElementById('shop-row'), '#shop-row 商店');
+          box(win, doc.getElementById('trait-mini'), '#trait-mini 羁绊条');
+          box(win, doc.querySelector('.shop-head'), '.shop-head');
+          L('');
+          var cell = doc.querySelector('#player-half .cell');
+          if (cell) L('  格子 offsetW=' + cell.offsetWidth + ' rectW=' + r(cell.getBoundingClientRect().width));
+          var grid = doc.getElementById('player-half');
+          if (grid) L('  棋盘 8 列应有的宽 = 8×格子 + 7×gap = ' + (cell ? (8 * cell.offsetWidth) : '?') + ' + 7×' +
+            (cs.getPropertyValue('--gap')) + '  →  实际 grid offsetW=' + grid.offsetWidth);
+          var bc = doc.querySelector('.bench-cell');
+          if (bc) L('  备战池格子 offsetW=' + bc.offsetWidth + ' grid 模板第一列=' +
+            win.getComputedStyle(doc.getElementById('bench')).gridTemplateColumns.split(' ')[0]);
+          var sc2 = doc.querySelector('.shop-card');
+          if (sc2) {
+            L('  商店卡 offsetW=' + sc2.offsetWidth + ' offsetH=' + sc2.offsetHeight +
+              ' grid 模板第一列=' + win.getComputedStyle(doc.getElementById('shop-row')).gridTemplateColumns.split(' ')[0]);
+          }
+          var nm = doc.querySelector('.sc-name');
+          if (nm) {
+            var range = doc.createRange(); range.selectNodeContents(nm);
+            var tw = range.getBoundingClientRect().width;
+            L('  商店卡名字 "' + nm.textContent.trim() + '" 文字宽=' + r(tw) + ' 容器 clientW=' + nm.clientWidth +
+              '  font=' + win.getComputedStyle(nm).fontSize + '  white-space=' + win.getComputedStyle(nm).whiteSpace +
+              (tw > nm.clientWidth + 0.5 ? '  ★ 文字比容器宽，会被裁/挤' : '  OK'));
+          }
+          var chips = doc.querySelectorAll('.tm-chip');
+          var sum = 0;
+          for (var i = 0; i < chips.length; i++) sum += chips[i].offsetWidth + 6;
+          var tm = doc.getElementById('trait-mini');
+          if (tm) L('  羁绊条: 内容总宽≈' + sum + ' clientW=' + tm.clientWidth + ' scrollW=' + tm.scrollWidth +
+            '  wrap=' + win.getComputedStyle(tm).flexWrap + (tm.scrollWidth > tm.clientWidth + 1 ? '  ★ 溢出被裁' : '  OK'));
+          chips.forEach ? null : 0;
+          for (var j = 0; j < chips.length; j++) L('    chip "' + chips[j].textContent.trim() + '" w=' + chips[j].offsetWidth);
+        } catch (e) { L('异常 ' + e.message + '\n' + e.stack); }
+        document.getElementById('report').textContent = out.join('\n') + '\n###VERDICT### AUDIT DONE\n';
+      }, 500);
+    }, 500);
+  };
+})();
+</script>
+</body>
+</html>
