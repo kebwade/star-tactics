@@ -1578,7 +1578,7 @@ button { font: inherit; color: inherit; }
  *   横屏手机（844×390）也走这一条：那里内容总高约 800px、视口只有 390px，
  *   吸底的话按钮正好压在棋盘上（实测棋盘 T328~492、按钮 T321~373）。
  */
-@media (max-width: 700px) and (max-height: 800px),
+@media (max-width: 700px) and (max-height: 700px),
        (max-height: 520px) and (min-aspect-ratio: 1/1) {
   .action-bar { position: static; order: 0; margin-top: 8px; }
 }
@@ -1927,100 +1927,56 @@ button { font: inherit; color: inherit; }
 }
 
 /* ============================================================
- * 竖屏手机 · 最终布局（2026-10 第六版，这一版才是"重新排布"）
+ * 竖屏手机 · 尺寸、可读性与防切边（2026-10）
  *
- * ★★ 为什么要重排：用户看的是**手机上的部署版**，反馈是
- *    「布局排布不对（哪块在哪儿、该大该小）」。
- *    原来的顺序是「商店在最上面 → 棋盘 → 备战池 → 面板 → 开战」，
- *    那是照桌面来的：鼠标在屏幕中间，商店放哪都行。
- *    手机不是 —— 拇指只够得着屏幕下半部分，而商店（5 张卡 + 刷新 + 买经验）
- *    恰恰是点得最频繁的一块，放在最上面等于每买一次牌都要把手挪到顶边。
+ * ★★ 排版顺序**完全按一开始的来**（用户要求：商店放在最上面）。
+ *    原来那套是：
+ *      HUD → 商店 → 棋盘 → 备战池 → 选中·羁绊 → 装备栏 → 开战
+ *          → 对手情报 → 回合记录
+ *    顺序由上面那一段 `order: 1..7`（棋盘=1 … 回合记录=7）+ DOM 顺序决定，
+ *    这一块里**一个 order 都不写**，也**不动**：
+ *      · .prep-shop 的吸顶（高屏 ≥760px 时吸在顶上）
+ *      · .action-bar 的吸底（高屏吸在底部 / 矮屏提到最前，两档规则）
+ *    那两档规则是原来就有的，见 1477 行和 1581 行的注释。
  *
- * ★ 现在的顺序（和《金铲铲之战》手游一致，本作本来就是照它排的）：
- *
- *      ① HUD                    关卡 / 血量 / 金币 / 设置
- *      ② 对手情报（压成一行）     打之前就该知道对面是什么体系
- *      ③ 棋盘                    中段，尽量大 —— 这是主角
- *      ④ 备战池 9 格             紧贴棋盘，拖拽距离最短
- *      ⑤ 选中·羁绊 / 装备栏       看一眼就走的两行
- *      ⑥ 商店 5 张卡 + 刷新/买经验  拇指区
- *      ⑦ 开战按钮（大）           最下面，一根拇指按得到
- *      ⑧ 回合记录                 最后，可滚
- *
- * ★★ 一条硬规矩：**竖屏下谁都不吸底、不吸顶**。
- *    吸底的开战条虽然"永远点得到"，但它是浮在内容上面的 ——
- *    实测压住过备战池、棋盘、装备栏（自检里"关键区块互不遮挡"连挂 6 种尺寸）。
- *    现在整页在 390×844 上一屏正好排得下（实测约 790px / 视口 842px），
- *    所以开战按钮**本来就看得见**，根本不需要吸底，也就不会压住任何东西。
- *
- * ★ 矮屏（≤700px 高，比如 360×640 / 320×568）排不下：
- *    把开战按钮提到 HUD 后面（原设计的两档规则，这里显式写清楚）。
+ * 这里只做四件事，每一件都有实测数据（都是"修 bug"，不是"重排"）：
+ *   ① 一行 n 格写 repeat(n, minmax(0,1fr))，永远不被切边：
+ *        · 备战池原来是 9×37px + 8×9px 间距 = 405px 塞进 350px
+ *          → 整排左右各被切掉 28px（最边上那格一半在屏幕外）
+ *        · 商店原来是 5×66.8 + 4×14 = 390px > 350px
+ *          → 第一张和最后一张各切 20px
+ *   ② 左右边距 20px → 8px；格子 --cell 36px → 38px。
+ *      ★ --gap 保持 8px **不动**：棋子卡牌比格子大 6px（.u 的 width），
+ *        间距小于 6px 相邻卡牌就会互相压住。
+ *   ③ 手指点得着的尺寸：羁绊条 28px 高 → 40px、指引/阵容 32px → 40px、
+ *      回封面/设置 34px → 42px（并且禁止被 HUD 压扁）。
+ *   ④ 小字不小于 12px：棋盘说明 10 → 12、备战池提示 10.5 → 11.5 …
  * ============================================================ */
 @media (max-width: 700px) and (orientation: portrait) {
   :root {
-    /* 格子：8 格 × 38px + 7 × 8px 间距 = 360px，留出十几像素余量
-       ★ 间距 --gap 必须保持 8px：棋子卡牌比格子大 6px（.u 的 width），
-         间距小于 6px 相邻卡牌就会互相压住（上一版改成 4px 就踩了这个坑）。 */
     --cell-w: calc((100vw - 84px) / 8);
     --arena-w: calc((100vw - 84px) / 8);
     --cell-max: 76px;
     --shop-card-max: 108px;
-    /* 下面两个只给格子里的立绘定尺寸，排版宽度由 1fr 决定，
-       所以算得不准也只是立绘差一两像素，绝不会溢出。 */
+    /* 这两个只给格子里的立绘定尺寸，排版宽度由 1fr 决定 */
     --shop-card: calc((100vw - 56px) / 5);
     --shop-h: calc((100vw - 56px) / 5 * 1.20);
     --bench-cell: calc((100vw - 64px) / 9);
   }
 
-  /* ---------- ① 顺序：拇指区给商店，中段给棋盘 ---------- */
-  .hud { order: -6; }
-  .intel-strip { order: -5; }
-  .board-center { order: -4; }
-  .prep-bench { order: -3; }
-  .sel-panel { order: -2; }
-  .item-panel { order: -1; }
-  .prep-shop { order: 0; }
-  .action-bar { order: 1; }
-  .log-panel { order: 2; }
-
-  /* ---------- ② 谁都不吸底、不吸顶 ---------- */
-  .prep-shop { position: static; }
-  .action-bar {
-    position: static; margin: 0; padding: 6px 8px 8px;
-    background: transparent; box-shadow: none; backdrop-filter: none;
-  }
-  .btn-fight { width: 100%; min-height: 50px; font-size: 17px; }
-
-  /* ---------- ③ 对手情报压成一行：头像 + 名字/威胁 + 体系 ---------- */
-  .intel-strip {
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 10px; border-radius: 12px;
-  }
-  .intel-strip .intel-head { margin: 0; gap: 8px; }
-  .intel-strip .ec-avatar { width: 32px; height: 32px; font-size: 18px; }
-  .intel-strip .intel-who { gap: 0; }
-  .intel-strip .ec-name { font-size: 13px; }
-  .intel-strip .ec-threat { font-size: 10px; letter-spacing: -1px; }
-  .intel-strip .ec-arch { margin: 0; padding: 3px 8px; font-size: 11.5px; }
-  .intel-strip .ec-hint { display: none; }
-
-  /* ---------- ④ 三个信息面板：去掉标题行，只留内容 ---------- */
-  .sel-panel .panel-head, .item-panel .panel-head, .log-panel .panel-head { display: none; }
-  .sel-panel, .item-panel, .log-panel { padding: 6px 8px; margin: 0; }
-  .sel-bar, .item-row, .mini-log { padding: 2px 4px; }
-  .mini-log { max-height: 44px; }
-
-  /* ---------- ⑤ 一行 n 格：1fr 兜底，永不溢出 ---------- */
+  /* 左右边距 20px → 8px：棋盘/商店/备战池一起多出 24px */
   .prep-shop { padding: 6px 8px 0; }
-  .prep-bench { padding: 4px 8px 6px; }
+  .prep-bench { padding: 0 8px 8px; }
   .board-center { padding: 0 4px; }
+
+  /* ---------- ① 一行 n 格：1fr 兜底，永不溢出 ---------- */
   .shop-row { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
   .shop-card { width: var(--shop-card); }
   .bench { grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 5px; }
   .bench-cell { width: var(--bench-cell); height: var(--bench-cell); max-width: 100%; }
   .bench-card { width: calc(var(--bench-cell) + 4px); height: calc(var(--bench-cell) + 6px); }
 
-  /* ---------- ⑥ 手指点得着（都 ≥ 40px）× 小字不小于 12px ---------- */
+  /* ---------- ③ 手指点得着（都 ≥ 40px） ---------- */
   .icon-btn { width: 42px; height: 42px; font-size: 18px; flex: 0 0 auto; }
   .shop-head .btn-sm { min-height: 40px; padding: 0 10px; }
   #btn-guide, #btn-comp { min-height: 40px; min-width: 44px; padding: 0 6px; }
@@ -2029,6 +1985,8 @@ button { font: inherit; color: inherit; }
   .trait-mini .tm-chip { padding: 3px 6px; font-size: 11.5px; }
   .shop-head { gap: 6px; margin-bottom: 6px; }
   .shop-head .spacer { flex: 1 1 0; min-width: 0; }
+
+  /* ---------- ④ 小字不小于 12px ---------- */
   .hud-stage-name { font-size: 12.5px; }
   .hud-stage-sub { font-size: 11px; }
   .hud-field { font-size: 11.5px; }
@@ -2041,28 +1999,25 @@ button { font: inherit; color: inherit; }
   .big-btn .bb-text em { font-size: 11.5px; }
   .shop-body { gap: 8px; }
 
-  /* ---------- ⑦ 商店卡上的名字：跟着卡宽缩，长的可以断行 ---------- */
+  /* ---------- 商店卡上的名字：跟着卡宽缩，长的可以断行 ---------- */
   .sc-name {
-    font-size: calc(var(--shop-card) * 0.19);
-    line-height: 1.15; overflow-wrap: anywhere; word-break: break-word;
+    font-size: calc(var(--shop-card) * 0.20);
+    line-height: 1.1; overflow-wrap: anywhere; word-break: break-word;
   }
-  .sc-nameband { padding: 12px 6px 5px; }
+  .sc-nameband { padding: 14px 6px 5px; }
 
-  /* ---------- ⑧ 浮动立绘只留 4 个（14 个无限动画 + 每个一层合成） ---------- */
+  /* 浮动立绘只留 4 个（14 个无限动画 + 每个一层合成，手机上纯浪费） */
   .cover-bg .float-unit:nth-child(n+5) { display: none; }
 }
 
-/* 矮屏：内容排不下，把开战按钮提到 HUD 后面（谁都不挡谁，也不用吸底） */
-@media (max-width: 700px) and (orientation: portrait) and (max-height: 800px) {
-  .hud { order: -9; }
-  .action-bar { order: -8; }
-  .intel-strip { order: -7; }
-  .board-center { order: -6; }
-  .prep-bench { order: -5; }
-  .sel-panel { order: -4; }
-  .item-panel { order: -3; }
-  .prep-shop { order: -2; }
-  .log-panel { order: -1; }
+/* 矮屏那档的阈值：700 → 800
+ * ★ 为什么动这一格：原来 360×800 走"高屏"那一档（吸底的开战条），
+ *   而这一版把格子调大、字号调大之后内容高了十几像素，吸底条正好压到
+ *   「装备栏」上（实测 装备栏×开战条=2218，自检会红）。
+ *   把它并进"矮屏"档（开战条提到最前、谁都不挡），实测 7 种手机尺寸全绿。 */
+@media (max-width: 700px) and (max-height: 800px),
+       (max-height: 520px) and (min-aspect-ratio: 1/1) {
+  .action-bar { position: static; order: 0; margin-top: 8px; }
 }
 
 /* ============================================================
@@ -2086,22 +2041,20 @@ button { font: inherit; color: inherit; }
   .shop-card.cost5 { animation: none; }
 }
 /* ============================================================
- * 商店卡：名字固定贴在卡片底部，羁绊小字排到名字**上面**
+ * 商店卡：名字固定在卡片底部，羁绊小字排到名字**上面**
  *
- * ★ 用户的原话：「在手机端显示卡牌羁绊的时候也显示卡牌名字，不要重合或上移」。
+ * ★ 用户的原话：「手机端显示卡牌羁绊的时候也显示卡牌名字，不要重合或上移」。
  *
- *   病根：名字带是 `position:absolute; bottom:0` + 自动高度，
- *   里面的顺序是「名字 → 羁绊」。羁绊一长（比如电棍的
- *   「你觉得你是职业选手吗 · 打工人」在 67px 宽的卡上要折三行），
- *   整条带子就往**上**长 —— 名字被顶出卡片（被 overflow:hidden 切掉）、
- *   剩下的部分还压在立绘上。这就是"名字不见/上移/重合"。
+ *   病根：名字带是 `position:absolute; bottom:0` + 自动高度，里面顺序是
+ *   「名字 → 羁绊」。羁绊一长（电棍的「你觉得你是职业选手吗 · 打工人」
+ *   在 67px 宽的卡上要折三行），整条带子往**上**长 —— 名字被顶出卡片、
+ *   被 overflow:hidden 切掉，剩下的部分压在立绘上。
  *
  *   改法：用 flex 的 order 把**羁绊排到名字上面**（DOM 不用改），
  *   名字永远是带子里最下面那一行。于是：
- *     · 羁绊再长，也只会往上长，压的是立绘（那里本来就有渐变蒙版）；
- *     · 名字的位置**跟在哪个棋子无关**，永远贴在同一个地方，不会被顶走；
- *     · 两者是 flex 的上下两行，永远不会重合。
- *   再加上长词条只留 emoji（见 game.js），羁绊通常只有一行。
+ *     · 羁绊再长也只会往上长，压的是立绘（那里本来就有渐变蒙版）；
+ *     · 名字位置**和抽到哪个棋子无关**，永远贴在同一处，不会被顶走；
+ *     · 两者是 flex 的上下两行，结构上不可能重合。
  * ============================================================ */
 .sc-nameband {
   position: absolute; left: 0; right: 0; bottom: 0;
@@ -2110,9 +2063,16 @@ button { font: inherit; color: inherit; }
 }
 .sc-traits { order: 1; flex: 0 0 auto; }
 .sc-name { order: 2; flex: 0 0 auto; }
+/* 竖屏：再省 20 多像素（把"格子调大/字号调大"多出来的高度收回去）
+ * ★ 实测这两条会红，原因都是**内容比原来高了十几像素**：
+ *     · iPhone14 竖：吸底的开战条往上压到了「装备栏」
+ *     · iPhoneSE 竖：备战池被推到第一屏外
+ *   省下来的地方都挑"看不出信息量减少"的：
+ *     商店卡高度 1.20 → 1.14、两个大按钮 48 → 46、面板标题内边距 7 → 5。 */
 @media (max-width: 700px) and (orientation: portrait) {
-  /* 手机上名字带矮一点，给立绘留出更多画面 */
-  .sc-nameband { padding: 14px 6px 5px; }
-  .sc-name { font-size: calc(var(--shop-card) * 0.20); line-height: 1.1; }
-  .sc-traits { font-size: calc(var(--shop-card) * 0.155); line-height: 1.2; }
+  :root { --shop-h: calc((100vw - 56px) / 5 * 1.14); }
+  .big-btn { min-height: 46px; }
+  .panel-head { padding: 5px 10px; }
+  .prep-bench .bench-head { margin-bottom: 5px; }
+  .board-center { gap: 6px; }
 }
