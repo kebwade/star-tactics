@@ -260,8 +260,8 @@
     }
 
     /* ★ 触发反馈：比较"这一刻的羁绊签名"和上一次。
-       只有**档位**变了才弹（人数变了但档位没变不弹）——
-       否则每买一个棋子都弹一次，玩家两下就把它当噪音了。 */
+       只有**档位**变了才提示（人数变了但档位没变不提示）——
+       否则每买一个棋子都炸一次屏，两下就被当成噪音。 */
     var sigStr = sig.join('|');
     if (lastTraitSig !== '') {
       var before = {};
@@ -275,12 +275,67 @@
         var was = before[now.trait.id];
         if (now.tier < 0) continue;
         if (was === undefined || was < now.tier) {
-          UI.toast(now.trait.emoji + ' ' + now.trait.name + ' ' + now.count +
-            ' 个已激活：' + ST.Help.modsText(now.mods), 'trait');
+          /* ★★ 屏幕中央的张力提示（用户要求）：
+             凑齐羁绊是这一局最爽的一刻，值得打断注意力。
+             小 toast 只留给"顺便一提"的信息，这里走大提示。 */
+          bangTrait(now);
         }
       }
     }
     lastTraitSig = sigStr;
+  }
+
+  /* ============================================================
+   * 羁绊触发：屏幕中央的大提示（带**队列**）
+   *
+   * ★★ 为什么要排队：一次买棋子可能同时点亮两条羁绊
+   *   （比如补上一个 ZMJJKK 会同时凑齐 cnfps 和 康神开播了），
+   *   两个大字叠在一起只会互相糊住 —— 一条播完再播下一条。
+   * ★ 元素是**全局唯一**的一个（惰性创建、挂在 body 上）：
+   *   每次都新建的话，连着触发三次就会在 DOM 里留三个动画中的浮层。
+   * ★ 它 pointer-events: none、position: fixed：
+   *   不挡任何按钮、也不占任何排版（这条在 CSS 注释里写清了原因）。
+   * ============================================================ */
+  var bangHost = null, bangQueue = [], bangPlaying = false;
+
+  function bangTrait(entry) {
+    bangQueue.push(entry);
+    if (!bangPlaying) playNextBang();
+  }
+
+  function playNextBang() {
+    if (!bangQueue.length) { bangPlaying = false; return; }
+    bangPlaying = true;
+    var e = bangQueue.shift();
+    if (!bangHost) {
+      bangHost = UI.el('div', 'trait-bang');
+      bangHost.innerHTML =
+        '<div class="tb-dim"></div>' +
+        '<div class="tb-box">' +
+          '<div class="tb-halo"></div>' +
+          '<div class="tb-sweep"></div>' +
+          '<span class="tb-tag">羁 绊 触 发</span>' +
+          '<span class="tb-name"><span class="em"></span><span class="nm"></span></span>' +
+          '<span class="tb-eff"></span>' +
+          '<span class="tb-count"></span>' +
+        '</div>';
+      document.body.appendChild(bangHost);
+    }
+    bangHost.querySelector('.tb-name .em').textContent = e.trait.emoji;
+    bangHost.querySelector('.tb-name .nm').textContent = e.trait.name;
+    bangHost.querySelector('.tb-eff').textContent = ST.Help.modsText(e.mods);
+    bangHost.querySelector('.tb-count').textContent =
+      (e.tier + 1) + ' 档 · ' + e.count + ' 个' + e.trait.name +
+      (e.nextNeed ? ('（再上 ' + (e.nextNeed - e.count) + ' 个到下一档）') : '（已满档）');
+    bangHost.classList.remove('on');
+    void bangHost.offsetWidth;              // 强制重排，让动画能重播
+    bangHost.classList.add('on');
+    /* ★ 停留 1.15 秒：够看清名字和加成，又不至于挡着操作太久。
+       排队时两条之间留 0.18 秒空档，读起来是"一条一条"而不是连成一串。 */
+    setTimeout(function () {
+      if (bangHost) bangHost.classList.remove('on');
+      setTimeout(playNextBang, 220);
+    }, 1150);
   }
 
   /* ============================================================
