@@ -252,8 +252,16 @@
     for (var i = 0; i < res.active.length; i++) {
       var e = res.active[i];
       var tx = ST.Help.traitText(e);
+      /* ★ 2026-10（user 要求）：羁绊名字**不在这一行显示**，只留 emoji +
+         人数（没生效时再挂一个 /需要几个）。名字在 title（长按/悬停）和
+         点开的「阵容详解」里看 —— 那才是"羁绊详情"该待的地方。
+         做法：徽标 / 名字 / 人数各是一个 span，手机端用 CSS 把名字那段藏掉，
+         桌面端三个都显示。 */
       var chip = UI.el('span', 'tm-chip' + (tx.on ? ' on' : ''));
-      chip.textContent = tx.short + (tx.on ? '' : ('/' + e.need));
+      chip.appendChild(UI.el('span', 'tm-em', e.trait.emoji));
+      chip.appendChild(UI.el('span', 'tm-nm', e.trait.name));
+      var ct = UI.el('span', 'tm-ct', String(e.count) + (tx.on ? '' : ('/' + e.need)));
+      chip.appendChild(ct);
       chip.title = tx.full + (tx.next ? ('　' + tx.next) : '');
       host.appendChild(chip);
       sig.push(e.trait.id + ':' + e.count + ':' + e.tier);
