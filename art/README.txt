@@ -68,3 +68,20 @@
   art/items/belt.png        剧毒火龙果 🐉（原「巨人腰带」，id 仍是 belt）
   art/items/swiftboots.png  和成天下5000精品大果 🌰
   art/items/thornmail.png   讲话石 🗣️（原「荆棘之甲」，id 仍是 thornmail）
+
+游戏背景图
+----------------------------------------
+
+  art/bg-lawn.jpg    整个游戏的背景（草地）
+
+★ 和棋子立绘不是一套：它不由 JS 加载，是 game.css 里 body::before 的
+  background-image 直接引用的，所以文件名固定、也不能改 id / 换路径 ——
+  想换图就直接覆盖这个文件（jpg / png 都行，改扩展名的话记得同步改 CSS）。
+
+  现在这张是 771×355 的横条，铺满一屏要放大 2 倍多，所以 CSS 里给它加了
+  blur(2.5px)：不模糊的话颗粒和锯齿会很明显，模糊之后就只是一块"草地色"，
+  该有的明暗起伏还在，又不抢戏。想看清原图就把 game.css 里
+  body::before 的 filter 那一行删掉。
+
+  尺寸建议：横条图容易被裁掉两边（cover 是按"填满"算的），
+  如果想要构图稳定，出图时就按 16:9 出、把主体放在中间 70% 以内。
