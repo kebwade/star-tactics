@@ -97,7 +97,7 @@
       //   levels.js 的 20 多处阵容、tests 的断言、art/stoneguard.png 全按 id 索引。
       //   （原名叫「石卫」，改成「奶龙」时 id 一个字都没动。）
       id: 'stoneguard', name: '奶龙', emoji: '🐲', cost: 1, role: '前排',
-      traits: ['ironguard', 'warden'], color: '#8d9aa8',
+      traits: ['snowleopard', 'geoarchon', 'sandsculpture'], color: '#8d9aa8',
       hp: 680, ad: 40, as: 0.60, armor: 35, mr: 35, range: 1, mana: 60,
       skill: {
         name: '捧腹大笑', kind: 'laugh',
@@ -149,7 +149,7 @@
       //   levels.js 的 30 多处阵容、tests 的断言、art/bowman.png 全部按 id 索引。
       //   （原名叫「短弓手」，改成「荣誉」时 id 一个字都没动。）
       id: 'bowman', name: '荣誉', emoji: '🏹', cost: 1, role: '远程',
-      traits: ['ranger', 'assassin'], color: '#6fbf73',
+      traits: ['cnfps', 'sharpshooter'], color: '#6fbf73',
       /* ★ 这一版是「慢枪手」：单次伤害翻倍（45 → 90）、攻速砍半（0.68 → 0.34）。
          面板 DPS 一点没变（45 × 0.68 ≈ 90 × 0.34），变的是**出手节奏** ——
          同样的输出被塞进一半的次数里，所以每一发都更重、更慢、更容易被读出来。
@@ -203,7 +203,7 @@
       //   levels.js 的阵容、tests 的断言、art/pyromancer.png 全按 id 索引。
       //   （原名叫「火术士」，改成「羊帆」时 id 一个字都没动。）
       id: 'pyromancer', name: '羊帆', emoji: '🐑', cost: 1, role: '法师',
-      traits: ['arcane', 'berserker'], color: '#f0784a',
+      traits: ['icefire', 'sandsculpture'], color: '#f0784a',
       /* ★★ 一只**天生迟钝**的角色：移速 -80%、攻速 -80%。
        *
        *   攻速直接写进面板（0.66 × 0.2 = 0.132，界面显示 0.13）——
@@ -265,7 +265,7 @@
     {
       // ★ 名字只影响界面显示，id 保持 'wolfrider'（levels.js 的阵容、art/ 的文件名都按 id 索引）
       id: 'wolfrider', name: '狼王', emoji: '🐺', cost: 1, role: '近战',
-      traits: ['berserker', 'colossus'], color: '#a0846a',
+      traits: ['snowleopard', 'mamba'], color: '#a0846a',
       hp: 620, ad: 48, as: 0.70, armor: 26, mr: 24, range: 1, mana: 50,
       skill: { name: '战意', kind: 'buff', stat: 'asPct', amount: 0.80, dur: 5, desc: '短时间内大幅提升自身攻速。' },
 
@@ -292,7 +292,7 @@
       //   levels.js 的 8 处阵容、tests 的断言、art/acolyte.png 全部按 id 索引。
       //   （原名叫「修女」，改成「豆包」时 id 一个字都没动。）
       id: 'acolyte', name: '豆包', emoji: '🥟', cost: 1, role: '辅助',
-      traits: ['healer', 'arcane'], color: '#e8d9a0',
+      traits: ['ai', 'healers'], color: '#e8d9a0',
       hp: 520, ad: 38, as: 0.62, armor: 20, mr: 26, range: 2, mana: 60,
       skill: { name: '治疗之光', kind: 'heal', target: 'lowest', amount: 240, desc: '治疗血量百分比最低的队友。' },
 
@@ -329,7 +329,7 @@
       //   levels.js 的 20 多处阵容、tests 的断言、art/dagger.png 全部按 id 索引。
       //   改名字不要动 id。
       id: 'dagger', name: '愤怒的普通人', emoji: '😠', cost: 1, role: '近战',
-      traits: ['assassin', 'berserker'], color: '#b06fa8',
+      traits: ['abstract', 'drinkers'], color: '#b06fa8',
       hp: 560, ad: 52, as: 0.72, armor: 25, mr: 22, range: 1, mana: 60,
       skill: { name: '狂怒一击', kind: 'nuke', damage: 240, desc: '对当前目标造成法术伤害。' },
 
@@ -362,7 +362,7 @@
       //   levels.js 的阵容、tests 的断言、art/spearman.png 全按 id 索引。
       //   （原名叫「长枪兵」，改成「电棍」时 id 一个字都没动。）
       id: 'spearman', name: '电棍', emoji: '⚡', cost: 1, role: '近战',
-      traits: ['ironguard', 'ranger'], color: '#7f97b8',
+      traits: ['proplayer', 'workers'], color: '#7f97b8',
       /* ★★ 普攻伤害减半、攻速翻倍 —— 直接**烘进面板**（ad 46→23、as 0.64→1.28）。
        *
        *   不写成"普攻时伤害 ×0.5"：那样面板写着 46、实际打 23，
@@ -421,7 +421,7 @@
       //   levels.js 的阵容、tests 的断言、art/vine.png 全按 id 索引。
       //   （原名叫「藤蔓精」，改成「嘉豪」时 id 一个字都没动。）
       id: 'vine', name: '嘉豪', emoji: '🕶️', cost: 1, role: '前排',
-      traits: ['healer', 'colossus'], color: '#6fae5e',
+      traits: ['abstract', 'domain'], color: '#6fae5e',
       hp: 640, ad: 40, as: 0.60, armor: 28, mr: 28, range: 1, mana: 60,
       // 技能只改名字，数值一个字没动（眩晕 1.2 秒 + 90 伤害）
       skill: { name: '男人领域', kind: 'stun', damage: 90, dur: 1.2, desc: '把目标拖进领域，眩晕并造成少量伤害。' },
@@ -467,7 +467,7 @@
       //   levels.js 的 30 多处阵容、tests 的断言、art/ironwall.png 全部按 id 索引。
       //   （原名叫「100元的鸭子」，改成「100元的鸭子」时 id 一个字都没动。）
       id: 'ironwall', name: '100元的鸭子', emoji: '🦆', cost: 2, role: '前排',
-      traits: ['ironguard', 'colossus'], color: '#7a8794',
+      traits: ['seafood', 'sandsculpture'], color: '#7a8794',
       /* ★★ 血量砍到十分之一（950 → 95）。
          这不是笔误 —— 它的全部生存能力都来自被动「抓娃娃」：
          前 N 次挨打直接判 0 伤害。所以它是一张**次数盾**：
@@ -504,7 +504,7 @@
     },
     {
       id: 'frostmage', name: '冰冰冰', emoji: '🧊🧊🧊', cost: 2, role: '法师',
-      traits: ['arcane', 'healer'], color: '#6cc6e8',
+      traits: ['icefire', 'snowleopard'], color: '#6cc6e8',
       hp: 700, ad: 60, as: 0.68, armor: 24, mr: 34, range: 3, mana: 70,
       skill: { name: '寒霜新星', kind: 'aoe', damage: 260, radius: 1, desc: '在目标格炸开寒霜，波及相邻敌人。' },
       /* ★★ 「冰冰冰」（原「冰霜法师」）：被动改的是**技能本身**，不是加一个新动作 ——
@@ -528,7 +528,7 @@
          levels.js 的阵容、tests 的场景、art/twinblade.png 全按 id 索引。
          （原名叫「双刃舞者」，改成「鹰佐」时 id 一个字都没动。） */
       id: 'twinblade', name: '鹰佐', emoji: '🌀', cost: 2, role: '近战',
-      traits: ['assassin', 'berserker'], color: '#c47ac0',
+      traits: ['gloweye', 'mamba'], color: '#c47ac0',
       hp: 780, ad: 70, as: 0.75, armor: 30, mr: 30, range: 1, mana: 50,
       skill: { name: '疾风连斩', kind: 'buff', stat: 'asPct', amount: 0.90, dur: 5, desc: '短时间内大幅提升自身攻速。' },
 
@@ -572,7 +572,7 @@
          levels.js 的阵容、tests 的场景、art/falconer.png 全按 id 索引。
          （原名叫「猎鹰手」，改成「丁真」时 id 一个字都没动。） */
       id: 'falconer', name: '丁真', emoji: '🐆', cost: 2, role: '远程',
-      traits: ['ranger', 'assassin'], color: '#5fb3a1',
+      traits: ['snowleopard', 'sharpshooter'], color: '#5fb3a1',
       hp: 680, ad: 70, as: 0.72, armor: 22, mr: 28, range: 4, mana: 75,
       /**
        * 技能「雪豹撕咬」：丁真喊一句「雪豹闭嘴」，雪豹扑上去咬敌人一口。
@@ -618,7 +618,7 @@
     },
     {
       id: 'templar', name: '东北雨姐', emoji: '🍠', cost: 2, role: '前排',
-      traits: ['warden', 'ironguard'], color: '#d8c47a',
+      traits: ['sweetpotato', 'workers'], color: '#d8c47a',
       /* ★ 「东北雨姐」（原「圣殿骑士」）：生命 +50%（880 → 1320）、攻击 +30%（58 → 75）。
          技能「圣盾术」一个字没动（shield / 血量百分比最低的队友 / 320）。 */
       hp: 1320, ad: 75, as: 0.62, armor: 45, mr: 42, range: 1, mana: 70,
@@ -654,7 +654,7 @@
          （原名叫「弩手」，改成「陈兴裕」时 id 一个字都没动；
            同一轮里它从 2 费升到了 3 费。） */
       id: 'crossbow', name: '陈兴裕', emoji: '🔪', cost: 3, role: '远程',
-      traits: ['ranger', 'ironguard'], color: '#9db86a',
+      traits: ['kangshen', 'proplayer', 'workers'], color: '#9db86a',
       hp: 720, ad: 58, as: 0.70, armor: 26, mr: 24, range: 3, mana: 65,
       /**
        * 技能「顶赋Jett」：召唤五把飞刀。
@@ -717,7 +717,7 @@
     },
     {
       id: 'alchemist', name: '美团袋鼠', emoji: '🦘', cost: 3, role: '辅助',
-      traits: ['arcane', 'healer'], color: '#8ecf6a',
+      traits: ['sweetpotato', 'workers'], color: '#8ecf6a',
       hp: 1050, ad: 78, as: 0.70, armor: 30, mr: 40, range: 2, mana: 70,
       skill: {
         name: '治疗外卖', kind: 'heal', target: 'lowest', amount: 560,
@@ -745,7 +745,7 @@
       //   levels.js 的阵容、tests 的断言、art/brute.png 全部按 id 索引。
       //   （原名叫「蛮牛」，改成「牢大」时 id 一个字都没动。）
       id: 'brute', name: '牢大', emoji: '🐂', cost: 3, role: '近战',
-      traits: ['colossus', 'berserker'], color: '#a8763f',
+      traits: ['drinkers', 'mamba'], color: '#a8763f',
       hp: 1200, ad: 88, as: 0.72, armor: 45, mr: 38, range: 1, mana: 75,
       skill: {
         name: '肘击', kind: 'knockback',
@@ -802,7 +802,7 @@
       //   levels.js 的阵容、tests 的断言、art/windcaller.png 全按 id 索引。
       //   （原名叫「风语者」，改成「楚生疑犯」时 id 一个字都没动。）
       id: 'windcaller', name: '楚生疑犯', emoji: '🌧️', cost: 3, role: '法师',
-      traits: ['arcane', 'ranger'], color: '#9ad3d8',
+      traits: ['domain', 'clergy'], color: '#9ad3d8',
       hp: 980, ad: 84, as: 0.74, armor: 26, mr: 38, range: 3, mana: 75,
       /**
        * 技能「阴暗领域」：在目标格上方撑起一片**会变黑、会下雨**的区域。
@@ -860,7 +860,7 @@
       //   levels.js 的阵容、tests 的断言、art/medic.png 全按 id 索引。
       //   （原名叫「战地医师」，改成「老牧师」时 id 一个字都没动。）
       id: 'medic', name: '老牧师', emoji: '🙏', cost: 3, role: '辅助',
-      traits: ['healer', 'warden'], color: '#e0e0e0',
+      traits: ['healers', 'clergy'], color: '#e0e0e0',
       hp: 1000, ad: 74, as: 0.68, armor: 32, mr: 38, range: 2, mana: 70,
       /* ★ 技能名跟着改名一起换了：原名叫「战地救护」（战地 = 战场急救），
          挂在一个老牧师身上明显不对。**机制一个字没动**（依然是治疗血最少的队友）。
@@ -923,7 +923,7 @@
          levels.js 的阵容、tests 的场景、art/abyss.png 全按 id 索引。
          （原名叫「深渊祭司」，改成「祖国人」时 id 一个字都没动。） */
       id: 'abyss', name: '祖国人', emoji: '🦸', cost: 4, role: '近战',
-      traits: ['arcane', 'assassin'], color: '#c0392b',
+      traits: ['gloweye', 'superhero', 'clergy'], color: '#c0392b',
       hp: 1250, ad: 108, as: 0.78, armor: 36, mr: 48, range: 1, mana: 85,
       /* ★ 技能「耀眼红光」：不再是一团黑（深渊吞噬），而是**眼睛里射出一道
          耀眼的红色激光**打单个敌人。kind 换成 laser —— 3 星的"连射三发"
@@ -980,7 +980,7 @@
       //   levels.js 的阵容、tests 的断言、art/deadeye.png 全按 id 索引。
       //   （原名叫「神射手」，改成「Dank1ng」时 id 一个字都没动。）
       id: 'deadeye', name: 'Dank1ng', emoji: '🎯', cost: 4, role: '远程',
-      traits: ['ranger', 'arcane'], color: '#d8b45f',
+      traits: ['cnfps', 'sharpshooter', 'proplayer'], color: '#d8b45f',
       hp: 1150, ad: 115, as: 0.82, armor: 36, mr: 38, range: 4, mana: 80,
       /**
        * 技能「先过中门再谈未来」：一发**瞬发**的重击。
@@ -1042,7 +1042,7 @@
       //   levels.js 的 9 处阵容、tests 的断言、art/butcher.png 全按 id 索引。
       //   （原名叫「血月屠夫」，改成「孙笑川」时 id 一个字都没动。）
       id: 'butcher', name: '孙笑川', emoji: '🪓', cost: 4, role: '近战',
-      traits: ['berserker', 'colossus'], color: '#c0392b',
+      traits: ['abstract', 'drinkers'], color: '#c0392b',
       hp: 1600, ad: 118, as: 0.74, armor: 58, mr: 50, range: 1, mana: 80,
       /* ★ 技能「血月斩」**一个字没动**（改名时保留）：
          aoe / 目标格周围 / 580 / 半径 1。 */
@@ -1099,7 +1099,7 @@
          levels.js 的阵容、tests 的场景、art/earthwarden.png 全按 id 索引。
          （原名叫「大地守护」，改成「蓝色大肥鱼」时 id 一个字都没动。） */
       id: 'earthwarden', name: '蓝色大肥鱼', emoji: '🐟', cost: 4, role: '辅助',
-      traits: ['warden', 'healer'], color: '#4a90c4',
+      traits: ['ai', 'healers', 'seafood'], color: '#4a90c4',
       /* ★ 2026-10：改成**近战攻击**（射程 2 → 1）。ole 仍是辅助（技能是吃白饭），ange 管的是普攻。 */
       hp: 1450, ad: 98, as: 0.68, armor: 55, mr: 55, range: 1, mana: 75,
       /**
@@ -1171,13 +1171,13 @@
        *       低一点（135 / 0.88），因为它自带"10 倍攻速"这个倍率。
        *     · 护甲 34 / 魔抗 36 —— 5 费里最脆的一档，必须有人保。
        *
-       *   羁绊：游侠（攻击力）+ 影袭（暴击）。
-       *     · 激光每发只吃 25% 攻击力 → 攻击力加成最值；
-       *     · 10 倍攻速下暴击触发最密 → 暴击收益被放大 10 倍。
-       *     （不选秘术：激光是**物理**伤害，法术强度对它毫无用处。）
+       *   羁绊：cnfps（暴击）+ 康神开播了（攻速）+ 超频（攻速）。
+       *     · 激光每发只吃 25% 攻击力 → 攻击力仍是最值的属性；
+       *     · 10 倍攻速下暴击触发最密 → cnfps 的暴击收益也跟着放大 10 倍；
+       *     （不带法系羁绊：激光是**物理**伤害，法术强度对它毫无用处。）
        */
       id: 'zmjjkk', name: 'ZMJJKK', emoji: '🔫', cost: 5, role: '远程',
-      traits: ['ranger', 'assassin'], color: '#3ac0ff',
+      traits: ['cnfps', 'kangshen', 'overclock'], color: '#3ac0ff',
       /* ★ 2026-10 削弱：攻击力 125 → 110（约 -12%）。
          `dmgPct` 保持 25% —— 那是用户明确指定过的数字，要削就削**基数**：
          激光每发是"攻击力 × 25%"，攻击力降下来，普攻和激光一起降，
@@ -1268,30 +1268,30 @@
        *     ZMJJKK 远程一波流激光
        *     刘浩文  远程铺天盖地的"手机雨"，而且残血时几乎打不死
        *
-       *   羁绊：**游侠 + 巨兽**（我自己定的，理由如下）
-       *     · 游侠（攻击力）—— 40 部手机每部吃 25% 攻击力，
-       *       攻击力是它唯一的乘数，2 游侠就 +25%、4 游侠 +60%
-       *     · 巨兽（生命上限）—— 它的减伤是"每少 1% 血少受 1% 伤害"，
-       *       这是**按比例**算的，所以血上限越高，这条被动的绝对收益越大：
-       *       1500 血时"半血减伤 50%"等于多出 750 点有效血量，
-       *       巨兽把它抬到 2000 血，同一档就等于多出 1000 点。
-       *     · 不选影袭：40 次暴击判定看着很美，但那会让"手机雨"的伤害
-       *       方差大到没法玩（一次全暴击 = 秒杀，一次不暴击 = 挠痒）。
+       *   羁绊：**人工智能 + 超级英雄 + 超频**（我自己定的，理由如下）
+       *     · 超级英雄（攻击力）—— 40 部手机每部吃 25% 攻击力，
+       *       攻击力是它唯一的乘数，2 档就是全队 +30%
+       *     · 超频（攻速）—— 手机雨是固定 8 发/秒的节奏，攻速加成让它更密；
+       *       而它自己的被动已经把"生存"这一栏包圆了（残血几乎打不死），
+       *       所以再堆血上限是重复投资，堆攻速才是纯赚；
+       *       人工智能（法强）则是让它的被动线和豆包 / 大肥鱼摆在同一个羁绊里。
+       *     · 不选 cnfps：40 次暴击判定看着很美，但那会让"手机雨"的伤害
+       *       方差大到没法玩（一次全暴击 = 秒杀，一次不暴击 = 挠痒）——暴击交给 ZMJJKK。
        *
        *   数值：血量 1500 / 攻击 115 / 攻速 0.80 / 护甲 36 / 魔抗 38 /
        *         射程 4 / 法力 90。
-       *     · 攻击比 ZMJJKK 低一点（125），因为它的技能是**40 段**，
+       *     · 攻击和 ZMJJKK（110）几乎持平，因为它的技能是**40 段**，
        *       每段还只有 25% —— 基数再高一点，一轮就是 10 倍攻击力的爆发。
        *     · 护甲/魔抗给得偏高一点点（36/38）：它没有任何别的减伤来源
        *       （被动把别的减伤全禁掉了），抗性就是它唯一的"硬"。
        */
       id: 'liuhaowen', name: '刘浩文', emoji: '📱', cost: 5, role: '近战',
-      traits: ['ranger', 'colossus'], color: '#d8a24a',
+      traits: ['ai', 'superhero', 'overclock'], color: '#d8a24a',
       /* ★ 2026-10：改成**近战**（射程 4 → 1，role 也跟着改）。
          手机是"贴到人脸上往身上砸"的东西，站在后排泼手机雨反而不像他。
          `range` 只管普攻；技能（扔手机）本来就不看距离。
-         ★ 羁绊仍然是「游侠 + 巨兽」：游侠是**全队攻击力**的羁绊，
-           和"自己是不是远程"无关 —— 电棍（近战）也带游侠，先例早就有。 */
+         ★ 羁绊仍然是「人工智能 + 超级英雄 + 超频」：这些全是全队光环，
+           和"自己是不是远程"无关 —— 电棍（近战）也带「你觉得你是职业选手吗」，先例早就有。 */
       hp: 1500, ad: 115, as: 0.80, armor: 36, mr: 38, range: 1, mana: 90,
       /**
        * 技能「手机大王」：向前方**随机扔出 40 部手机**。
@@ -1359,7 +1359,7 @@
          levels.js 的阵容、tests 的陪练、art/titan.png 全按 id 索引。
          （从「山岳」改成「钟离」时 id 一个字都没动，和「张雪峰」那次一样。） */
       id: 'titan', name: '钟离', emoji: '🪨', cost: 5, role: '前排',
-      traits: ['colossus', 'ironguard'], color: '#6e7b88',
+      traits: ['geoarchon', 'clergy'], color: '#6e7b88',
       hp: 1800, ad: 105, as: 0.68, armor: 70, mr: 65, range: 1, mana: 70,
       skill: {
         name: '不动如山', kind: 'aegis', amount: 620,
@@ -1411,7 +1411,7 @@
       //   levels.js 的 20 多处阵容、tests 的断言、art/blademaster.png 全按 id 索引。
       //   （原名叫「剑圣」，改成「张雪峰」时 id 一个字都没动。）
       id: 'blademaster', name: '张雪峰', emoji: '❄️', cost: 5, role: '近战',
-      traits: ['berserker', 'assassin'], color: '#e06a6a',
+      traits: ['drinkers', 'overclock'], color: '#e06a6a',
       hp: 1750, ad: 135, as: 0.88, armor: 48, mr: 45, range: 1, mana: 55,
       skill: {
         name: '万剑归宗', kind: 'whirl', damage: 560, radius: 1,
