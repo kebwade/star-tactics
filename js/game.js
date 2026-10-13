@@ -1061,16 +1061,25 @@
 
         var band = UI.el('div', 'sc-nameband');
         band.appendChild(UI.el('div', 'sc-name', d.name));
-        /* ★ 2026-10：羁绊词条太长就只留 emoji（和商店头上那条一样的规则）。
-           实测「电棍」这张卡：羁绊写全名是「你觉得你是职业选手吗 · 打工人」，
-           在 67px 宽的卡上折成三行，把整个名字带顶到卡片外面 ——
-           连**角色名**都被 overflow:hidden 切掉了（用户报的"ui 把名字挡住"）。
-           完整名字在卡片的 title（悬停/长按）和「阵容详解」里，信息不丢。 */
-        band.appendChild(UI.el('div', 'sc-traits', d.traits.map(function (t) {
-          var tr = ST.TRAIT_BY_ID[t];
-          if (!tr) return t;
-          return tr.emoji + (tr.name.length > 4 ? '' : (' ' + tr.name));
-        }).join('  ')));
+        /* ★★ 2026-10（user 要求）：卡面上**只看 emoji**，羁绊名字放到
+           "左上角那个羁绊条 / 点开的阵容详解"里看。
+           · 卡片只有 67px 宽，写全名（「你觉得你是职业选手吗 · 打工人」）
+             会折三行，把角色名顶出卡片；
+           · emoji 才是扫一眼就认得出来的东西。
+           做法：emoji 和名字各是一个 span，手机端用 CSS 把名字那段藏掉
+           （桌面端两个都显示，不浪费那一行）。 */
+        var traitsEl = UI.el('div', 'sc-traits');
+        for (var ti = 0; ti < d.traits.length; ti++) {
+          var tr = ST.TRAIT_BY_ID[d.traits[ti]];
+          if (!tr) continue;
+          var em = UI.el('span', 'st-em', tr.emoji);
+          var nm = UI.el('span', 'st-nm', tr.name);
+          em.title = tr.name;
+          nm.title = tr.name;
+          traitsEl.appendChild(em);
+          traitsEl.appendChild(nm);
+        }
+        band.appendChild(traitsEl);
         card.appendChild(band);
 
         var afford = G.gold >= d.cost && firstFreeBench() >= 0;
