@@ -23,8 +23,8 @@
      并同时给下面所有 js/css 的地址盖上 ?v=同一个号（新 URL = 新缓存条目）。
      js/uptodate.js 会拿它和线上的 version.json 比对，不一致就把页面换到新地址。
      本地双击打开时它是空的 → 自动更新完全静默。 -->
-<meta name="app-version" content="a97ba747cb4b">
-<link rel="stylesheet" href="game.css?v=a97ba747cb4b">
+<meta name="app-version" content="2aa4f53955de">
+<link rel="stylesheet" href="game.css?v=2aa4f53955de">
 </head>
 <body>
 <div id="app">
@@ -179,7 +179,12 @@
       <div class="shop-head">
         <span class="shop-title">商店</span>
         <div class="odds" id="shop-odds"></div>
+        <!-- 羁绊小条：商店头上一直挂着"我现在凑了什么"。
+             点它 = 打开阵容详解（和最右边的 📋 按钮同一个入口）。 -->
+        <button class="trait-mini" id="trait-mini" title="点开看阵容详解">羁绊</button>
         <span class="spacer"></span>
+        <button class="btn btn-sm" id="btn-guide"><span class="bt-ico">❓</span><span class="bt-txt">指引</span></button>
+        <button class="btn btn-sm" id="btn-comp"><span class="bt-ico">📋</span><span class="bt-txt">阵容</span></button>
         <button class="btn btn-sm" id="btn-lock">🔓 锁定</button>
       </div>
       <div class="shop-body">
@@ -332,6 +337,9 @@
 
       <div class="combat-stage">
         <canvas id="arena"></canvas>
+        <!-- 开战时闪一下的羁绊条：双方激活了哪些羁绊。
+             它是**绝对定位**的，不占画布的排版高度（画布高度是它的瓶颈）。 -->
+        <div class="trait-flash" id="trait-flash" aria-hidden="true"></div>
       </div>
 
       <div class="ticker-wrap">
@@ -359,20 +367,21 @@
 
 </div>
 
-<script src="js/util.js?v=a97ba747cb4b"></script>
-<script src="js/traits.js?v=a97ba747cb4b"></script>
-<script src="js/items.js?v=a97ba747cb4b"></script>
-<script src="js/units.js?v=a97ba747cb4b"></script>
-<script src="js/art.js?v=a97ba747cb4b"></script>
-<script src="js/battle.js?v=a97ba747cb4b"></script>
-<script src="js/levels.js?v=a97ba747cb4b"></script>
-<script src="js/ui.js?v=a97ba747cb4b"></script>
-<script src="js/settings.js?v=a97ba747cb4b"></script>
-<script src="js/arena.js?v=a97ba747cb4b"></script>
-<script src="js/cover.js?v=a97ba747cb4b"></script>
-<script src="js/game.js?v=a97ba747cb4b"></script>
+<script src="js/util.js?v=2aa4f53955de"></script>
+<script src="js/traits.js?v=2aa4f53955de"></script>
+<script src="js/items.js?v=2aa4f53955de"></script>
+<script src="js/units.js?v=2aa4f53955de"></script>
+<script src="js/help.js?v=2aa4f53955de"></script>
+<script src="js/art.js?v=2aa4f53955de"></script>
+<script src="js/battle.js?v=2aa4f53955de"></script>
+<script src="js/levels.js?v=2aa4f53955de"></script>
+<script src="js/ui.js?v=2aa4f53955de"></script>
+<script src="js/settings.js?v=2aa4f53955de"></script>
+<script src="js/arena.js?v=2aa4f53955de"></script>
+<script src="js/cover.js?v=2aa4f53955de"></script>
+<script src="js/game.js?v=2aa4f53955de"></script>
 <!-- 自动更新：定时比对 version.json，有新版本就自己换成带 ?v= 的新地址。
      本地双击打开（file://）或没被部署脚本盖过章时它会安静地什么都不做。 -->
-<script src="js/uptodate.js?v=a97ba747cb4b"></script>
+<script src="js/uptodate.js?v=2aa4f53955de"></script>
 </body>
 </html>
