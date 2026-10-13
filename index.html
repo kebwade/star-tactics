@@ -23,8 +23,8 @@
      并同时给下面所有 js/css 的地址盖上 ?v=同一个号（新 URL = 新缓存条目）。
      js/uptodate.js 会拿它和线上的 version.json 比对，不一致就把页面换到新地址。
      本地双击打开时它是空的 → 自动更新完全静默。 -->
-<meta name="app-version" content="2aa4f53955de">
-<link rel="stylesheet" href="game.css?v=2aa4f53955de">
+<meta name="app-version" content="7e412e61790d">
+<link rel="stylesheet" href="game.css?v=7e412e61790d">
 </head>
 <body>
 <div id="app">
@@ -100,6 +100,17 @@
         <h1>科币战争</h1>
         <div class="logo-sub">—— 巴巴博弈 ——</div>
         <div class="logo-tag">凑羁绊 · 摆站位 · 让棋子自己打</div>
+      </div>
+
+      <!-- 横屏提示：只在横屏显示（CSS 控制）。
+           放在游戏**前面**说清楚，比进去之后发现"面板要滚半天"强得多。 -->
+      <div class="rotate-note" id="rotate-note">
+        <span class="rn-ico">📱↻</span>
+        <span class="rn-txt">
+          <b>建议竖屏游玩</b>
+          <i>本作的准备界面（棋盘 + 备战池 + 商店）是按竖屏排的，
+             横屏下这些面板需要上下滚动才能看全，体验会差不少。</i>
+        </span>
       </div>
 
       <div class="cover-menu">
@@ -277,6 +288,9 @@
         <span class="note">3 个同名同星自动合成高一星（最高 4 星）· 点棋子选中，右键卖掉</span>
       </div>
       <div class="bench" id="bench"></div>
+      <!-- 手机上的操作提示：桌面那句 `.note` 在手机上被藏掉了，
+           于是新手常常不知道"点一下也能摆"（以为只能拖）。 -->
+      <div class="bench-hint">点一个棋子 → 再点棋盘上的空格就上场了；也可以直接拖过去。同名同星 3 个自动合成。</div>
     </div>
   </section>
 
@@ -367,21 +381,21 @@
 
 </div>
 
-<script src="js/util.js?v=2aa4f53955de"></script>
-<script src="js/traits.js?v=2aa4f53955de"></script>
-<script src="js/items.js?v=2aa4f53955de"></script>
-<script src="js/units.js?v=2aa4f53955de"></script>
-<script src="js/help.js?v=2aa4f53955de"></script>
-<script src="js/art.js?v=2aa4f53955de"></script>
-<script src="js/battle.js?v=2aa4f53955de"></script>
-<script src="js/levels.js?v=2aa4f53955de"></script>
-<script src="js/ui.js?v=2aa4f53955de"></script>
-<script src="js/settings.js?v=2aa4f53955de"></script>
-<script src="js/arena.js?v=2aa4f53955de"></script>
-<script src="js/cover.js?v=2aa4f53955de"></script>
-<script src="js/game.js?v=2aa4f53955de"></script>
+<script src="js/util.js?v=7e412e61790d"></script>
+<script src="js/traits.js?v=7e412e61790d"></script>
+<script src="js/items.js?v=7e412e61790d"></script>
+<script src="js/units.js?v=7e412e61790d"></script>
+<script src="js/help.js?v=7e412e61790d"></script>
+<script src="js/art.js?v=7e412e61790d"></script>
+<script src="js/battle.js?v=7e412e61790d"></script>
+<script src="js/levels.js?v=7e412e61790d"></script>
+<script src="js/ui.js?v=7e412e61790d"></script>
+<script src="js/settings.js?v=7e412e61790d"></script>
+<script src="js/arena.js?v=7e412e61790d"></script>
+<script src="js/cover.js?v=7e412e61790d"></script>
+<script src="js/game.js?v=7e412e61790d"></script>
 <!-- 自动更新：定时比对 version.json，有新版本就自己换成带 ?v= 的新地址。
      本地双击打开（file://）或没被部署脚本盖过章时它会安静地什么都不做。 -->
-<script src="js/uptodate.js?v=2aa4f53955de"></script>
+<script src="js/uptodate.js?v=7e412e61790d"></script>
 </body>
 </html>
