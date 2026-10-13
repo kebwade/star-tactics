@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>字幕体检：消失 / 重叠 / 出画</title>
+<style>html,body{margin:0;background:#fff}#report{font:12px/1.4 Consolas,monospace;white-space:pre;padding:8px}#stage{position:absolute;left:-4000px}</style>
+</head>
+<body>
+<pre id="report">running...</pre>
+<div id="stage"><iframe id="fr" src="../index.html" width="390" height="844"></iframe></div>
+<script>
+(function () {
+  var out = [];
+  function L(s) { out.push(s); }
+  function r(v) { return Math.round(v * 10) / 10; }
+
+  document.getElementById('fr').onload = function () {
+    setTimeout(function () {
+      var fr = document.getElementById('fr'), W = fr.contentWindow, D = fr.contentDocument;
+      var scene = '（还没切战斗场景）';
+      try {
+        /* 直接开一场"很多台词"的战斗：ZMJJKK（连杀喊话）、牢大、张雪峰、
+           孙笑川、楚生疑犯、钟离 —— 全部塞进 8 人满编 */
+        var A = [
+          { id: 'zmjjkk', star: 3, items: ['giantblade'], r: 7, c: 3 },
+          { id: 'blademaster', star: 3, items: ['belt'], r: 4, c: 3 },
+          { id: 'brute', star: 3, items: ['belt'], r: 4, c: 2 },
+          { id: 'butcher', star: 3, r: 4, c: 5 },
+          { id: 'windcaller', star: 3, r: 6, c: 6 },
+          { id: 'titan', star: 3, r: 5, c: 0 },
+          { id: 'medic', star: 3, r: 7, c: 7 },
+          { id: 'liuhaowen', star: 3, r: 4, c: 7 }
+        ];
+        var B = [
+          { id: 'deadeye', star: 3, r: 3, c: 3 }, { id: 'abyss', star: 3, r: 3, c: 4 },
+          { id: 'spearman', star: 3, r: 0, c: 2 }, { id: 'pyromancer', star: 3, r: 0, c: 5 },
+          { id: 'stoneguard', star: 3, r: 1, c: 0 }, { id: 'frostmage', star: 3, r: 2, c: 7 },
+          { id: 'crossbow', star: 3, r: 1, c: 4 }, { id: 'bowman', star: 3, r: 2, c: 1 }
+        ];
+        var res = W.ST.Battle.battle({ a: A, b: B }, 20261013);
+
+        /* 切到战斗场景并初始化画布（和真实流程一样） */
+        W.UI.show('scene-combat');
+        var cv = D.getElementById('arena') || D.querySelector('#scene-combat canvas');
+        scene = cv ? ('画布 ' + cv.clientWidth + 'x' + cv.clientHeight) : '找不到画布';
+        W.Arena.init(cv);
+        /* ★★ 关键：把 iframe 自己的 rAF 关掉，只让我们手动 step。
+         *   否则 Arena.init 里的 requestAnimationFrame 循环会**和我们抢时钟**：
+         *   无头浏览器在虚拟时间下是会驱动 rAF 的，结果时间被推进两次，
+         *   有些台词在我两次采样之间就过完了 —— 看起来像"字幕消失"，
+         *   其实是量错了。 */
+        W.requestAnimationFrame = function () { return 0; };
+        W.cancelAnimationFrame = function () {};
+        var got = [];
+        W.Arena.play(res, { onEvent: function (ev) { if (ev && (ev.callout || ev.shout)) got.push(ev.type + '|' + (ev.callout || ev.shout)); } });
+
+        L('战场：' + scene + '   格子=' + W.Arena.cell() + '   间距=' + W.Arena.gap());
+        /* 诊断：带台词的事件，它的 from/who 在渲染层单位表里存在吗 */
+        for (var d2 = 0; d2 < res.log.length; d2++) {
+          var ed2 = res.log[d2];
+          if (!(ed2.callout || ed2.shout)) continue;
+          var idKey = (ed2.from !== undefined && ed2.from !== null) ? ed2.from : ed2.who;
+          L('  ev#' + d2 + ' t=' + (Math.round(ed2.t * 100) / 100) + ' type=' + ed2.type +
+            ' from=' + JSON.stringify(ed2.from) + ' who=' + JSON.stringify(ed2.who) +
+            ' callout=' + JSON.stringify(ed2.callout || ed2.shout) +
+            ' 渲染层有这个单位=' + (W.Arena.units()[idKey] ? '有' : '没有'));
+        }
+
+        /* 逐帧走完，统计字幕 */
+        var maxConc = 0, overPairs = 0, worstOver = 0, outTop = 0, outSide = 0, frames = 0, worstInfo = '';
+        var seen = {};
+        var zeroSize = 0, sampleFrames = [];
+        var W2 = cv.clientWidth, H2 = cv.clientHeight;
+        for (var f = 0; f < 4200; f++) {
+          W.Arena.step(1 / 30);
+          var list = W.Arena.fxList().filter(function (e) { return e.type === 'callout'; });
+          for (var si = 0; si < list.length; si++) { if (seen[list[si].text] === undefined) seen[list[si].text] = f; }
+          if (!list.length) continue;
+          frames++;
+          if (list.length > maxConc) maxConc = list.length;
+
+          /* 把每条字幕在**这一帧**的位置和尺寸算出来 */
+          var boxes = [];
+          for (var i = 0; i < list.length; i++) {
+            var e = list[i];
+            var p = e.age / e.life;
+            var rise = e.vy * Math.min(1, p * 1.1);
+            var et2 = Math.min(1, p / 0.20);
+            var c1b = 1.70158, c3b = c1b + 1;
+            var easeb = 1 + c3b * Math.pow(et2 - 1, 3) + c1b * Math.pow(et2 - 1, 2);
+            var scal = 0.40 + 0.60 * easeb;
+            var csz = e.size * scal;
+            var w = 0, txt = e.text || '';
+            for (var k = 0; k < txt.length; k++) w += (txt.charCodeAt(k) > 0x2E80 ? 1 : 0.56) * csz;
+            var h = csz * 1.2;
+            var x = Math.max(w / 2 + 2, Math.min(W2 - w / 2 - 2, e.x));
+            var y = e.y + rise;
+            y = Math.max(h / 2 + 2, Math.min(H2 - h / 2 - 2, y));
+            if (!(csz > 0) || !isFinite(x) || !isFinite(y)) zeroSize++;
+            boxes.push({ x: x, y: y, w: w, h: h, t: txt });
+            if (y - h / 2 < -0.5) outTop++;
+            if (x - w / 2 < -0.5 || x + w / 2 > W2 + 0.5) outSide++;
+          }
+          for (var a2 = 0; a2 < boxes.length; a2++) {
+            for (var b2 = a2 + 1; b2 < boxes.length; b2++) {
+              var A2 = boxes[a2], B2 = boxes[b2];
+              var ox = Math.min(A2.x + A2.w / 2, B2.x + B2.w / 2) - Math.max(A2.x - A2.w / 2, B2.x - B2.w / 2);
+              var oy = Math.min(A2.y + A2.h / 2, B2.y + B2.h / 2) - Math.max(A2.y - A2.h / 2, B2.y - B2.h / 2);
+              if (ox > 1 && oy > 1) {
+                overPairs++;
+                var m = Math.min(ox, oy);
+                if (m > worstOver) {
+                  worstOver = m;
+                  worstInfo = 'F' + f + ' : [' + A2.t + ']@(' + r(A2.x) + ',' + r(A2.y) + ' ' + r(A2.w) + 'x' + r(A2.h) + ') x [' + B2.t + ']@(' + r(B2.x) + ',' + r(B2.y) + ' ' + r(B2.w) + 'x' + r(B2.h) + ')  = ' + r(ox) + 'x' + r(oy);
+                }
+                if (sampleFrames.length < 4) sampleFrames.push('第' + f + '帧：「' + A2.t + '」×「' + B2.t + '」重叠 ' + r(ox) + '×' + r(oy));
+              }
+            }
+          }
+        }
+
+        L('');
+        L('=== 统计（30fps 走完 140 秒，8v8 满编混战） ===');
+        L('  有字幕的帧数            : ' + frames);
+        L('  同时在屏上的最多条数    : ' + maxConc + '（上限 8）');
+        L('  重叠的帧对数            : ' + overPairs + (overPairs ? '   ★ 最严重重叠 ' + r(worstOver) + 'px' : '   OK 一句都没压住另一句'));
+        L('  从顶边飘出画面的次数    : ' + outTop + (outTop ? '   ★ 会被裁掉（看起来就是"字幕消失"）' : '   OK 一条都没出去'));
+        L('  横向出画的次数          : ' + outSide + (outSide ? '   ★' : '   OK'));
+        L('  尺寸/坐标异常           : ' + zeroSize);
+        for (var s2 = 0; s2 < sampleFrames.length; s2++) L('    sample: ' + sampleFrames[s2]);
+        if (worstInfo) L('    WORST: ' + worstInfo);
+
+        /* 数一下这场战斗一共"应该"有多少句台词（事件流里有 shout/callout 的） */
+        var want = 0;
+        for (var q = 0; q < res.log.length; q++) {
+          var ev = res.log[q];
+          if (ev.shout || ev.callout) want++;
+        }
+        L('  事件流里带台词的次数    : ' + want);
+        L('  渲染层实际收到的带台词事件: ' + Object.keys(got.reduce(function(a,k){a[k]=1;return a;},{})).join(' , '));
+        /* 诊断：带台词的事件到底是什么类型 */
+        var kinds = {};
+        for (var d1 = 0; d1 < res.log.length; d1++) {
+          var ed = res.log[d1];
+          var td = ed.shout || ed.callout;
+          if (!td) continue;
+          var key = ed.type + ' | ' + td;
+          kinds[key] = (kinds[key] || 0) + 1;
+        }
+        for (var kk in kinds) L('      事件类型: ' + kk + '  ×' + kinds[kk]);
+        var missing = [];
+        for (var w2 = 0; w2 < res.log.length; w2++) {
+          var e2 = res.log[w2];
+          var txt2 = e2.shout || e2.callout;
+          if (txt2 && seen[txt2] === undefined) missing.push(txt2 + '@' + Math.round(e2.t * 10) / 10 + 's');
+        }
+        L('  实际出现过的不同台词    : ' + Object.keys(seen).length + ' 种');
+        for (var sk in seen) L('      [' + seen[sk] + '帧] ' + sk);
+        L('  事件里有、屏幕上没出现  : ' + (missing.length ? missing.join(' / ') + '   <<< 这就是字幕消失' : '无（0 条）'));
+      } catch (e) { L('异常: ' + e.message + '\n' + e.stack); }
+      document.getElementById('report').textContent = out.join('\n') + '\n###VERDICT### AUDIT DONE\n';
+    }, 500);
+  };
+})();
+</script>
+</body>
+</html>
