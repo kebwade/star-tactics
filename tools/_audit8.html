@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>商店卡：名字与羁绊的位置</title>
+<style>html,body{margin:0;background:#fff}#report{font:12px/1.4 Consolas,monospace;white-space:pre;padding:8px}#stage{position:absolute;left:-4000px}</style>
+</head>
+<body>
+<pre id="report">running...</pre>
+<div id="stage"><iframe id="fr" src="../index.html" width="390" height="844"></iframe></div>
+<script>
+(function () {
+  var out = [];
+  function L(s) { out.push(s); }
+  function r(v) { return Math.round(v * 10) / 10; }
+  document.getElementById('fr').onload = function () {
+    setTimeout(function () {
+      var fr = document.getElementById('fr'), win = fr.contentWindow, doc = fr.contentDocument;
+      try { doc.getElementById('btn-pve').click(); } catch (e) {}
+      // 多刷几次商店，尽量凑到长名字 / 长羁绊的组合
+      setTimeout(function () {
+        try {
+          var reroll = doc.getElementById('btn-reroll');
+          for (var t = 0; t < 6; t++) { if (reroll) reroll.click(); }
+        } catch (e) {}
+        setTimeout(function () {
+          try {
+            /* ---------- ① 竖屏下各区块的上下顺序 ---------- */
+            L('=== ① 竖屏版块顺序（按 y 从小到大） ===');
+            var sc = doc.getElementById('scene-game');
+            var items = [];
+            var names = { 'hud': 'HUD', 'prep-shop': '商店', 'intel-strip': '对手情报',
+              'board-center': '棋盘', 'prep-bench': '备战池', 'sel-panel': '选中·羁绊',
+              'item-panel': '装备栏', 'action-bar': '开战按钮', 'log-panel': '回合记录' };
+            for (var k2 in names) {
+              var el = doc.querySelector('.' + k2) || doc.getElementById(k2);
+              if (!el) { L('   （找不到 ' + names[k2] + '）'); continue; }
+              var st = win.getComputedStyle(el);
+              var b = el.getBoundingClientRect();
+              if (b.height < 2) continue;
+              items.push({ n: names[k2], y: b.top, h: b.height, pos: st.position, order: st.order });
+            }
+            items.sort(function (a, b) { return a.y - b.y; });
+            for (var j = 0; j < items.length; j++) {
+              L('   ' + (j + 1) + '. ' + items[j].n.padEnd(10) + ' y=' + r(items[j].y) + '..' + r(items[j].y + items[j].h) +
+                '  高=' + r(items[j].h) + '  position=' + items[j].pos + ' order=' + items[j].order);
+            }
+            L('   视口高=' + win.innerHeight + '   场景可滚高=' + sc.scrollHeight);
+            L('   排序是否符合预期（HUD→情报→棋盘→备战池→选中→装备→商店→开战→记录）：' +
+              items.map(function (x) { return x.n; }).join(' → '));
+
+            /* ---------- ② 每张商店卡：名字和羁绊有没有重合 / 被顶出卡片 ---------- */
+            L('');
+            L('=== ② 商店卡：名字 vs 羁绊 ===');
+            var cards = doc.querySelectorAll('.shop-card');
+            for (var m = 0; m < cards.length; m++) {
+              var c = cards[m], cb = c.getBoundingClientRect();
+              var ne = c.querySelector('.sc-name'), te = c.querySelector('.sc-traits');
+              if (!ne) continue;
+              var nb = ne.getBoundingClientRect(), tb = te ? te.getBoundingClientRect() : null;
+              var bad = [];
+              if (nb.bottom > cb.bottom + 0.5) bad.push('名字下边出卡 ' + r(nb.bottom - cb.bottom));
+              if (nb.top < cb.top - 0.5) bad.push('名字被顶出卡上沿 ' + r(cb.top - nb.top));
+              if (tb) {
+                var oy = Math.min(nb.bottom, tb.bottom) - Math.max(nb.top, tb.top);
+                var ox = Math.min(nb.right, tb.right) - Math.max(nb.left, tb.left);
+                if (oy > 0.5 && ox > 0.5) bad.push('名字与羁绊重合 ' + r(ox) + 'x' + r(oy));
+              }
+              L('  卡' + (m + 1) + ' 「' + ne.textContent.trim() + '」卡 y=' + r(cb.top) + '..' + r(cb.bottom));
+              L('        名字 y=' + r(nb.top) + '..' + r(nb.bottom) + '  ' + r(nb.width) + 'x' + r(nb.height) +
+                ' 字号=' + win.getComputedStyle(ne).fontSize.replace('px', ''));
+              if (tb) L('        羁绊 y=' + r(tb.top) + '..' + r(tb.bottom) + '  ' + r(tb.width) + 'x' + r(tb.height) +
+                '  «' + te.textContent.replace(/\s+/g, ' ').trim().slice(0, 22) + '»' +
+                (tb.top < cb.top - 0.5 ? '  （往上长到立绘上）' : ''));
+              L('        → ' + (bad.length ? '★ ' + bad.join(' / ') : 'OK 不重合、名字没被顶走'));
+            }
+          } catch (e) { L('异常 ' + e.message); }
+          document.getElementById('report').textContent = out.join('\n') + '\n###VERDICT### AUDIT DONE\n';
+        }, 500);
+      }, 600);
+    }, 500);
+  };
+})();
+</script>
+</body>
+</html>
