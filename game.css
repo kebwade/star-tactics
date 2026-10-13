@@ -2087,3 +2087,24 @@ button { font: inherit; color: inherit; }
   .sc-nameband { background: linear-gradient(180deg,
     rgba(18, 26, 22, 0) 0%, rgba(18, 26, 22, .55) 45%, rgba(18, 26, 22, .78) 100%); }
 }
+/* ============================================================
+ * 羁绊小条：手机上只留 emoji + 人数（2026-10，user 要求）
+ *
+ * ★ 用户：「羁绊在卡面上只看得见 emoji，在左上角羁绊详情才会看到羁绊名字」。
+ *   所以名字这一行**两处都收起来**：
+ *     · 商店卡面   → .sc-traits .st-nm
+ *     · 左上角羁绊条 → .tm-chip .tm-nm
+ *   名字去哪看：chip 的 title（长按/悬停）、点开的「阵容详解」、
+ *   以及羁绊触发时屏幕中央那条大提示（那条本来就该写全名）。
+ *   桌面端不受影响 —— 宽度够，名字照旧显示。
+ * ============================================================ */
+.tm-chip .tm-em { margin-right: 3px; }
+.tm-chip .tm-nm { margin-right: 3px; }
+
+@media (max-width: 700px) and (orientation: portrait) {
+  .tm-chip .tm-nm { display: none; }
+  .tm-chip .tm-em { margin-right: 0; }
+  .tm-chip { padding: 3px 7px; }
+  /* 名字收掉之后 chip 只有"🤖2"这么宽，小条能多挂两个 */
+  .trait-mini { min-width: 76px; gap: 4px; }
+}
