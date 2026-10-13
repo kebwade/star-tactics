@@ -3465,11 +3465,11 @@
       onPvp: function () { /* 只提示，不做别的 */ }
     });
     Settings.apply();
-    // 让音乐在第一次点击之后开始（浏览器自动播放策略）
-    document.addEventListener('pointerdown', function once() {
-      document.removeEventListener('pointerdown', once);
-      if (Settings.data.music > 0.01) UI.sound.musicStart();
-    });
+    /* ★ 背景音乐：**进封面就开始放**，不等玩家点第二次。
+       浏览器不许自动播放有声媒体，所以 UI.sound.autoMusic 内部是
+       "先试一次 + 任何交互再试 + 媒体就绪再试"三保险，
+       这里不用再自己挂一次性监听了（那种写法的坑见 ui.js 的注释）。 */
+    if (Settings.data.music > 0.01) UI.sound.autoMusic();
     UI.scene('scene-cover', { el: 'scene-cover' });
     UI.scene('scene-game', { el: 'scene-game' });
     UI.scene('scene-combat', { el: 'scene-combat' });
