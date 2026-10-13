@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>商店卡名字检查</title>
+<style>html,body{margin:0;background:#fff}#report{font:12px/1.4 Consolas,monospace;white-space:pre;padding:8px}#stage{position:absolute;left:-4000px}</style>
+</head>
+<body>
+<pre id="report">running...</pre>
+<div id="stage"><iframe id="fr" src="../index.html" width="390" height="844"></iframe></div>
+<script>
+(function () {
+  var out = [];
+  function L(s) { out.push(s); }
+  function r(v) { return Math.round(v * 10) / 10; }
+  document.getElementById('fr').onload = function () {
+    setTimeout(function () {
+      var fr = document.getElementById('fr'), win = fr.contentWindow, doc = fr.contentDocument;
+      try { doc.getElementById('btn-pve').click(); } catch (e) {}
+      setTimeout(function () {
+        var cards = doc.querySelectorAll('.shop-card');
+        L('商店卡 ' + cards.length + ' 张');
+        for (var i = 0; i < cards.length; i++) {
+          var c = cards[i], cb = c.getBoundingClientRect();
+          var nb = c.querySelector('.sc-nameband'), ne = c.querySelector('.sc-name');
+          if (!ne) continue;
+          var b = nb ? nb.getBoundingClientRect() : null, n = ne.getBoundingClientRect();
+          L('');
+          L('卡' + (i + 1) + ' 「' + ne.textContent.trim() + '」');
+          L('   卡     x=' + r(cb.left) + '..' + r(cb.right) + '  y=' + r(cb.top) + '..' + r(cb.bottom) + '  ' + r(cb.width) + 'x' + r(cb.height));
+          if (b) L('   名字带 x=' + r(b.left) + '..' + r(b.right) + '  y=' + r(b.top) + '..' + r(b.bottom) + '  ' + r(b.width) + 'x' + r(b.height));
+          L('   名字   x=' + r(n.left) + '..' + r(n.right) + '  y=' + r(n.top) + '..' + r(n.bottom) + '  ' + r(n.width) + 'x' + r(n.height));
+          var why = [];
+          if (n.bottom > cb.bottom + 0.5) why.push('下边超出 ' + r(n.bottom - cb.bottom));
+          if (n.top < cb.top - 0.5) why.push('上边超出 ' + r(cb.top - n.top));
+          if (n.right > cb.right + 0.5) why.push('右边超出 ' + r(n.right - cb.right));
+          if (n.left < cb.left - 0.5) why.push('左边超出 ' + r(cb.left - n.left));
+          L('   → ' + (why.length ? why.join(' / ') : '在卡片里 OK'));
+        }
+        document.getElementById('report').textContent = out.join('\n') + '\n###VERDICT### AUDIT DONE\n';
+      }, 800);
+    }, 500);
+  };
+})();
+</script>
+</body>
+</html>
