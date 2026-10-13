@@ -1180,8 +1180,8 @@
                         4, '#ffd98a', 150);
             }
             addFlash(phx, phy, CELL * 0.8, 0.16);
-            addCallout(phx, phy - (CELL + 10) / 2 - CELL * 0.34,
-                       '手机大王 ×' + pts.length, '#d8a24a');
+            /* ★ 字幕已按需求移除：刘浩文不喊话 —— 开场那一下只用
+               白闪 + 环 + 气浪 + 手机本体来说话。 */
             addShake(7);
           }
         }
@@ -1222,27 +1222,50 @@
                             y: psy + Math.sin(sAng) * sDis * 0.7 });
           }
           addPhones(psx, psy - CELL * 0.10, startPts, !!e.boom);
-          addCallout(psx, psy - (CELL + 10) / 2 - CELL * 0.34,
-                     '手机大王 ×' + e.count, '#d8a24a');
+          /* ★ 字幕已按需求移除（刘浩文不喊话）：开场只用
+             白闪 + 双环 + 气浪 + 三部手机本来表达"开始了"。
+             数据侧的 phoneStart 事件仍带着 count/dur，战报里看得到。 */
           addShake(7);
         }
         break;
       }
 
       /* ★ 连扔期间的**每一部手机**：各自一条事件、各自一扔。
-       *   ★ 左手的手机还剩几部写在徽章上（见 stateBadges），
-       *     这里的落点从画面状态里查 —— 事件只带 uid。 */
+       *   ★ 剩下的部数写在卡面徽章上（见 stateBadges），
+       *     落点从画面状态里查 —— 事件只带 uid。
+       *
+       *   ★★ 2026-10 再深化：一部手机的一生现在有**四段演出**，
+       *      不再是"飞出去 + 一个数字"：
+       *        ① 出手：身上冒一撮金火花（"从手里甩出去"的起手）
+       *        ② 飞行：手机本体 + 3 层残影（见 phoneFly 的绘制）
+       *        ③ 命中：目标身上一小片白闪 + 两片碎屏（"砸到了"）
+       *        ④ 爆炸（3 星）：另走 phoneBoom 的四层
+       *      ★ 命中那一下**只在非 3 星**的时候画：3 星每部都会跟一发
+       *        大爆炸，再补一个小白闪等于同一件事画两遍。
+       *      ★ 高频特效必须"小、碎、短"：一秒 8 部，
+       *        每一下都画成烟花的话，整场战斗就只剩手机了。 */
       case 'phoneThrow': {
         var ptu = pb.units[e.from], ptt = pb.units[e.to];
         if (ptu) {
           ptu.phonesLeft = e.left;
+          var ptx = cellX(ptu), pty = cellY(ptu);
           if (ptt) {
-            addOnePhone(cellX(ptu), cellY(ptu) - CELL * 0.10,
-                        cellX(ptt), cellY(ptt), !!e.boom);
+            var pttx = cellX(ptt), ptty = cellY(ptt);
+            addOnePhone(ptx, pty - CELL * 0.10, pttx, ptty, !!e.boom);
+            /* ③ 命中反馈 */
+            addSparks(pttx, ptty, 3, '#e8d8b8', 110);
+            if (!e.boom) {
+              addFlash(pttx, ptty, CELL * 0.22, 0.10);
+              addShards(pttx, ptty, 2, false);
+            }
           }
+          /* ① 出手火花：每一部都从身上溅出一点点 —— 8 部/秒的密度下，
+             这一点点就是"他一直在往外掏东西"的全部证据。 */
+          addSparks(ptx + (Math.random() - 0.5) * CELL * 0.3,
+                    pty + (Math.random() - 0.5) * CELL * 0.2, 2, '#ffd98a', 90);
           /* 每 8 部补一次"起手气浪"：不补的话连扔中段会显得越来越安静 */
           if (e.left % 8 === 0) {
-            addRing(cellX(ptu), cellY(ptu), 'rgba(216,162,74,.5)', CELL * 0.9, 0.35);
+            addRing(ptx, pty, 'rgba(216,162,74,.5)', CELL * 0.9, 0.35);
           }
         }
         break;
@@ -2956,6 +2979,10 @@
           ctx.globalAlpha = gAlpha;
           ctx.translate(gx, gy);
           ctx.rotate(e.spin * gq);
+          /* ★ 3D 翻面感：横向缩放跟着自转一起摆（|cos| 那一项）——
+             只转 2D 角度看起来像"贴纸在打转"，加一点横向压扁
+             才像"手机在空中翻跟头"。 */
+          ctx.scale(Math.abs(Math.cos(e.spin * gq * 0.5)) * 0.55 + 0.45, 1);
           ctx.fillStyle = '#23272e';
           roundRect(-phW / 2, -phH / 2, phW, phH, 2.5);
           ctx.fill();
@@ -2965,6 +2992,19 @@
           // 屏幕：3 星是"三星手机"，屏幕亮金色；1/2 星是普通蓝屏
           ctx.fillStyle = e.boom ? 'rgba(255,217,138,.95)' : 'rgba(140,200,255,.8)';
           roundRect(-phW * 0.34, -phH * 0.30, phW * 0.68, phH * 0.52, 1.5);
+          ctx.fill();
+          ctx.restore();
+        }
+        /* ★ 高光扫过：飞行的后半段在屏幕上打一道白 ——
+           屏幕反光是"这是个亮着的手机"最强的暗示，一部一闪就够。 */
+        if (phP > 0.45 && phP < 0.8) {
+          var hlX = e.x1 + (e.x2 - e.x1) * phP + Math.sin(phP * Math.PI) * e.wob;
+          var hlY = e.y1 + (e.y2 - e.y1) * phP - Math.sin(phP * Math.PI) * e.arc;
+          ctx.save();
+          ctx.globalAlpha = 0.5;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(hlX + phW * 0.18, hlY - phH * 0.12, 1.6, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
         }
