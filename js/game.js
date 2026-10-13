@@ -221,6 +221,234 @@
   }
 
   /* ============================================================
+   * 羁绊小条 + 触发反馈
+   *
+   * ★★ 为什么要有这一条：羁绊是这个游戏**最主要的变强手段**，而原来它只在
+   *   「选中 / 羁绊」那块面板里露一半（选中棋子时就看不到了），
+   *   玩家凑够第二档往往**完全没注意到**—— 变强了却没有任何反馈。
+   *
+   * ★ 位置选在商店标题那一行：那里本来就有一整条空白（手机上概率条是隐藏的），
+   *   而且"买棋子 → 羁绊变化"这两件事在视线里是挨着的。
+   *
+   * ★ 反馈分两种：
+   *     · 常驻：每个羁绊一枚小 chip，生效的亮绿、没生效的灰着并写还差几个
+   *     · 一次性：**新档位刚触发**时弹一条 toast —— 只在新档位出现时弹，
+   *       所以不会每买一个棋子就刷一次屏。
+   * ============================================================ */
+  var lastTraitSig = '';
+  function renderTraitBar() {
+    var host = $('trait-mini');
+    if (!host) return;
+    var res = ST.resolveTraits(ownedDefs());
+    host.innerHTML = '';
+
+    if (!res.active.length) {
+      host.appendChild(UI.el('span', 'tm-empty', '羁绊'));
+      lastTraitSig = '';
+      return;
+    }
+
+    var sig = [];
+    for (var i = 0; i < res.active.length; i++) {
+      var e = res.active[i];
+      var tx = ST.Help.traitText(e);
+      var chip = UI.el('span', 'tm-chip' + (tx.on ? ' on' : ''));
+      chip.textContent = tx.short + (tx.on ? '' : ('/' + e.need));
+      chip.title = tx.full + (tx.next ? ('　' + tx.next) : '');
+      host.appendChild(chip);
+      sig.push(e.trait.id + ':' + e.count + ':' + e.tier);
+    }
+
+    /* ★ 触发反馈：比较"这一刻的羁绊签名"和上一次。
+       只有**档位**变了才弹（人数变了但档位没变不弹）——
+       否则每买一个棋子都弹一次，玩家两下就把它当噪音了。 */
+    var sigStr = sig.join('|');
+    if (lastTraitSig !== '') {
+      var before = {};
+      var oldList = lastTraitSig.split('|');
+      for (i = 0; i < oldList.length; i++) {
+        var parts = oldList[i].split(':');
+        before[parts[0]] = parseInt(parts[2], 10);
+      }
+      for (i = 0; i < res.active.length; i++) {
+        var now = res.active[i];
+        var was = before[now.trait.id];
+        if (now.tier < 0) continue;
+        if (was === undefined || was < now.tier) {
+          UI.toast(now.trait.emoji + ' ' + now.trait.name + ' ' + now.count +
+            ' 个已激活：' + ST.Help.modsText(now.mods), 'trait');
+        }
+      }
+    }
+    lastTraitSig = sigStr;
+  }
+
+  /* ============================================================
+   * 新手指引 / 阵容详解（都用通用弹窗，不新增浮层元素）
+   * ============================================================ */
+  var GUIDE_KEY = 'st_guide_seen';
+
+  function guideBody(idx) {
+    var steps = ST.Help.steps();
+    var s = steps[idx];
+    var box = UI.el('div', 'guide-box');
+    var head = UI.el('div', 'guide-head');
+    head.appendChild(UI.el('span', 'guide-icon', s.icon));
+    head.appendChild(UI.el('span', 'guide-title', s.title));
+    box.appendChild(head);
+    var ul = UI.el('ul', 'guide-list');
+    for (var i = 0; i < s.points.length; i++) {
+      ul.appendChild(UI.el('li', '', s.points[i]));
+    }
+    box.appendChild(ul);
+    /* 页码点：让玩家知道"还有几页"，也方便看进度 */
+    var dots = UI.el('div', 'guide-dots');
+    for (i = 0; i < steps.length; i++) {
+      dots.appendChild(UI.el('span', 'guide-dot' + (i === idx ? ' on' : '')));
+    }
+    box.appendChild(dots);
+    return box;
+  }
+
+  function openGuide(idx) {
+    idx = idx || 0;
+    var steps = ST.Help.steps();
+    var last = idx >= steps.length - 1;
+    var acts = [];
+    if (idx > 0) {
+      acts.push({ label: '‹ 上一页', keepOpen: true,
+                  onClick: function () { UI.closeModal(); openGuide(idx - 1); } });
+    }
+    if (last) {
+      acts.push({ label: '开始玩', kind: 'primary',
+                  onClick: function () { rememberGuide(); } });
+    } else {
+      acts.push({ label: '下一页 ›', kind: 'primary', keepOpen: true,
+                  onClick: function () { UI.closeModal(); openGuide(idx + 1); } });
+      acts.push({ label: '跳过', onClick: function () { rememberGuide(); } });
+    }
+    UI.modal({
+      title: '怎么玩（第 ' + (idx + 1) + ' / ' + steps.length + ' 页）',
+      wide: true, body: guideBody(idx), actions: acts
+    });
+  }
+
+  function rememberGuide() {
+    try { window.localStorage.setItem(GUIDE_KEY, '1'); } catch (e) { /* 隐私模式：无所谓 */ }
+  }
+
+  function guideSeen() {
+    try { return window.localStorage.getItem(GUIDE_KEY) === '1'; } catch (e) { return true; }
+  }
+
+  /** 阵容详解：上阵情况 + 每条羁绊的档位和下一档 + 几条能立刻照做的建议 */
+  function openComp() {
+    var defs = ownedDefs();
+    var boardDefs = [];
+    var units = [];
+    var i;
+    /* ★★ G.board 是**对象**（"r,c" → unit），不是数组 ——
+       写成 `for (i = 0; i < G.board.length; i++)` 会一行都不跑，
+       弹窗里永远是"棋盘上还没有棋子"。用 for-in 才是对的。 */
+    for (var key in G.board) {
+      var u = G.board[key];
+      if (!u) continue;
+      var d = def(u.defId);
+      boardDefs.push(d);
+      units.push({ name: d.name, emoji: d.emoji, star: u.star, cost: d.cost,
+                   role: d.role, items: u.items || [] });
+    }
+    var rep = ST.Help.compReport({
+      defs: boardDefs, owned: defs, units: units,
+      cap: fieldLimit(), items: G.bag
+    });
+
+    var box = UI.el('div', 'comp-box');
+    if (rep.units.length) {
+      box.appendChild(UI.el('div', 'comp-h', '上阵 ' + rep.count +
+        (rep.cap ? '/' + rep.cap : '') + ' 人'));
+      var row = UI.el('div', 'comp-units');
+      for (i = 0; i < rep.units.length; i++) {
+        var cu = rep.units[i];
+        var chip = UI.el('span', 'cu-chip');
+        chip.appendChild(UI.el('b', '', cu.emoji + ' ' + cu.name));
+        chip.appendChild(UI.el('i', '', cu.star + '★'));
+        if (cu.role) chip.appendChild(UI.el('em', '', cu.role));
+        chip.title = cu.cost + ' 费' + (cu.items.length
+          ? ('　装备：' + cu.items.map(function (x) {
+              return ST.ITEM_BY_ID[x] ? ST.ITEM_BY_ID[x].name : x;
+            }).join('、'))
+          : '　没戴装备');
+        row.appendChild(chip);
+      }
+      box.appendChild(row);
+    } else {
+      box.appendChild(UI.el('div', 'comp-empty',
+        '棋盘上还没有棋子 —— 先在商店买一个，再点棋盘上的空格放上去。'));
+    }
+
+    if (rep.traits.length) {
+      box.appendChild(UI.el('div', 'comp-h', '羁绊'));
+      var tl = UI.el('div', 'comp-traits');
+      for (i = 0; i < rep.traits.length; i++) {
+        var t = rep.traits[i];
+        var line = UI.el('div', 'ct-line' + (t.on ? ' on' : ''));
+        line.appendChild(UI.el('span', 'ct-head', t.emoji + ' ' + t.name +
+          ' ' + t.count + (t.on ? ('（' + (t.tier + 1) + ' 档）')
+                               : ('（还差 ' + (t.need - t.count) + ' 个）'))));
+        line.appendChild(UI.el('span', 'ct-ef', t.on ? t.effect : (t.desc || '')));
+        if (t.next) line.appendChild(UI.el('span', 'ct-next', '下一档：' + t.next));
+        tl.appendChild(line);
+      }
+      box.appendChild(tl);
+    }
+
+    if (rep.advice.length) {
+      box.appendChild(UI.el('div', 'comp-h', '可以改进的地方'));
+      var al = UI.el('ul', 'comp-advice');
+      for (i = 0; i < rep.advice.length; i++) {
+        al.appendChild(UI.el('li', '', rep.advice[i]));
+      }
+      box.appendChild(al);
+    }
+
+    UI.modal({
+      title: '阵容详解', wide: true, body: box,
+      actions: [{ label: '知道了', kind: 'primary' }]
+    });
+  }
+
+  /** 开战时闪一下的羁绊条：双方各自激活了哪些羁绊（绝对定位，不占画布高度） */
+  function showTraitFlash(result) {
+    var host = $('trait-flash');
+    if (!host || !result || !result.traits) return;
+    host.innerHTML = '';
+    function side(label, list, cls) {
+      var line = UI.el('div', 'tf-line ' + cls);
+      line.appendChild(UI.el('span', 'tf-who', label));
+      if (!list || !list.length) {
+        line.appendChild(UI.el('span', 'tf-tag', '无羁绊'));
+      } else {
+        for (var i = 0; i < list.length; i++) {
+          var t = list[i];
+          var trait = ST.TRAIT_BY_ID[t.id] || ST.TRAIT_BY_ID[t.trait];
+          var nm = t.name || (trait && trait.name) || t.id;
+          var em = t.emoji || (trait && trait.emoji) || '·';
+          line.appendChild(UI.el('span', 'tf-tag', em + ' ' + nm +
+            (t.count ? (' ' + t.count) : '')));
+        }
+      }
+      host.appendChild(line);
+    }
+    side('我方', result.traits.b, 'mine');
+    side('对面', result.traits.a, 'foe');
+    host.classList.remove('on');
+    void host.offsetWidth;
+    host.classList.add('on');
+    setTimeout(function () { host.classList.remove('on'); }, 2600);
+  }
+
+  /* ============================================================
    * 四、经济与人口
    * ============================================================ */
   function grantIncome() {
@@ -490,6 +718,7 @@
     renderItems();
     renderSelBar();
     renderMiniLog();
+    renderTraitBar();          // ★ 羁绊小条（顺便做"触发反馈"）
   }
 
   function renderHud() {
@@ -1971,6 +2200,9 @@
       $('ticker').innerHTML = '';
       $('vs-enemy').textContent = L.emoji + ' ' + L.name;
       $('vs-me').textContent = '我方（' + boardCount() + ' 人）';
+      /* ★ 羁绊触发反馈（战斗侧）：开战时把双方激活的羁绊闪一下。
+         它是绝对定位的一条，不占画布高度；2.6 秒后自己淡出。 */
+      showTraitFlash(G.result);
       $('chud-stage').textContent = L.title;
       $('chud-sub').textContent = inEndless()
         ? ('无尽 · 第 ' + G.endless + ' 波　面板 ×' + (L.statScale || 1).toFixed(2))
@@ -2915,6 +3147,12 @@
 
     $('btn-reroll').onclick = function () { UI.sound.click(); reroll(); };
     $('btn-lock').onclick = function () { UI.sound.click(); toggleLock(); };
+    /* ★ 指引 / 阵容详解：两个入口都做成**随时可开**的通用弹窗。
+       指引按钮常驻（新手翻完忘了也能再看一遍），
+       羁绊小条本身也是"阵容详解"的入口（点它 = 点 📋）。 */
+    if ($('btn-guide')) $('btn-guide').onclick = function () { UI.sound.click(); openGuide(0); };
+    if ($('btn-comp')) $('btn-comp').onclick = function () { UI.sound.click(); openComp(); };
+    if ($('trait-mini')) $('trait-mini').onclick = function () { UI.sound.click(); openComp(); };
     $('btn-xp').onclick = function () { UI.sound.click(); buyXp(); };
     $('btn-fight').onclick = function () { UI.sound.click(); startFight(); };
     $('btn-quit').onclick = function () {
@@ -3104,6 +3342,16 @@
 
     beginRound();
     UI.show('scene-game');
+    /* ★★ 第一次进关自动翻一遍新手指引。
+     *   ★ 时机放在 UI.show 之后一点点：场景的入场动画大约 420ms，
+     *     指引和它叠在一起会出现"弹窗在抖动"的观感。
+     *   ★ 只自动弹一次（localStorage 记一笔）；之后随时可以点
+     *     商店那边的「❓ 指引」再看 —— 所以这里**不需要**"不再提示"以外的任何设置。
+     *   ★ localStorage 读不到（隐私模式/本地文件）时 `guideSeen()` 返回 true，
+     *     也就是宁可不弹，也不要每次进来都弹 —— 那比没有引导更烦人。 */
+    if (!guideSeen()) {
+      setTimeout(function () { if (!UI.hasModal()) openGuide(0); }, 520);
+    }
   }
 
   Game.start = start;
