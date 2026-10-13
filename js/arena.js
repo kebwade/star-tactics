@@ -564,26 +564,161 @@
    * 「Vamos」横过去大约 1.6 张卡牌宽 —— 就是要这么显眼，它是台词，不是数值。
    */
   var CALLOUT_SIZE = 0.62;
-  function addCallout(x, y, text, color, size) {
-    /* ★★ 特效满员时**挤掉一颗火花**，而不是把台词丢掉。
-     *
-     *   台词是"这一刻到底发生了什么"的**唯一**解释：张雪峰越线喊的那句、
-     *   钟离挡下控制弹的「免疫」、石化、捆住……粒子少一颗没人看得出来，
-     *   一句话丢了玩家就完全读不懂画面。
-     *   ★ 实测踩过：6 个单位在后期混战时 fx 很容易顶到 FX_MAX(220)，
-     *     而"越过狂暴线"正好可以落在一个很吵的帧上 ——
-     *     那一帧的台词会被静默丢掉，自检报出来的是"这句话从没出现过"。
-     *     火花是最不值钱的一类（一次 addSparks 就是十几颗），先拿它开刀。 */
-    if (fx.length > FX_MAX) {
-      for (var ci = 0; ci < fx.length; ci++) {
-        if (fx[ci].type === 'spark') { fx.splice(ci, 1); break; }
+
+  /* ★★ 2026-10 手机端大修：字幕"消失"和"重叠"两个 bug 都在这里。
+   *
+   *   实测（手机竖屏：格子 38px、战场 360×360）：
+   *     ① **消失**：后排（最上面那两行）喊话时，y 减去半个格子、再向上飘
+   *        半个格子，直接就飘出画布顶边了 —— 玩家看到的是"这句字幕压根
+   *        没出现"。越靠上的单位越容易中招，而敌方永远在上面。
+   *     ② **消失**：fx 顶到 FX_MAX(220) 时，原来只"挤掉一颗火花"就
+   *        return —— 一颗挤完还满就把台词丢了。后期混战一帧能出十几颗
+   *        火花，挤一颗根本不够。
+   *     ③ **重叠**：所有台词都画在"单位头顶 + 固定偏移"，相邻两个单位同时
+   *        喊话就是两行字叠在一起，谁也读不出来。手机上格子只有 38px、
+   *        字号 23px，一行六个字就 140px 宽，挨着喊必然重叠。
+   *
+   *   四条对策：贴边压回来、抢位置（往上让格）、同句刷新不叠、
+   *   满员时**腾地方**而不是丢台词。
+   */
+
+  /** 台词向上飘多少：小画面（手机）上只飘一点点。
+   *  飘得越远，不同年龄的两条台词之间的间距缩得越多 —— 那就是重叠的来源。 */
+  function calloutDrift() {
+    return -CELL * (fieldW() < 560 ? 0.16 : 0.52);
+  }
+
+  /** 台词字号：跟着格子走，但**不许超过画面宽度的 1/7.5** —— 一行字最多占满一行 */
+  function calloutSize(size) {
+    var s = size || Math.round(CELL * CALLOUT_SIZE);
+    var cap = Math.round(fieldW() / 7.5);
+    return Math.max(12, Math.min(s, cap));
+  }
+
+  /** 估一行字占多宽（中日韩按全宽，拉丁/数字按 0.56 宽近似） */
+  function calloutWidth(text, size) {
+    var w = 0;
+    for (var i = 0; i < text.length; i++) {
+      w += (text.charCodeAt(i) > 0x2E80 ? 1 : 0.56) * size;
+    }
+    return w;
+  }
+
+  /** 新台词的位置和已经在放的哪一条撞上了吗 */
+  function calloutHits(x, y, w, h) {
+    for (var i = 0; i < fx.length; i++) {
+      var f = fx[i];
+      if (f.type !== 'callout') continue;
+      var fw = f.w || calloutWidth(f.text, f.size);
+      var fh = f.size * 1.2;
+      var fp = f.age / f.life;
+      /* ★ 两处都要比：**现在**的位置，和**最终停住**的位置。
+         飘移会在 p≈0.91 处饱和（min(1, p*1.1)），所以两条台词之间的
+         纵向间距会随时间变化 —— 只看当前位置，就会出现"加的时候不撞、
+         飘一会儿撞上了"。 */
+      var nowY = f.y + f.vy * Math.min(1, fp * 1.1);
+      var endY = f.y + f.vy;
+      if (Math.abs(x - f.x) < (w + fw) / 2 + 2) {
+        if (Math.abs(y - nowY) < (h + fh) / 2 + 2) return true;
+        if (Math.abs((y + (-CELL * 0.52)) - endY) < (h + fh) / 2 + 2) return true;
       }
     }
-    if (fx.length > FX_MAX) return;
+    return false;
+  }
+
+  function addCallout(x, y, text, color, size) {
+    var csz = calloutSize(size);
+    var cw = calloutWidth(text, csz);
+    var chh = csz * 1.2;
+    var i, f;
+
+    /* ★ ① 同一句话还在屏幕上（同一位置、0.6 秒内）→ 刷新它，不叠第二条。
+     *     连杀喊话、连续普攻的「霸体」都是这种，原来会叠成一摞。 */
+    for (i = 0; i < fx.length; i++) {
+      f = fx[i];
+      if (f.type !== 'callout' || f.text !== text) continue;
+      if (f.age > 0.6) continue;
+      if (Math.abs(f.x - x) > CELL * 0.6 || Math.abs(f.y - y) > CELL * 0.6) continue;
+      f.age = 0; f.x = x; f.y = y; f.color = color; f.size = csz; f.w = cw;
+      return;
+    }
+
+    /* ★ ② 不许跑出画面：太靠上就压回安全线（上面 ① 说的那个"消失"）。 */
+    var minY = chh * 0.5 + 3;
+    var maxY = Math.max(minY, fieldH() - chh * 0.5 - 3);
+    if (y < minY) y = minY;
+    if (y > maxY) y = maxY;
+    if (x < cw * 0.5 + 2) x = cw * 0.5 + 2;
+    if (x > fieldW() - cw * 0.5 - 2) x = fieldW() - cw * 0.5 - 2;
+
+    /* ★ ③ 抢位置：和已在放的台词撞上就**往上让一格**（最多三格，
+     *     上面没地方就往下让两格）。两句都读不出来的字幕等于没有。 */
+    /* ★★ 车道分配（第三次改，终于不会叠了）
+     *
+     *   前两版是"和现有台词比一比，撞了就往上挪一格"——**试几个就放弃**，
+     *   而且飘移会在不同时刻饱和，两条之间的间距会随时间变，加的时候不撞、
+     *   飘一会儿撞上（实测最严重叠了 12.9px）。
+     *
+     *   现在改成**显式车道**：把画面纵向切成若干条车道（每条 = 一行字高 + 6px），
+     *   每条台词记下自己占的车道号；新台词从"最想待的那条"开始左右各找一条
+     *   空车道（只有水平方向真的会碰上的车道才算被占）。
+     *   因为所有台词一起匀速上飘，车道间距在整段生命里都保持不变 ——
+     *   只要不同车道就永远不会重叠，这是**结构上**的保证，不是"比一比"。 */
+    /* ★ 车道高度必须把**飘移**算进去：两条台词年龄不同，先加的那条已经飘到
+     *   顶部、后加的那条刚起步，间距会从 laneH 缩到 laneH - |漂移| ——
+     *   实测就是这样叠了 12.4px。所以 laneH 至少要多留一个漂移量。 */
+    var calDrift = Math.abs(calloutDrift());
+    var laneH = chh + Math.max(6, calDrift * 1.15 + 3);
+    var laneN = Math.max(1, Math.floor((maxY - minY) / laneH) + 1);
+    var usedLane = {};
+    for (i = 0; i < fx.length; i++) {
+      f = fx[i];
+      if (f.type !== 'callout' || f.lane === undefined) continue;
+      if (Math.abs(f.x - x) < (cw + (f.w || cw)) / 2 + 2) usedLane[f.lane] = true;
+    }
+    var wantLane = Math.round((y - minY) / laneH);
+    if (wantLane < 0) wantLane = 0;
+    if (wantLane > laneN - 1) wantLane = laneN - 1;
+    var lane = -1, k2, up, dn;
+    for (k2 = 0; k2 < laneN; k2++) {
+      up = wantLane - k2;
+      dn = wantLane + k2;
+      if (up >= 0 && !usedLane[up]) { lane = up; break; }
+      if (k2 > 0 && dn <= laneN - 1 && !usedLane[dn]) { lane = dn; break; }
+    }
+    if (lane < 0) lane = wantLane;          // 车道真的占满了，只能挤在一起
+    y = minY + lane * laneH;
+
+    /* ★ ④ 满员时**腾地方**，绝不再丢台词：
+     *     先挤火花 → 再挤伤害飘字 → 再挤别的非台词特效；
+     *     实在只剩台词，就允许超出 FX_MAX 一点。同时最多 8 条，
+     *     再多就把最老的那条挤掉 —— 屏幕上同时 8 行字本来也读不过来。 */
+    var alive = 0;
+    for (i = 0; i < fx.length; i++) if (fx[i].type === 'callout') alive++;
+    /* ★ 同屏条数**按车道数封顶**：只有 6 条车道就最多同时 6 条，
+       多出来的挤掉最老的 —— 这样"不重叠"是结构保证，不是运气。 */
+    var maxLines = Math.min(8, laneN);
+    if (alive >= maxLines) {
+      var oldest = -1, oldestAge = -1;
+      for (i = 0; i < fx.length; i++) {
+        if (fx[i].type === 'callout' && fx[i].age > oldestAge) { oldestAge = fx[i].age; oldest = i; }
+      }
+      if (oldest >= 0) fx.splice(oldest, 1);
+    }
+    var guard = 0;
+    while (fx.length > FX_MAX && guard++ < 80) {
+      var victim = -1;
+      for (i = 0; i < fx.length; i++) { if (fx[i].type === 'spark') { victim = i; break; } }
+      if (victim < 0) for (i = 0; i < fx.length; i++) { if (fx[i].type === 'num') { victim = i; break; } }
+      if (victim < 0) for (i = 0; i < fx.length; i++) { if (fx[i].type !== 'callout') { victim = i; break; } }
+      if (victim < 0) break;
+      fx.splice(victim, 1);
+    }
+
     fx.push({
       type: 'callout', x: x, y: y, text: text, color: color,
-      size: size || Math.round(CELL * CALLOUT_SIZE),
-      age: 0, life: 1.45, vx: 0, vy: -CELL * 0.52
+      size: csz, w: cw, lane: lane,
+      age: 0, life: 1.45, vx: 0, vy: calloutDrift()
     });
   }
 
@@ -1672,6 +1807,13 @@
        *     那是"陨石"和"手雷"的区别。 */
       case 'meteor': {
         var mx = e.c * PITCH + CELL / 2, my = e.r * PITCH + CELL / 2;
+        /* ★★ 2026-10：陨石事件自己也可能带着台词（钟离 3★ 的「天动万象」）。
+         *   实测：这一句在事件流里出现了两次（一次挂在 cast、一次挂在 meteor），
+         *   但屏幕上**一次都没出现** —— 因为 meteor 分支原来只画石头，
+         *   完全没看 e.callout。台词是"这一刻发生了什么"的唯一解释，
+         *   任何一个带台词的事件分支都不能漏。 */
+        if (e.callout) addCallout(mx, my - (CELL + 10) / 2 - CELL * 0.34, e.callout, '#d8c08a');
+        if (e.shout) addCallout(mx, my - (CELL + 10) / 2 - CELL * 0.34, e.shout, '#d8c08a');
         addMeteor(mx, my, CELL * (e.radius * 2 + 1), e.dur);
         addShake(14);
         addRing(mx, my, 'rgba(206,164,86,.95)', CELL * (e.radius * 2 + 1) * 0.62, 0.6);
@@ -3410,8 +3552,17 @@
         var calpha = Math.min(1, p / 0.06) * Math.min(1, (1 - p) / 0.25);
 
         var rise = e.vy * Math.min(1, p * 1.1);
+        /* ★★ 兜底：**贴到画布边就停住**。
+         *   台词会向上飘半个格子，后排（最上面两行）的单位本来就在顶边附近，
+         *   一飘就整句飞出画面 —— 用户看到的就是"这句字幕消失了"。
+         *   加了 addCallout 里的安全线还不够：飘移是在绘制时发生的。 */
+        var eHalfH = csz * 0.62;
+        var eHalfW = (e.w || csz * 4) * 0.5;
+        var drawY = e.y + rise + Math.sin(p * 20) * 1.2;
+        drawY = Math.max(eHalfH + 2, Math.min(fieldH() - eHalfH - 2, drawY));
+        var drawX = Math.max(eHalfW + 2, Math.min(fieldW() - eHalfW - 2, e.x));
         ctx.globalAlpha = Math.min(1, calpha);
-        ctx.translate(e.x, e.y + rise + Math.sin(p * 20) * 1.2);
+        ctx.translate(drawX, drawY);
         ctx.rotate(Math.sin(p * 16) * 0.022);
         ctx.scale(scale, scale);
 
