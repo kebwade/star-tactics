@@ -486,11 +486,11 @@
       case 'cast':
         return nm(e.from) + '　释放【' + e.skill + '】';
       case 'heal':
-        return (e.from === null ? '医者羁绊' : nm(e.from)) + ' → ' + nm(e.to) + '　治疗 +' + r1(e.amount) +
+        return (e.from === null ? '【医者仁心】' : nm(e.from)) + ' → ' + nm(e.to) + '　治疗 +' + r1(e.amount) +
           (e.reason === 'regen' ? '（持续回血）' : e.reason === 'lifesteal' ? '（吸血）' : '');
       case 'shield':
         return nm(e.to) + '　获得护盾 +' + r1(e.amount) +
-          (e.reason === 'trait' ? '（守护羁绊）' : '');
+          (e.reason === 'trait' ? '（羁绊护盾）' : '');
       case 'stun':
         return nm(e.to) + '　被眩晕 ' + r1(e.dur) + 's';
       case 'buff':
@@ -875,7 +875,7 @@
     renderPool();
     bind();
 
-    // 开局给一套能打的默认阵容：狂战影袭 vs 游侠医者
+    // 开局给一套能打的默认阵容：饮者曼巴 vs cnfps（对着 js/traits.js 里的新羁绊配的）
     var presets = ST.Battle.presetComps();
     var names = Object.keys(presets);
     loadComp('a', presets[names[2]]);
