@@ -37,10 +37,12 @@
    *   但对白底的最低对比度从 2.7:1 提到 4.1:1，小字终于看得清了。
    *   最深的一级顺手压深了一点点（#26332b → #22302a），笔画在浅绿
    *   底上更实；但它仍然不是纯黑，长句子读起来不钉眼睛。 */
-  --ink: #22302a;
-  --ink-2: #4b5c52;
-  --ink-3: #6f8176;
-  --ink-4: #93a49a;
+  /* ★ 2026-10：文字**稍微透明一点**（user 要求），看起来更"贴"在纸面上、
+     不那么像贴纸。都是 0.8~0.93 的透明度，不是发灰 —— 对比度仍然够读。 */
+  --ink: rgba(30, 44, 36, .93);
+  --ink-2: rgba(58, 76, 66, .90);
+  --ink-3: rgba(96, 114, 102, .87);
+  --ink-4: rgba(126, 144, 132, .80);
 
   /* 强调色 */
   --forest: #2f6b4f;
@@ -139,20 +141,20 @@
 html, body { height: 100%; margin: 0; }
 
 /* ============================================================
- * ★ 2026-10：游戏背景 = user 提供的草坪图（art/bg-lawn.jpg）。
+ * 背景：**原来的「高级山谷」**（2026-10 换回来了）
  *
- * ★★ 返工记录：第一版把图放在 body::before 上并加了 blur(2.5px)，
- *    想让它"柔一点、不抢戏"。结果手机上**明显卡顿** —— 全屏 filter
- *    会让浏览器每帧做一次模糊合成，滚动时掉帧。
- *    现在直接铺在 body 上：一次绘制、没有额外图层、没有 filter。
- *    放大后的颗粒感靠上面那层 68%~90% 的白色压色盖掉，看不出来。
- *
- * 压色在 .scene / #scene-cover 上（半透明渐变），所以草坪只是给整体
- * 定个调子，白面板和深色字照样清清楚楚。
- * 想换图：直接覆盖 art/bg-lawn.jpg 就行，CSS 一个字都不用动。
+ * ★ 中间试过一版「user 的草坪图铺在 body 上 + 各场景半透明压色」，
+ *   用户要求换回去，所以现在恢复成：
+ *     · body 只有底色（--bg-top）
+ *     · .scene 用不透明渐变铺底
+ *     · 山谷 SVG（远山四层 + 雾带 + 光柱 + 暗角 + 颗粒）自己画风景
+ *   草坪图还留在 art/bg-lawn.jpg（没有引用），想再试随时能接回来。
  * ============================================================ */
 body {
-  background: #dfe9dc url('art/bg-lawn.jpg') center center / cover no-repeat;
+  /* ★ 2026-10：背景**换回原来的"高级山谷"**（user 要求）。
+     草坪图那条路留在这里做记录：当时是 body 铺图 + 各场景半透明压色，
+     现在恢复成 body 只有底色、山谷 SVG 自己画远山 / 雾 / 光柱。 */
+  background: var(--bg-top);
   color: var(--ink); overflow: hidden;
   /* 字体：拉丁字母用 Segoe UI（数字最好看的一档），中文依次落到
      微软雅黑 UI / HarmonyOS Sans / 苹方 / 微软雅黑 —— 都是系统自带的，
@@ -178,18 +180,12 @@ button { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity .22s ease;
-  /* ★ 底色从实色改成半透明，让 body 上的草坪透出来。
-     透明度按「中间最透、上下更实」排：上方是 HUD、下方是商店，
-     都是文字最密的地方，压紧一点更好读；中间的棋盘/战场留给图。
-     （数字和原来的 --bg-top/--bg-mid/--bg-bot 是同一组颜色，
-       只是加上了 alpha，所以整体色调没变。） */
+  /* 背景换回山谷（2026-10）：底色恢复成不透明渐变，
+     山脊 SVG 重新显示（见 .valley-svg），不再是"透出草坪图"。 */
   background:
-    radial-gradient(ellipse 88% 44% at 50% 106%, rgba(150, 190, 142, .30) 0%, transparent 72%),
-    radial-gradient(ellipse 86% 36% at 50% 114%, rgba(128, 174, 120, .20) 0%, transparent 72%),
-    linear-gradient(180deg,
-      rgba(247, 250, 245, .84) 0%,
-      rgba(237, 243, 234, .68) 46%,
-      rgba(226, 235, 223, .80) 100%);
+    radial-gradient(ellipse 88% 44% at 50% 106%, rgba(150, 190, 142, .40) 0%, transparent 72%),
+    radial-gradient(ellipse 86% 36% at 50% 114%, rgba(128, 174, 120, .30) 0%, transparent 72%),
+    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 46%, var(--bg-bot) 100%);
 }
 .scene.scene-on { opacity: 1; visibility: visible; pointer-events: auto; }
 .scene.scene-out { opacity: 0; }
@@ -213,7 +209,7 @@ button { font: inherit; color: inherit; }
 
 #veil {
   position: absolute; inset: 0; z-index: 60;
-  background: rgba(242, 246, 240, .92); opacity: 0; visibility: hidden;
+  background: #f2f6f0; opacity: 0; visibility: hidden;
   display: flex; align-items: center; justify-content: center;
   transition: opacity .28s ease;
 }
@@ -237,10 +233,7 @@ button { font: inherit; color: inherit; }
 
 .valley { position: absolute; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
 .valley-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-/* ★ 山脊 SVG 停用：背景已经是 user 的草坪图了，再叠一层"远山"
-   会变成两张背景互相打架（而且都是绿的，糊成一片）。
-   想恢复老画面：把下面这行删掉即可，别的都不用动。 */
-.valley-svg { display: none; }
+/* ★ 2026-10：山脊 SVG 恢复显示（背景换回山谷了）。 */
 .valley.subdued { opacity: .34; }
 .valley.subdued .scrim {
   position: absolute; inset: 0;
@@ -274,9 +267,6 @@ button { font: inherit; color: inherit; }
   filter: blur(16px);
   opacity: .5;
   animation: rayBreathe 16s ease-in-out infinite;
-  /* ★ 同上：背景换成草坪后，这道"从太阳斜下来的光"失去了参照物，
-     留着只会在草地上打出一道莫名其妙的白条。 */
-  display: none;
 }
 @keyframes rayBreathe {
   0%, 100% { opacity: .38; transform: translateX(-50%) rotate(11deg) scaleY(1); }
@@ -299,12 +289,7 @@ button { font: inherit; color: inherit; }
 /* ---------- 封面 ---------- */
 #scene-cover {
   align-items: center; justify-content: center;
-  /* 封面也透出草坪（和 .scene 同一套思路，只是压得更实一点，
-     因为标题下面的按钮块需要干净的底）。 */
-  background: linear-gradient(180deg,
-    rgba(253, 254, 251, .90) 0%,
-    rgba(238, 245, 234, .74) 46%,
-    rgba(219, 231, 214, .86) 100%);
+  background: linear-gradient(180deg, #fdfefb 0%, #eef5ea 46%, #dbe7d6 100%);
 }
 .cover-bg { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
 .float-unit {
@@ -2006,8 +1991,7 @@ button { font: inherit; color: inherit; }
   }
   .sc-nameband { padding: 14px 6px 5px; }
 
-  /* 浮动立绘只留 4 个（14 个无限动画 + 每个一层合成，手机上纯浪费） */
-  .cover-bg .float-unit:nth-child(n+5) { display: none; }
+  /* 封面浮动立绘：不再裁剪（背景换回山谷后按原样显示） */
 }
 
 /* 矮屏那档的阈值：700 → 800
@@ -2023,22 +2007,18 @@ button { font: inherit; color: inherit; }
 /* ============================================================
  * 手机性能：关掉会让 GPU 掉帧的效果（2026-10）
  *
- * 实测这五样是"卡顿"的主要来源，共同点是**每帧都要重新合成**：
- *   · 全屏 filter: blur() 的背景层（已改成直接铺图）
- *   · 8 处 backdrop-filter 毛玻璃（实测扣到 0）
- *   · 两条 22px 模糊 + 无限动画的雾带
- *   · 14 个带 filter 的浮动立绘（只留 4 个）
- *   · 5 费卡的 box-shadow 呼吸光晕（box-shadow 动画是重绘不是合成）
- * 无限循环动画总数实测 15 → 5。
+ * ★★ 背景换回山谷之后，这里**只保留了最狠的那一项**：
+ *   · 8 处 backdrop-filter 毛玻璃 —— 手机上最贵的一项（每帧要回读背景
+ *     再模糊），实测扣到 0 之后滚动明显跟手；视觉上几乎看不出来，
+ *     因为那些面板本来就是 80% 白的底。
+ *   其余（雾带、浮动立绘、5 费卡光晕）都按用户要求放回来了 ——
+ *   它们本来就是山谷背景的一部分，删掉画面会变"空"。
  * ============================================================ */
 @media (max-width: 700px), (hover: none) and (pointer: coarse) {
   *, *::before, *::after {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
-  .mist-band { display: none; }
-  .float-unit { filter: none; }
-  .shop-card.cost5 { animation: none; }
 }
 /* ============================================================
  * 商店卡：名字固定在卡片底部，羁绊小字排到名字**上面**
@@ -2075,4 +2055,35 @@ button { font: inherit; color: inherit; }
   .panel-head { padding: 5px 10px; }
   .prep-bench .bench-head { margin-bottom: 5px; }
   .board-center { gap: 6px; }
+}
+/* ============================================================
+ * 手机商店卡（2026-10，user 要求）
+ *
+ *  ① 卡面上**只看 emoji**：羁绊名字在"左上角羁绊条 / 点开的阵容详解"里看。
+ *     DOM 里 emoji 和名字是两个 span，桌面端两个都显示，手机端只藏名字。
+ *  ② 选卡时卡面更明显：卡片本身加粗边框 + 更实的投影，按下去有明确反馈
+ *     （原来只有 :hover 的 1px 边框变化，手指按着根本看不出来）。
+ *  ③ 名字带上边距再收一点，立绘露出更多 —— "卡面更明显"的一半是这里。
+ * ============================================================ */
+.sc-traits .st-em { margin-right: 4px; }
+.sc-traits .st-nm { opacity: .92; }
+
+@media (max-width: 700px) and (orientation: portrait) {
+  .sc-traits .st-nm { display: none; }          /* ① 卡面只留 emoji */
+  .sc-traits .st-em { margin-right: 6px; font-size: 1.15em; }
+
+  .shop-card {                                   /* ② 卡片更醒目 */
+    border-width: 2px;
+    border-color: var(--line-3);
+    box-shadow: 0 4px 12px rgba(38, 51, 43, .18), 0 1px 0 rgba(255, 255, 255, .9) inset;
+  }
+  .shop-card.cost4 { border-color: #a795d8; }
+  .shop-card.cost5 { border-color: #d6b25c; }
+  .shop-card:active { transform: scale(.955); border-color: var(--forest); }
+  .shop-card.no-afford { opacity: .55; }
+  .shop-card.sold { opacity: .45; }
+
+  .sc-nameband { padding: 10px 5px 4px; }        /* ③ 立绘多露一点 */
+  .sc-nameband { background: linear-gradient(180deg,
+    rgba(18, 26, 22, 0) 0%, rgba(18, 26, 22, .55) 45%, rgba(18, 26, 22, .78) 100%); }
 }
