@@ -2902,7 +2902,19 @@
      *     渲染层据此画绿色的毒雾和数字。
      */
     function poisonAuraTick() {
-      for (var i = 0; i < st.units.length; i++) {
+      /* ★★ 先算出「这一跳谁被谁毒了」，再按**受害者**取最强的那一圈结算。
+       *
+       *   原实现是「一个佩戴者一个循环、各自扣血」：4 个人同时戴剧毒火龙果，
+       *   站在中间的那个一秒被毒 4 次（4 × 60% 攻击力），连自己人都一起融。
+       *   那不是「剧毒」的设计意图，是「每个佩戴者各自结算」的副作用 ——
+       *   自检里 4 个戴火龙果的沙包把张雪峰当场毒死（他因此永远叠不满攻速），
+       *   踩的就是这个。
+       *   ★ 规则和冷却 / 灼烧一致：**同一种持续伤害只吃最强的一份，不叠加**。
+       *   ★ 毒雾的**画面**仍然每个圈各出一团，只有扣血去重。 */
+      var best = {};          // 受害者 uid -> {src, dst, dmg}
+      var clouds = [];        // 这一跳触发的圈（说明画面用）
+      var i, j;
+      for (i = 0; i < st.units.length; i++) {
         var src = st.units[i];
         if (!src.alive || !(src.poisonRadius > 0) || !(src.poisonAdPct > 0)) continue;
         src.poisonAcc += CFG.DT;
@@ -2910,24 +2922,31 @@
         src.poisonAcc -= src.poisonInterval;
         var dmg = src.ad * src.poisonAdPct;
         var victims = [];
-        for (var j = 0; j < st.units.length; j++) {
+        for (j = 0; j < st.units.length; j++) {
           var dst = st.units[j];
           if (!dst.alive) continue;                       // ★ 不分敌我，也不排除自己
           if (U.cheb(dst.r, dst.c, src.r, src.c) > src.poisonRadius) continue;
           victims.push(dst);
+          var cur = best[dst.uid];
+          if (!cur || dmg > cur.dmg) best[dst.uid] = { src: src, dst: dst, dmg: dmg };
         }
-        ev({ type: 'poison', who: src.uid, r: src.r, c: src.c,
-             radius: src.poisonRadius, dmg: Math.round(dmg),
-             targets: victims.map(function (v) { return v.uid; }) });
-        for (j = 0; j < victims.length; j++) {
-          var v2 = victims[j];
-          if (!v2.alive) continue;
-          var res = dealDamage(src, v2, dmg, 'magic');
-          ev({ type: 'damage', from: src.uid, to: v2.uid, dmg: res.dmg, kind: 'magic',
-               shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
-               hpAfter: v2.hp, hpMax: v2.maxHp, reason: 'poison' });
-          afterDamage(src, v2, res, 'magic', false);
-        }
+        clouds.push({ src: src, dmg: dmg, victims: victims });
+      }
+      if (!clouds.length) return;
+      for (i = 0; i < clouds.length; i++) {
+        ev({ type: 'poison', who: clouds[i].src.uid, r: clouds[i].src.r, c: clouds[i].src.c,
+             radius: clouds[i].src.poisonRadius, dmg: Math.round(clouds[i].dmg),
+             targets: clouds[i].victims.map(function (v) { return v.uid; }) });
+      }
+      for (var uid in best) {
+        if (!Object.prototype.hasOwnProperty.call(best, uid)) continue;
+        var hit = best[uid];
+        if (!hit.dst.alive) continue;
+        var res = dealDamage(hit.src, hit.dst, hit.dmg, 'magic');
+        ev({ type: 'damage', from: hit.src.uid, to: hit.dst.uid, dmg: res.dmg, kind: 'magic',
+             shieldLoss: res.shieldLoss, hpLoss: res.hpLoss,
+             hpAfter: hit.dst.hp, hpMax: hit.dst.maxHp, reason: 'poison' });
+        afterDamage(hit.src, hit.dst, res, 'magic', false);
       }
     }
 
